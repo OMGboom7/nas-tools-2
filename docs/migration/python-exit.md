@@ -181,6 +181,8 @@ RSS 手动下载补充：旧版 `POST /api/v1/rss/item/download` 现由 Go 接�
 
 ### 4. 后台任务与插件
 
+朱雀/TNode 专用搜索接管：Go 按仓库旧 TNodeSpider 的 HTTP 流程读取首页 x-csrf-token，再以保存的 Cookie/UA 调用本站 advancedSearch API；不执行目录声明的浏览器脚本，也不绕过站点挑战。请求限制 HTTPS 根地址、禁止重定向，登录密码表单（含大小写混写）、挑战页、缺失/重复/非法 CSRF、异常成功标记及错误结果结构均明确失败。搜索结果校验 ID、大小、人数、倍率和 IMDb，未知人数/促销保持未知；下载地址仅进入用户隔离的私有缓存。单元和 Go-only 模拟接口测试覆盖中文分页、可信空数组、失败响应、取消、Cookie/UA/CSRF 隔离、搜索→缓存→种子校验→qBittorrent 以及重复点击只提交一次。当前搜索每页上限 100；真实账号、现行线上协议、Cookie 刷新及生产站点联调尚未验证，不能据此宣称全部内置站点可用。其他后台任务、插件执行与生产容器仍未完成迁移，Python 继续保留。
+
 海胆分组搜索接管：Go GET 请求计划现允许 HaiDanSpider，结果解析先遍历影片组，再逐个读取 div.torrent_wrap；title_optional 从组上下文读取，标题/下载/大小/人数/促销仍按单个种子取值，复用原有 Unicode 80 字切片模板。针对目录中 id 的唯一无捕获组却访问 group 1 的错误规则，仅在 href/torrent_id 选择器及该精确规则匹配时显式改用 torrent_id 查询参数，未改写编码目录或其他过滤规则；详情地址保留数字 group_id/torrent_id。真实目录离线测试覆盖跨组、多版本、标题组合、ID 修正、不同促销与结果上限；Go-only 模拟接口测试覆盖保存的 Cookie、搜索→私有缓存→种子下载→qBittorrent 和重复点击只提交一次，任何 Python 请求均禁止。当前目录请求计划计数由普通 GET 106 项增至 107 项（含海胆），仍不能据此宣称 107 个站点线上可用；真实站点/账号联调、逐站点空结果与日期细节、浏览器专用索引器及其他后台任务仍未完成，Python 仍保留。
 
 MTeam 专用搜索与下载接管：Go 内置搜索现在支持目录中四个 MTeamSpider 定义，使用 CONFIG_SITE APIKEY（不要求 Cookie），按旧请求发送 JSON 搜索并核验成功 envelope、资源 ID/大小/人数，识别七种促销枚举，未知枚举保持未知。API 域名仅从 HTTPS m-team.cc/m-team.io 根域及子域导出固定 api 主机，拒绝伪后缀、用户信息、非标准端口、路径前缀和查询；密钥通过 x-api-key 请求头发送，符合[官方 API 说明](https://wiki.m-team.cc/zh-tw/api)。缓存显式保存服务端 mteam 下载解析器标记，不把详情页当种子文件；用户触发下载后从当前站点配置读取密钥，申请 genDlToken，再获取受限同 API 源的签名下载地址并验证 torrent，签名 GET 不携带 API Key/Cookie。单元与 Go-only 接口模拟测试覆盖搜索、分页/中文、折扣及未知状态、可信空数组、恶意源/返回地址、资源缓存→令牌→种子→qBittorrent 与重复点击只提交一次。当前只支持同 API 源下载、不支持额外 CDN/浏览器或其他专用索引器；官方 Swagger 在当前环境无法读取，真实账号 API/下载联调未执行，不宣称现行线上协议已全面验证，仍须保留 Python 及后续迁移工作。

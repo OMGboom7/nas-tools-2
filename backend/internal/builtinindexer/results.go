@@ -48,11 +48,11 @@ func ParseResults(ctx context.Context, plan Plan, body []byte, options ResultOpt
 	if err != nil {
 		return nil, err
 	}
-	blocked, err := Select(ctx, doc.Root, `input[type="password"], #challenge-form, .cf-turnstile`)
+	blocked, err := trackerLoginPage(ctx, doc)
 	if err != nil {
 		return nil, err
 	}
-	if len(blocked) != 0 {
+	if blocked {
 		return nil, ErrResponse
 	}
 	rows, err := Select(ctx, doc.Root, rules.List.Selector)

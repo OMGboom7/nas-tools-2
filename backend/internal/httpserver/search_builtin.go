@@ -77,7 +77,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		if ua == "" {
 			ua = "Mozilla/5.0 (compatible; NAS-Tools-Go)"
 		}
-		if definition.Parser == "MTeamSpider" {
+		if definition.Parser == "MTeamSpider" || definition.Parser == "TNodeSpider" {
 			transport := service.transport
 			if truthy(options["proxy"]) || options["proxy"] == "Y" {
 				transport, err = siteProxyTransport(transport, objectValue(app["proxies"]), "https")
@@ -85,7 +85,12 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 					return nil, err
 				}
 			}
-			items, err := builtinindexer.SearchMTeam(ctx, definition, key, ua, keyword, 0, transport)
+			var items []externalindexer.Resource
+			if definition.Parser == "TNodeSpider" {
+				items, err = builtinindexer.SearchTNode(ctx, definition, cookie, ua, keyword, 0, 100, transport)
+			} else {
+				items, err = builtinindexer.SearchMTeam(ctx, definition, key, ua, keyword, 0, transport)
+			}
 			if err != nil {
 				return nil, err
 			}
