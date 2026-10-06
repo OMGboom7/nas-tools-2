@@ -21,6 +21,11 @@ type subscriptionSearchPlan struct {
 	Remaining       []int                   `json:"remaining"`
 	LibraryComplete bool                    `json:"libraryComplete"`
 	Fetched         int                     `json:"fetched"`
+	raw             map[string]any
+	mediaID         string
+	season, total   int
+	storedMissing   []int
+	needed          []int
 }
 
 func (api subscriptionSearchPlanner) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +98,7 @@ func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id i
 		return fail(404, "subscription is unavailable")
 	}
 	item := normalizeNativeSubscriptionRow(raw)
+	plan.raw = raw
 	if truthy(item["fuzzy_match"]) || truthy(item["over_edition"]) {
 		return fail(501, "fuzzy/edition-upgrade subscription planning is not migrated")
 	}
@@ -118,6 +124,7 @@ func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id i
 		return fail(502, "subscription metadata is unavailable")
 	}
 	meta := mediameta.Metadata{Title: detail.Title, Year: input.Year}
+	plan.mediaID = input.MediaID
 	selection := subscriptionCandidateInput{TV: kind == "TV", Quality: text(item["filter_restype"]), Resolution: text(item["filter_pix"]), Team: text(item["filter_team"]), Include: text(item["filter_include"]), Exclude: text(item["filter_exclude"])}
 	if group := text(item["filter_rule"]); group != "" {
 		selection.Group, err = strconv.ParseInt(group, 10, 64)
@@ -158,6 +165,8 @@ func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id i
 		if err != nil {
 			return fail(422, "subscription progress could not be verified")
 		}
+		plan.season, plan.total = selection.Season, selection.Total
+		plan.storedMissing = append([]int{}, selection.Missing...)
 	}
 	coverage, err := service.nativeMediaExistence(ctx, meta, detail, mediaKind)
 	if err != nil {
@@ -179,6 +188,7 @@ func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id i
 			}
 		}
 		selection.Missing = intersection
+		plan.needed = append([]int{}, intersection...)
 		if len(selection.Missing) == 0 {
 			return plan, nil
 		}

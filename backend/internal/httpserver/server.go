@@ -292,6 +292,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("POST /api/v1/rss/run", rssRunner.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/search/plan", (subscriptionSearchPlanner{runner: rssRunner, search: search.native}).serveHTTP)
+	subscriptionRunner := &subscriptionSearchRunner{planner: subscriptionSearchPlanner{runner: rssRunner, search: search.native}}
+	mux.HandleFunc("POST /api/v1/subscriptions/search/run", subscriptionRunner.serveHTTP)
 	rssRunner.refresh = &subscriptionRefreshAPI{service: subscriptions, auth: nativeAuth, pureGo: cfg.DisableLegacy}
 	mux.HandleFunc("POST /api/v1/subscriptions/refresh", rssRunner.refresh.serveHTTP)
 	mux.HandleFunc("POST /api/v1/rss/name/test", (rssNameAPI{tasks: nativeRSSTasks, filters: nativeFilters, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}).serveHTTP)
@@ -314,7 +316,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/media/tv/seasons", subscriptions.serveCompatTVSeasons)
 	mux.HandleFunc("GET /api/v1/subscriptions/options", subscriptions.serveOptions)
 	mux.HandleFunc("POST /api/v1/site/indexers", subscriptions.serveCompatIndexers)
-	mux.HandleFunc("POST /api/v1/subscriptions/{type}/{id}/{action}", subscriptions.control)
+	mux.HandleFunc("POST /api/v1/subscriptions/{type}/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
+		if cfg.DisableLegacy && r.PathValue("action") == "refresh" {
+			subscriptionRunner.serveHTTP(w, r)
+			return
+		}
+		subscriptions.control(w, r)
+	})
 	mux.HandleFunc("POST /api/v1/subscriptions/history/{type}/{id}/{action}", subscriptions.controlHistory)
 	discovery := discoveryService{client: &http.Client{Transport: transport}, images: images, config: nativeConfig, databasePath: nativeUserDatabasePath}
 	mux.HandleFunc("POST /api/v1/discovery", discovery.serveHTTP)

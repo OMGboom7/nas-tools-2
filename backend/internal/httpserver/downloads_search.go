@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
 )
 
@@ -68,38 +69,10 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
 		return
 	}
-	magnet := resource.DownloadURL
-	var torrent []byte
-	if !validMagnet(magnet) {
-		sites, err := service.sites.List(ctx)
-		if err != nil {
-			writeAPIError(response, 502, 502, "search download site configuration is unavailable")
-			return
-		}
-		configuration, err := service.configStore.Snapshot()
-		if err != nil {
-			writeAPIError(response, 502, 502, "download configuration is unavailable")
-			return
-		}
-		api := rssItemDownloadAPI{service: service}
-		var contents []byte
-		if resource.DownloadResolver == "mteam" {
-			contents, err = service.fetchMTeamSearchTorrent(ctx, resource.DownloadURL, sites, configuration)
-		} else if resource.DownloadResolver != "" {
-			err = errors.New("unsupported native download resolver")
-		} else {
-			contents, err = api.fetchTorrent(ctx, "", rssDownloadArticle{Title: resource.Title, Enclosure: resource.DownloadURL, Link: resource.PageURL}, sites, configuration)
-		}
-		if err != nil {
-			writeAPIError(response, 502, 502, "search torrent could not be retrieved")
-			return
-		}
-		if validMagnet(string(contents)) {
-			magnet = string(contents)
-		} else {
-			magnet = ""
-			torrent = contents
-		}
+	magnet, torrent, err := service.prepareNativeSearchTorrent(ctx, resource)
+	if err != nil {
+		writeAPIError(response, 502, 502, "search torrent could not be retrieved")
+		return
 	}
 	_, handled, err := service.nativeAddDownloadWithOptions(ctx, magnet, torrent, strconv.FormatInt(downloader.ID, 10), options)
 	if !handled {
@@ -116,4 +89,36 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 	}
 	succeeded = true
 	writeJSON(response, 200, map[string]any{"code": 0, "success": true, "message": "已提交下载器"})
+}
+
+// Shared by interactive and subscription downloads; tracker credentials and
+// private locators never enter planning responses.
+func (service downloadService) prepareNativeSearchTorrent(ctx context.Context, resource externalindexer.Resource) (string, []byte, error) {
+	if validMagnet(resource.DownloadURL) {
+		return resource.DownloadURL, nil, nil
+	}
+	sites, err := service.sites.List(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	configuration, err := service.configStore.Snapshot()
+	if err != nil {
+		return "", nil, err
+	}
+	var contents []byte
+	switch resource.DownloadResolver {
+	case "mteam":
+		contents, err = service.fetchMTeamSearchTorrent(ctx, resource.DownloadURL, sites, configuration)
+	case "":
+		contents, err = (rssItemDownloadAPI{service: service}).fetchTorrent(ctx, "", rssDownloadArticle{Title: resource.Title, Enclosure: resource.DownloadURL, Link: resource.PageURL}, sites, configuration)
+	default:
+		err = errors.New("unsupported native download resolver")
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	if validMagnet(string(contents)) {
+		return string(contents), nil, nil
+	}
+	return "", contents, nil
 }

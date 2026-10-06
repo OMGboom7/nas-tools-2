@@ -672,18 +672,26 @@ export async function getSubscriptions(token: string): Promise<SubscriptionsData
   return result.data;
 }
 
-export async function controlSubscription(token: string, type: "MOV" | "TV", id: string, action: "refresh" | "remove"): Promise<void> {
-  await subscriptionMutation(token, `/api/v1/subscriptions/${type}/${encodeURIComponent(id)}/${action}`);
+export type SubscriptionSearchRunResult = {
+  submitted: number;
+  remaining: number[];
+  completed: boolean;
+  uncertain: boolean;
+};
+
+export async function controlSubscription(token: string, type: "MOV" | "TV", id: string, action: "refresh" | "remove"): Promise<SubscriptionSearchRunResult | undefined> {
+  return subscriptionMutation<SubscriptionSearchRunResult>(token, `/api/v1/subscriptions/${type}/${encodeURIComponent(id)}/${action}`);
 }
 
 export async function controlSubscriptionHistory(token: string, type: "MOV" | "TV", id: string, action: "redo" | "remove"): Promise<void> {
   await subscriptionMutation(token, `/api/v1/subscriptions/history/${type}/${encodeURIComponent(id)}/${action}`);
 }
 
-async function subscriptionMutation(token: string, path: string): Promise<void> {
+async function subscriptionMutation<T = Record<string, never>>(token: string, path: string): Promise<T | undefined> {
   const response = await fetch(path, { method: "POST", headers: { Authorization: token } });
-  const result = await readResponse<Record<string, never>>(response);
+  const result = await readResponse<T>(response);
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "订阅操作失败", result.code);
+  return result.data;
 }
 
 export async function getDiscovery(token: string, category: string, page = 1): Promise<DiscoveryData> {

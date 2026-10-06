@@ -70,8 +70,13 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   async function handleItemAction(item: SubscriptionItem, action: "refresh" | "remove") {
     if (action === "remove" && !window.confirm(`确定删除“${item.name}”的订阅吗？删除后将停止后续搜索。`)) return;
     await runAction(`item-${item.type}-${item.id}`, async () => {
-      await controlSubscription(session.token, item.type, item.id, action);
-      setNotice({ kind: "success", message: action === "refresh" ? `已触发“${item.name}”搜索` : `已删除“${item.name}”订阅` });
+      const result = await controlSubscription(session.token, item.type, item.id, action);
+      const message = action === "remove" ? `已删除“${item.name}”订阅`
+        : typeof result?.submitted !== "number" ? `已触发“${item.name}”搜索`
+        : result.completed ? `“${item.name}”订阅已完成，所需资源已存在或已提交下载`
+        : result.submitted > 0 ? `已提交 ${result.submitted} 个资源，继续等待剩余所需资源`
+        : `“${item.name}”未找到符合条件的资源，将保留订阅`;
+      setNotice({ kind: "success", message });
     });
   }
 
@@ -94,6 +99,8 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
         onSessionExpired();
         return;
       }
+      // An earlier resource may have been accepted before a later one failed.
+      await load();
       setNotice({ kind: "error", message: error instanceof Error ? error.message : "订阅操作失败" });
     } finally {
       setBusy((current) => ({ ...current, [key]: false }));
