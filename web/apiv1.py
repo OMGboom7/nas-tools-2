@@ -1,7 +1,15 @@
+import json
+import re
+from urllib.parse import urlsplit
+
 from flask import Blueprint, request
 from flask_restx import Api, reqparse, Resource
+from lxml import html as lxml_html
 
 from app.brushtask import BrushTask
+from app.conf import ModuleConf
+from app.mediaserver import MediaServer
+from app.plugins import PluginManager
 from app.rsschecker import RssChecker
 from app.sites import Sites
 from app.utils import TokenCache
@@ -9,6 +17,107 @@ from config import Config
 from web.action import WebAction
 from web.backend.pro_user import ProUser
 from web.security import require_auth, login_required, generate_access_token
+
+
+def _safe_plugin_page_text(value, limit=500):
+    """将插件页面文本压缩为无控制字符、无敏感 URL 路径的纯文本。"""
+    text = re.sub(r'\s+', ' ', str(value or '')).strip().replace('\x00', '')
+
+    def safe_url(match):
+        try:
+            parsed = urlsplit(match.group(0))
+            return parsed.hostname or ''
+        except ValueError:
+            return ''
+
+    text = re.sub(r'https?://[^\s<>"\']+', safe_url, text, flags=re.IGNORECASE)
+    return text[:limit]
+
+
+_PLUGIN_PAGE_DELETE_ACTIONS = {
+    'DoubanSync': {
+        'row_prefix': 'douban_history_', 'method': 'delete_sync_history',
+        'parameter': 'douban_id', 'pattern': r'[0-9]{1,30}'
+    },
+    'DoubanRank': {
+        'row_prefix': 'movie_rank_history_', 'method': 'delete_rank_history',
+        'parameter': 'tmdb_id', 'pattern': r'[0-9]{1,30}'
+    },
+    'MovieRandom': {
+        'row_prefix': 'movie_random_history_', 'method': 'delete_random_history',
+        'parameter': 'tmdb_id', 'pattern': r'[0-9]{1,30}'
+    },
+    'MediaLibraryArchive': {
+        'data_attribute': 'data-name', 'method': 'remove_archive_file_for_api',
+        'parameter': 'file_name', 'pattern': r'归档_[0-9]{14}\.md', 'requires_confirmation': True
+    }
+}
+
+
+def _plugin_page_row_action(plugin_id, row):
+    spec = _PLUGIN_PAGE_DELETE_ACTIONS.get(plugin_id)
+    if not spec:
+        return None
+    prefix = spec.get('row_prefix')
+    if prefix:
+        row_id = str(row.get('id') or '')
+        record_id = row_id[len(prefix):] if row_id.startswith(prefix) else ''
+    else:
+        action_nodes = row.xpath('.//*[@%s]' % spec.get('data_attribute'))
+        record_id = str(action_nodes[0].get(spec.get('data_attribute')) or '') if action_nodes else ''
+    if not re.fullmatch(spec.get('pattern'), record_id):
+        return None
+    return {'type': 'delete', 'record_id': record_id}
+
+
+def _structured_plugin_page(content, action_func=None, plugin_id=None):
+    """从旧插件 HTML 中仅提取标题文本、段落和表格，不返回标记或事件。"""
+    if not content:
+        return {'sections': [], 'tables': [], 'actions_omitted': bool(action_func)}
+    try:
+        root = lxml_html.fragment_fromstring(str(content), create_parent='div')
+    except (TypeError, ValueError):
+        return {'sections': [], 'tables': [], 'actions_omitted': bool(action_func)}
+
+    actions_omitted = bool(action_func) or bool(root.xpath(
+        './/*[@onclick or @onchange or @onsubmit or starts-with(translate(@href, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "javascript:")]'
+    ))
+    for unsafe in root.xpath('.//script|.//style|.//iframe|.//object|.//embed|.//form|.//button|.//input|.//textarea|.//select'):
+        unsafe.drop_tree()
+
+    tables = []
+    for table in root.xpath('.//table')[:10]:
+        header_nodes = table.xpath('./thead/tr[1]/*[self::th or self::td]')
+        headers = [_safe_plugin_page_text(' '.join(node.itertext()), 120) for node in header_nodes]
+        keep = [index for index, header in enumerate(headers)
+                if header and header not in ('操作', '动作')]
+        if not keep:
+            continue
+        rows = []
+        row_actions = []
+        row_nodes = table.xpath('./tbody/tr') or table.xpath('./tr[position()>1]')
+        for row in row_nodes[:200]:
+            cells = row.xpath('./th|./td')
+            values = [_safe_plugin_page_text(' '.join(cells[index].itertext())) if index < len(cells) else ''
+                      for index in keep]
+            if any(values):
+                rows.append(values)
+                row_actions.append(_plugin_page_row_action(plugin_id, row))
+        table_data = {'columns': [headers[index] for index in keep], 'rows': rows}
+        if any(row_actions):
+            table_data['row_actions'] = row_actions
+        tables.append(table_data)
+
+    sections = []
+    for element in root.xpath('.//*[self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or self::p or self::li]'):
+        if element.xpath('ancestor::table'):
+            continue
+        value = _safe_plugin_page_text(' '.join(element.itertext()))
+        if value and (not sections or sections[-1] != value):
+            sections.append(value)
+        if len(sections) >= 80:
+            break
+    return {'sections': sections, 'tables': tables, 'actions_omitted': actions_omitted}
 
 apiv1_bp = Blueprint("apiv1",
                      __name__,
@@ -288,6 +397,7 @@ class SiteUpdate(ClientResource):
     parser.add_argument('site_rssurl', type=str, help='RSS地址', location='form')
     parser.add_argument('site_signurl', type=str, help='站点地址', location='form')
     parser.add_argument('site_cookie', type=str, help='Cookie', location='form')
+    parser.add_argument('site_api_key', type=str, help='Api Key', location='form')
     parser.add_argument('site_note', type=str, help='站点属性', location='form')
     parser.add_argument('site_include', type=str, help='站点用途', location='form')
 
@@ -685,8 +795,10 @@ class DownloadClientAdd(ClientResource):
     parser.add_argument('enabled', type=str, help='状态（0-停用 1-启动）', location='form', required=True)
     parser.add_argument('transfer', type=str, help='监控（0-停用 1-启动）', location='form', required=True)
     parser.add_argument('only_nastool', type=str, help='隔离（0-停用 1-启动）', location='form', required=True)
+    parser.add_argument('match_path', type=str, help='目录隔离（0-停用 1-启动）', location='form')
     parser.add_argument('rmt_mode', type=str, help='转移方式', location='form', required=True)
     parser.add_argument('config', type=str, help='配置数据（JSON）', location='form', required=True)
+    parser.add_argument('download_dir', type=str, help='下载目录设置（JSON）', location='form')
 
     @download.doc(parser=parser)
     def post(self):
@@ -928,6 +1040,21 @@ class LibraryResume(ClientResource):
         """
         return WebAction().api_action(cmd='get_library_resume', data=self.parser.parse_args())
 
+
+@library.route('/mediaserver/latest')
+class LibraryLatest(ClientResource):
+    parser = reqparse.RequestParser()
+    parser.add_argument('num', type=int, help='返回记录数', location='form', required=True)
+
+    @library.doc(parser=parser)
+    def post(self):
+        """
+        查询媒体库最近入库列表（React + Go 迁移兼容接口）
+        """
+        num = self.parser.parse_args().get('num') or 20
+        items = MediaServer().get_latest(num) or []
+        return {"code": 0, "list": items[0:num]}
+
 @library.route('/mediaserver/statistics')
 class LibraryStatistics(ClientResource):
 
@@ -1033,14 +1160,23 @@ class SystemProgress(ClientResource):
 @config.route('/update')
 class ConfigUpdate(ClientResource):
     parser = reqparse.RequestParser()
-    parser.add_argument('items', type=dict, help='配置项', location='form', required=True)
+    parser.add_argument('items', type=str, help='配置项（JSON）', location='form', required=False)
 
     @config.doc(parser=parser)
     def post(self):
         """
         新增/修改配置
         """
-        return WebAction().api_action(cmd='update_config', data=self.parser.parse_args().get("items"))
+        payload = request.get_json(silent=True)
+        items = payload.get("items") if isinstance(payload, dict) else self.parser.parse_args().get("items")
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except (TypeError, ValueError):
+                return {"code": 400, "success": False, "message": "配置项格式错误"}, 400
+        if not isinstance(items, dict):
+            return {"code": 400, "success": False, "message": "缺少配置项"}, 400
+        return WebAction().api_action(cmd='update_config', data=items)
 
 
 @config.route('/test')
@@ -1148,10 +1284,13 @@ class SubscribeAdd(ClientResource):
     parser.add_argument('filter_pix', type=str, help='分辨率', location='form')
     parser.add_argument('filter_team', type=str, help='字幕组/发布组', location='form')
     parser.add_argument('filter_rule', type=int, help='过滤规则', location='form')
+    parser.add_argument('filter_include', type=str, help='必须包含的关键字', location='form')
+    parser.add_argument('filter_exclude', type=str, help='必须排除的关键字', location='form')
     parser.add_argument('download_setting', type=int, help='下载设置', location='form')
     parser.add_argument('save_path', type=str, help='保存路径', location='form')
     parser.add_argument('total_ep', type=int, help='总集数', location='form')
     parser.add_argument('current_ep', type=int, help='开始集数', location='form')
+    parser.add_argument('in_form', type=str, help='订阅来源', location='form')
 
     @subscribe.doc(parser=parser)
     def post(self):
@@ -2184,7 +2323,7 @@ class MessageClientUpdate(ClientResource):
     parser.add_argument('type', type=str, help='类型（wechat/telegram/serverchan/bark/pushplus/iyuu/slack/gotify）',
                         location='form', required=True)
     parser.add_argument('config', type=str, help='配置项（JSON）', location='form', required=True)
-    parser.add_argument('switchs', type=list, help='开关', location='form', required=True)
+    parser.add_argument('switchs', type=str, action='append', help='开关', location='form')
     parser.add_argument('interactive', type=int, help='是否开启交互（0/1）', location='form', required=True)
     parser.add_argument('enabled', type=int, help='是否启用（0/1）', location='form', required=True)
 
@@ -2194,6 +2333,42 @@ class MessageClientUpdate(ClientResource):
         新增/修改通知消息服务渠道
         """
         return WebAction().api_action(cmd='update_message_client', data=self.parser.parse_args())
+
+
+@message.route('/client/options')
+class MessageClientOptions(ClientResource):
+    @staticmethod
+    def post():
+        """
+        查询通知渠道类型、配置字段与事件选项
+        """
+        channels = []
+        for client_type, client in ModuleConf.MESSAGE_CONF.get('client', {}).items():
+            fields = []
+            for key, field in client.get('config', {}).items():
+                options = [{'value': value, 'label': label}
+                           for value, label in (field.get('options') or {}).items()]
+                fields.append({
+                    'key': key,
+                    'title': field.get('title') or key,
+                    'type': field.get('type') or 'text',
+                    'required': bool(field.get('required')),
+                    'tooltip': field.get('tooltip') or '',
+                    'placeholder': field.get('placeholder') or '',
+                    'default': field.get('default'),
+                    'options': options,
+                    # 文本可能包含令牌、URL参数或自定义模板，统一按只写字段处理。
+                    'write_only': (field.get('type') or 'text') not in ('switch', 'select')
+                })
+            channels.append({
+                'type': client_type,
+                'name': client.get('name') or client_type,
+                'can_interact': bool(client.get('search_type')),
+                'fields': fields
+            })
+        events = [{'id': event_id, 'label': event.get('name') or event_id}
+                  for event_id, event in ModuleConf.MESSAGE_CONF.get('switch', {}).items()]
+        return {'code': 0, 'channels': channels, 'events': events}
 
 
 @message.route('/client/delete')
@@ -2214,6 +2389,8 @@ class MessageClientStatus(ClientResource):
     parser = reqparse.RequestParser()
     parser.add_argument('flag', type=str, help='操作类型（interactive/enable）', location='form', required=True)
     parser.add_argument('cid', type=int, help='ID', location='form', required=True)
+    parser.add_argument('type', type=str, help='消息渠道类型', location='form')
+    parser.add_argument('checked', type=int, help='是否开启（0/1）', location='form', required=True)
 
     @message.doc(parser=parser)
     def post(self):
@@ -2226,7 +2403,7 @@ class MessageClientStatus(ClientResource):
 @message.route('/client/info')
 class MessageClientInfo(ClientResource):
     parser = reqparse.RequestParser()
-    parser.add_argument('cid', type=int, help='ID', location='form', required=True)
+    parser.add_argument('cid', type=int, help='ID；不传时返回全部渠道', location='form')
 
     @message.doc(parser=parser)
     def post(self):
@@ -2249,6 +2426,22 @@ class MessageClientTest(ClientResource):
         测试通知消息服务配置正确性
         """
         return WebAction().api_action(cmd='test_message_client', data=self.parser.parse_args())
+
+
+@message.route('/custom/send')
+class MessageCustomSend(ClientResource):
+    parser = reqparse.RequestParser()
+    parser.add_argument('title', type=str, help='消息标题', location='form', required=True)
+    parser.add_argument('text', type=str, help='消息内容', location='form')
+    parser.add_argument('image', type=str, help='图片地址', location='form')
+    parser.add_argument('message_clients', type=str, action='append', help='消息渠道ID', location='form', required=True)
+
+    @message.doc(parser=parser)
+    def post(self):
+        """
+        向指定已启用渠道发送自定义消息
+        """
+        return WebAction().api_action(cmd='send_custom_message', data=self.parser.parse_args())
 
 
 @torrentremover.route('/task/info')
@@ -2323,7 +2516,7 @@ class TorrentRemoverTaskUpdate(ClientResource):
 @plugin.route('/install')
 class PluginInstall(ClientResource):
     parser = reqparse.RequestParser()
-    parser.add_argument('id', type=int, help='插件ID', location='form', required=True)
+    parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
 
     @plugin.doc(parser=parser)
     def post(self):
@@ -2336,7 +2529,7 @@ class PluginInstall(ClientResource):
 @plugin.route('/uninstall')
 class PluginUninstall(ClientResource):
     parser = reqparse.RequestParser()
-    parser.add_argument('id', type=int, help='插件ID', location='form', required=True)
+    parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
 
     @plugin.doc(parser=parser)
     def post(self):
@@ -2371,7 +2564,7 @@ class PluginList(ClientResource):
 @plugin.route('/status')
 class PluginStatus(ClientResource):
     parser = reqparse.RequestParser()
-    parser.add_argument('id', type=int, help='插件ID', location='form', required=True)
+    parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
 
     @plugin.doc(parser=parser)
     def post(self):
@@ -2379,3 +2572,85 @@ class PluginStatus(ClientResource):
         获取插件运行状态
         """
         return WebAction().api_action(cmd='get_plugin_state', data=self.parser.parse_args())
+
+
+@plugin.route('/config')
+class PluginConfig(ClientResource):
+    parser = reqparse.RequestParser()
+    parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
+    parser.add_argument('config', type=str, help='插件配置（JSON）', location='form', required=True)
+
+    @plugin.doc(parser=parser)
+    def post(self):
+        """
+        保存插件配置（React + Go 迁移兼容接口）
+        """
+        data = self.parser.parse_args()
+        try:
+            config = json.loads(data.get('config') or '')
+        except (TypeError, ValueError):
+            return {"code": 400, "success": False, "message": "插件配置格式错误"}, 400
+        if not isinstance(config, dict):
+            return {"code": 400, "success": False, "message": "插件配置格式错误"}, 400
+        return WebAction().api_action(cmd='update_plugin_config', data={
+            'plugin': data.get('id'),
+            'config': config
+        })
+
+
+@plugin.route('/page')
+class PluginPage(ClientResource):
+    parser = reqparse.RequestParser()
+    parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
+
+    @plugin.doc(parser=parser)
+    def post(self):
+        """
+        获取插件扩展页的安全结构化只读内容（React + Go 迁移兼容接口）
+        """
+        plugin_id = self.parser.parse_args().get('id')
+        visible_plugins = WebAction().get_plugins_conf().get('result') or {}
+        if plugin_id not in visible_plugins or not visible_plugins.get(plugin_id, {}).get('page'):
+            return {'code': 404, 'success': False, 'message': '插件扩展页不存在'}
+        title, content, action_func = PluginManager().get_plugin_page(plugin_id)
+        if not title or not content:
+            return {'code': 404, 'success': False, 'message': '插件扩展页暂无内容'}
+        data = _structured_plugin_page(content, action_func, plugin_id)
+        data['title'] = _safe_plugin_page_text(title, 120)
+        return {'code': 0, 'success': True, 'data': data}
+
+
+@plugin.route('/page/action')
+class PluginPageAction(ClientResource):
+    parser = reqparse.RequestParser()
+    parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
+    parser.add_argument('action', type=str, help='操作类型', location='form', required=True)
+    parser.add_argument('record_id', type=str, help='记录ID', location='form', required=True)
+    parser.add_argument('confirmation', type=str, help='高风险操作确认文本', location='form')
+
+    @plugin.doc(parser=parser)
+    def post(self):
+        """执行经过白名单限制的插件扩展页操作（React + Go 迁移兼容接口）"""
+        data = self.parser.parse_args()
+        plugin_id = data.get('id')
+        record_id = data.get('record_id') or ''
+        spec = _PLUGIN_PAGE_DELETE_ACTIONS.get(plugin_id)
+        if data.get('action') != 'delete' or not spec:
+            return {'code': 400, 'success': False, 'message': '不支持的插件扩展页操作'}
+        if not re.fullmatch(spec.get('pattern'), record_id):
+            return {'code': 400, 'success': False, 'message': '记录ID格式错误'}
+        if spec.get('requires_confirmation') and data.get('confirmation') != record_id:
+            return {'code': 400, 'success': False, 'message': '归档文件确认文本不匹配'}
+        visible_plugins = WebAction().get_plugins_conf().get('result') or {}
+        if plugin_id not in visible_plugins or not visible_plugins.get(plugin_id, {}).get('page'):
+            return {'code': 404, 'success': False, 'message': '插件扩展页不存在'}
+        result = PluginManager().run_plugin_method(
+            pid=plugin_id, method=spec.get('method'), **{spec.get('parameter'): record_id})
+        if plugin_id == 'MediaLibraryArchive':
+            if not isinstance(result, dict) or result.get('code') != 0:
+                return {'code': 409, 'success': False,
+                        'message': (result or {}).get('msg') if isinstance(result, dict) else '归档文件删除失败'}
+            if result.get('data') is not True:
+                return {'code': 404, 'success': False, 'message': '归档文件不存在或已被删除'}
+            return {'code': 0, 'success': True, 'message': '归档文件已删除'}
+        return {'code': 0, 'success': True, 'message': '扩展页记录已删除'}

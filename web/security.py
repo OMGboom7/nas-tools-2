@@ -131,10 +131,15 @@ def login_required(func):
         if not token:
             return auth_failed()
         latest_token = TokenCache.get(token)
+        token_from_cache = bool(latest_token)
+        # Go 原生登录签发相同 HS256 密钥的 JWT。迁移期间允许 Flask
+        # 直接验证这类令牌；待所有接口迁移后，本兼容分支随 Flask 删除。
         if not latest_token:
-            return auth_failed()
+            latest_token = token
         flag, username = identify(latest_token)
         if not username:
+            return auth_failed()
+        if not flag and not token_from_cache:
             return auth_failed()
         if not flag and username:
             TokenCache.set(token, generate_access_token(username))

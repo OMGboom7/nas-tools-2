@@ -1,0 +1,16 @@
+.git
+.gitignore
+.idea
+.vscode
+.agents
+.codex
+**/__pycache__
+**/*.pyc
+**/node_modules
+/frontend/dist
+/backend/bin
+/build
+/venv
+/config/config.yaml
+/config/sites.json
+*.log

@@ -1,0 +1,21 @@
+services:
+  nas-tools:
+    build:
+      context: ..
+      dockerfile: docker/production.Dockerfile
+    image: nas-tools:react-go
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../config:/config
+      # 按实际路径添加媒体目录，例如：
+      # - /your/media:/media
+    environment:
+      - PUID=0
+      - PGID=0
+      - UMASK=000
+      - NASTOOL_UI_MODE=react
+      - NASTOOL_AUTO_UPDATE=false
+    restart: unless-stopped
+    hostname: nas-tools
+    container_name: nas-tools

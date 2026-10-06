@@ -1,0 +1,16 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+
+if [ -f "${NASTOOL_CONFIG}" ]; then
+    NT_PORT=$(yq '.app.web_port' "${NASTOOL_CONFIG}")
+else
+    NT_PORT=3000
+fi
+if ! [[ "${NT_PORT}" =~ ^[0-9]+$ ]]; then
+    NT_PORT=3000
+fi
+
+if [ "${NASTOOL_UI_MODE:-legacy}" = "react" ]; then
+    exec wget -q -O /dev/null "http://127.0.0.1:${NT_PORT}/api/v1/health"
+fi
+exec nc -z 127.0.0.1 "${NT_PORT}"

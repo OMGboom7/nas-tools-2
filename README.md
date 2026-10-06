@@ -1,5 +1,11 @@
 # NAS媒体库管理工具
 
+> React + Go 渐进重构正在 `codex/react-go-refactor` 分支进行，开发方式与迁移约定见 [迁移文档](docs/migration/react-go.md)。
+
+新架构生产镜像可通过 `make production-build` 构建，或使用 `make production-up` 启动。该镜像由 Go 接管外部 Web 端口并托管 React，Python 服务仅在容器内部提供兼容接口；部署与回退步骤见 [生产切换说明](docs/migration/react-go.md#生产部署与回退)。
+
+另有不含 Python 的 Go-only 候选镜像（`make go-only-build`），用于迁移回归测试。它对尚未迁移的接口明确报错，目前不能替代完整生产镜像；覆盖范围和使用限制见 [Python 退出计划](docs/migration/python-exit.md)。
+
 
 [![GitHub stars](https://img.shields.io/github/stars/0xforee/nas-tools?style=plastic)](https://github.com/0xforee/nas-tools/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/0xforee/nas-tools?style=plastic)](https://github.com/0xforee/nas-tools/network/members)

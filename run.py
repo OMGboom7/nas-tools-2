@@ -73,6 +73,15 @@ def get_run_config(forcev4=False):
         _ssl_key = app_conf.get('ssl_key')
         _debug = True if app_conf.get("debug") else False
 
+    # React + Go 生产模式下，Flask 仅作为内部兼容服务，不直接暴露配置中的 Web 端口或 TLS。
+    legacy_port = os.environ.get("NASTOOL_LEGACY_PORT") if os.environ.get("NASTOOL_UI_MODE") == "react" else None
+    if legacy_port and legacy_port.isdigit():
+        _web_host = "127.0.0.1"
+        _web_port = int(legacy_port)
+        _ssl_cert = None
+        _ssl_key = None
+        _debug = False
+
     app_arg = dict(host=_web_host, port=_web_port, debug=_debug, threaded=True, use_reloader=False)
     if _ssl_cert:
         app_arg['ssl_context'] = (_ssl_cert, _ssl_key)

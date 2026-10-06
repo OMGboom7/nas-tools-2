@@ -4440,7 +4440,13 @@ class WebAction:
         cid = data.get("cid")
         ctype = data.get("type")
         config = data.get("config")
-        switchs = data.get("switchs")
+        switchs = data.get("switchs") or []
+        if isinstance(switchs, str):
+            try:
+                switchs = json.loads(switchs)
+            except Exception:
+                switchs = [switchs]
+        switchs = [switch for switch in switchs if switch]
         interactive = data.get("interactive")
         enabled = data.get("enabled")
         if cid:
@@ -4777,7 +4783,10 @@ class WebAction:
         title = data.get("title")
         text = data.get("text") or ""
         image = data.get("image") or ""
-        message_clients = data.get("message_clients")
+        message_clients = data.get("message_clients") or []
+        if isinstance(message_clients, str):
+            message_clients = [message_clients]
+        message_clients = [str(client) for client in message_clients if client]
         if not message_clients:
             return {"code": 1, "msg": "未选择消息服务"}
         Message().send_custom_message(clients=message_clients, title=title, text=text, image=image)
@@ -4951,7 +4960,7 @@ class WebAction:
         """
         plugin_id = data.get("plugin")
         config = data.get("config")
-        if not plugin_id:
+        if not plugin_id or not isinstance(config, dict):
             return {"code": 1, "msg": "数据错误"}
         PluginManager().save_plugin_config(pid=plugin_id, conf=config)
         PluginManager().reload_plugin(plugin_id)

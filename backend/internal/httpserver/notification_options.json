@@ -1,0 +1,693 @@
+{
+  "channels": [
+    {
+      "type": "telegram",
+      "name": "Telegram",
+      "canInteract": true,
+      "fields": [
+        {
+          "key": "token",
+          "title": "Bot Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "telegram机器人的Token，关注BotFather创建机器人",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "chat_id",
+          "title": "Chat ID",
+          "type": "text",
+          "required": true,
+          "tooltip": "接受消息通知的用户、群组或频道Chat ID，关注@getidsbot获取",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "thread_id",
+          "title": "Message Thread ID",
+          "type": "text",
+          "required": false,
+          "tooltip": "接受消息通知的群组话题 ID，https://api.telegram.org/bot${BOT_TOKEN}/getUpdates 获取",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "user_ids",
+          "title": "User IDs",
+          "type": "text",
+          "required": false,
+          "tooltip": "允许使用交互的用户Chat ID，留空则只允许管理用户使用，关注@getidsbot获取",
+          "placeholder": "使用,分隔多个Id",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "admin_ids",
+          "title": "Admin IDs",
+          "type": "text",
+          "required": false,
+          "tooltip": "允许使用管理命令的用户Chat ID，关注@getidsbot获取",
+          "placeholder": "使用,分隔多个Id",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "webhook",
+          "title": "Webhook",
+          "type": "switch",
+          "required": false,
+          "tooltip": "Telegram机器人消息有两种模式：Webhook或消息轮循；开启后将使用Webhook方式，需要在基础设置中正确配置好外网访问地址，同时受Telegram官方限制，外网访问地址需要设置为以下端口之一：443, 80, 88, 8443，且需要有公网认证的可信SSL证书；关闭后将使用消息轮循方式，使用该方式需要在基础设置->安全处将Telegram ipv4源地址设置为127.0.0.1，如同时使用了内置的SSL证书功能，消息轮循方式可能无法正常使用",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": false
+        }
+      ]
+    },
+    {
+      "type": "wechat",
+      "name": "微信",
+      "canInteract": true,
+      "fields": [
+        {
+          "key": "corpid",
+          "title": "企业ID",
+          "type": "text",
+          "required": true,
+          "tooltip": "每个企业都拥有唯一的corpid，获取此信息可在管理后台“我的企业”－“企业信息”下查看“企业ID”（需要有管理员权限）",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "corpsecret",
+          "title": "应用Secret",
+          "type": "text",
+          "required": true,
+          "tooltip": "每个应用都拥有唯一的secret，获取此信息可在管理后台“应用与小程序”－“自建”下查看“Secret”（需要有管理员权限）",
+          "placeholder": "Secret",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "agentid",
+          "title": "应用ID",
+          "type": "text",
+          "required": true,
+          "tooltip": "每个应用都拥有唯一的agentid，获取此信息可在管理后台“应用与小程序”－“自建”下查看“AgentId”（需要有管理员权限）",
+          "placeholder": "AgentId",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "default_proxy",
+          "title": "消息推送代理",
+          "type": "text",
+          "required": false,
+          "tooltip": "由于微信官方限制，2022年6月20日后创建的企业微信应用需要有固定的公网IP地址并加入IP白名单后才能发送消息，使用有固定公网IP的代理服务器转发可解决该问题；代理服务器需自行搭建，搭建方法可参考项目主页说明",
+          "placeholder": "消息推送代理的网址",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "token",
+          "title": "Token",
+          "type": "text",
+          "required": false,
+          "tooltip": "需要交互功能时才需要填写，在微信企业应用管理后台-接收消息设置页面生成，填入完成后重启本应用，然后再在微信页面输入地址确定",
+          "placeholder": "API接收消息Token",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "encodingAESKey",
+          "title": "EncodingAESKey",
+          "type": "text",
+          "required": false,
+          "tooltip": "需要交互功能时才需要填写，在微信企业应用管理后台-接收消息设置页面生成，填入完成后重启本应用，然后再在微信页面输入地址确定",
+          "placeholder": "API接收消息EncodingAESKey",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "adminUser",
+          "title": "AdminUser",
+          "type": "text",
+          "required": false,
+          "tooltip": "需要交互功能时才需要填写，可执行交互菜单命令的用户名，为空则不限制，多个;号分割。可在企业微信后台查看成员的Account ID",
+          "placeholder": "可执行交互菜单的用户名",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "serverchan",
+      "name": "Server酱",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "sckey",
+          "title": "SCKEY",
+          "type": "text",
+          "required": true,
+          "tooltip": "填写ServerChan的API Key，SCT类型，在https://sct.ftqq.com/中申请",
+          "placeholder": "SCT...",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "bark",
+      "name": "Bark",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "server",
+          "title": "Bark服务器地址",
+          "type": "text",
+          "required": true,
+          "tooltip": "自己搭建Bark服务端请实际配置，否则可使用：https://api.day.app",
+          "placeholder": "https://api.day.app",
+          "default": "https://api.day.app",
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "apikey",
+          "title": "API Key",
+          "type": "text",
+          "required": true,
+          "tooltip": "在Bark客户端中点击右上角的“...”按钮，选择“生成Bark Key”，然后将生成的KEY填入此处",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "params",
+          "title": "附加参数",
+          "type": "text",
+          "required": false,
+          "tooltip": "添加到Bark通知中的附加参数，可用于自定义通知特性",
+          "placeholder": "group=xxx&sound=xxx&url=xxx",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "pushdeer",
+      "name": "PushDeer",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "server",
+          "title": "PushDeer服务器地址",
+          "type": "text",
+          "required": true,
+          "tooltip": "自己搭建pushdeer服务端请实际配置，否则可使用：https://api2.pushdeer.com",
+          "placeholder": "https://api2.pushdeer.com",
+          "default": "https://api2.pushdeer.com",
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "apikey",
+          "title": "API Key",
+          "type": "text",
+          "required": true,
+          "tooltip": "pushdeer客户端生成的KEY",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "pushplus",
+      "name": "PushPlus",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "token",
+          "title": "Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "在PushPlus官网中申请，申请地址：http://pushplus.plus/",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "channel",
+          "title": "推送渠道",
+          "type": "select",
+          "required": true,
+          "tooltip": "使用PushPlus中配置的发送渠道，具体参考pushplus.plus官网文档说明，支持第三方webhook、钉钉、飞书、邮箱等",
+          "placeholder": "",
+          "default": "wechat",
+          "options": [
+            {
+              "value": "wechat",
+              "label": "微信"
+            },
+            {
+              "value": "mail",
+              "label": "邮箱"
+            },
+            {
+              "value": "webhook",
+              "label": "第三方Webhook"
+            }
+          ],
+          "writeOnly": false
+        },
+        {
+          "key": "topic",
+          "title": "群组编码",
+          "type": "text",
+          "required": false,
+          "tooltip": "PushPlus中创建的群组，如未设置可为空",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "webhook",
+          "title": "Webhook编码",
+          "type": "text",
+          "required": false,
+          "tooltip": "PushPlus中创建的webhook编码，发送渠道为第三方webhook时需要填入",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "iyuu",
+      "name": "爱语飞飞",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "token",
+          "title": "令牌Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "在爱语飞飞官网中申请，申请地址：https://iyuu.cn/",
+          "placeholder": "登录https://iyuu.cn获取",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "slack",
+      "name": "Slack",
+      "canInteract": true,
+      "fields": [
+        {
+          "key": "bot_token",
+          "title": "Bot User OAuth Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "在Slack中创建应用，获取Bot User OAuth Token",
+          "placeholder": "xoxb-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "app_token",
+          "title": "App-Level Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "在Slack中创建应用，获取App-Level Token",
+          "placeholder": "xapp-xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "channel",
+          "title": "频道名称",
+          "type": "text",
+          "required": false,
+          "tooltip": "Slack中的频道名称，默认为全体；需要将机器人添加到该频道，以接收非交互类的通知消息",
+          "placeholder": "全体",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "gotify",
+      "name": "Gotify",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "server",
+          "title": "Gotify服务器地址",
+          "type": "text",
+          "required": true,
+          "tooltip": "自己搭建gotify服务端地址",
+          "placeholder": "http://localhost:8800",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "token",
+          "title": "令牌Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "Gotify服务端APPS下创建的token",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "priority",
+          "title": "消息Priority",
+          "type": "text",
+          "required": false,
+          "tooltip": "消息通知优先级, 请填写数字(1-8), 默认: 8",
+          "placeholder": "8",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "ntfy",
+      "name": "ntfy",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "server",
+          "title": "ntfy服务器地址",
+          "type": "text",
+          "required": true,
+          "tooltip": "自己搭建ntfy服务端地址",
+          "placeholder": "http://localhost:8800",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "token",
+          "title": "令牌Token",
+          "type": "text",
+          "required": true,
+          "tooltip": "ntfy服务端创建的token",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "topic",
+          "title": "topic",
+          "type": "text",
+          "required": true,
+          "tooltip": "ntfy创建的topic",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "priority",
+          "title": "消息Priority",
+          "type": "text",
+          "required": false,
+          "tooltip": "消息通知优先级, 请填写数字(1-5), 默认: 4",
+          "placeholder": "4",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "tags",
+          "title": "消息tags",
+          "type": "text",
+          "required": false,
+          "tooltip": "消息tags,以逗号分隔, 请参阅ntfy官网, 默认: rotating_light",
+          "placeholder": "rotating_light",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "chanify",
+      "name": "Chanify",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "server",
+          "title": "Chanify服务器地址",
+          "type": "text",
+          "required": true,
+          "tooltip": "自己搭建Chanify服务端地址或使用https://api.chanify.net",
+          "placeholder": "https://api.chanify.net",
+          "default": "https://api.chanify.net",
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "token",
+          "title": "令牌",
+          "type": "text",
+          "required": true,
+          "tooltip": "在Chanify客户端频道中获取",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "params",
+          "title": "附加参数",
+          "type": "text",
+          "required": false,
+          "tooltip": "添加到Chanify通知中的附加参数，可用于自定义通知特性",
+          "placeholder": "sound=0&interruption-level=active",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "synologychat",
+      "name": "Synology Chat",
+      "canInteract": true,
+      "fields": [
+        {
+          "key": "webhook_url",
+          "title": "机器人传入URL",
+          "type": "text",
+          "required": true,
+          "tooltip": "在Synology Chat中创建机器人，获取机器人传入URL",
+          "placeholder": "https://xxx/webapi/entry.cgi?api=xxx",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "token",
+          "title": "令牌",
+          "type": "text",
+          "required": true,
+          "tooltip": "在Synology Chat中创建机器人，获取机器人令牌",
+          "placeholder": "",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    },
+    {
+      "type": "webhook",
+      "name": "Webhook",
+      "canInteract": false,
+      "fields": [
+        {
+          "key": "url",
+          "title": "URL",
+          "type": "text",
+          "required": true,
+          "tooltip": "",
+          "placeholder": "https://xxx.com/your_api/",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "method",
+          "title": "HTTP方法",
+          "type": "select",
+          "required": true,
+          "tooltip": "GET方法中请求体将被忽略，由于查询参数不支持复杂格式，发送列表类消息请使用POST",
+          "placeholder": "",
+          "default": "POST",
+          "options": [
+            {
+              "value": "GET",
+              "label": "GET"
+            },
+            {
+              "value": "POST",
+              "label": "POST"
+            },
+            {
+              "value": "PUT",
+              "label": "PUT"
+            },
+            {
+              "value": "PATCH",
+              "label": "PATCH"
+            },
+            {
+              "value": "DELETE",
+              "label": "DELETE"
+            }
+          ],
+          "writeOnly": false
+        },
+        {
+          "key": "token",
+          "title": "Token",
+          "type": "text",
+          "required": false,
+          "tooltip": "会放在Header的Authorization中",
+          "placeholder": "Authorization-Token",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "query_params",
+          "title": "额外查询参数",
+          "type": "text",
+          "required": false,
+          "tooltip": "JSON字符串",
+          "placeholder": "{\"search\": \"keyword\"}",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "json_tpl",
+          "title": "单条消息模板",
+          "type": "textarea",
+          "required": false,
+          "tooltip": "Jinja2 JSON模板，用于单条消息。可用变量：title, text, image, url, user_id。字符串变量默认会进行 tojson 过滤以保证生成的JSON格式正确，如需使用原始字符串请使用 |safe 过滤器，如：{{ text|safe }}",
+          "placeholder": "{\n  \"title\": \"{{ title }}\",\n  \"text\": \"{{ text }}\",\n  \"image\": \"{{ image }}\",\n  \"url\": \"{{ url }}\",\n  \"user_id\": \"{{ user_id }}\"\n}",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        },
+        {
+          "key": "json_list_tpl",
+          "title": "列表消息模板",
+          "type": "textarea",
+          "required": false,
+          "tooltip": "Jinja2 JSON模板，用于列表消息。可用变量：title, user_id, medias（数组，每项包含：title, url, type, vote）。字符串变量默认会进行 tojson 过滤以保证生成的JSON格式正确，如需使用原始字符串请使用 |safe 过滤器，如：{{ media.title|safe }}",
+          "placeholder": "{\n  \"title\": \"{{ title }}\",\n  \"user_id\": \"{{ user_id }}\",\n  \"items\": [\n    {% for media in medias %}\n    {\n      \"title\": \"{{ media.title }}\",\n      \"url\": \"{{ media.url }}\",\n      \"type\": \"{{ media.type }}\",\n      \"vote\": \"{{ media.vote }}\"\n    }{% if not loop.last %},{% endif %}\n    {% endfor %}\n  ]\n}",
+          "default": null,
+          "options": [],
+          "writeOnly": true
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "download_start",
+      "label": "新增下载"
+    },
+    {
+      "id": "download_fail",
+      "label": "下载失败"
+    },
+    {
+      "id": "transfer_finished",
+      "label": "入库完成"
+    },
+    {
+      "id": "transfer_fail",
+      "label": "入库失败"
+    },
+    {
+      "id": "rss_added",
+      "label": "新增订阅"
+    },
+    {
+      "id": "rss_finished",
+      "label": "订阅完成"
+    },
+    {
+      "id": "site_signin",
+      "label": "站点签到"
+    },
+    {
+      "id": "site_message",
+      "label": "站点消息"
+    },
+    {
+      "id": "brushtask_added",
+      "label": "刷流下种"
+    },
+    {
+      "id": "brushtask_remove",
+      "label": "刷流删种"
+    },
+    {
+      "id": "auto_remove_torrents",
+      "label": "自动删种"
+    },
+    {
+      "id": "ptrefresh_date_message",
+      "label": "数据统计"
+    },
+    {
+      "id": "mediaserver_message",
+      "label": "媒体服务"
+    },
+    {
+      "id": "custom_message",
+      "label": "插件消息"
+    }
+  ]
+}

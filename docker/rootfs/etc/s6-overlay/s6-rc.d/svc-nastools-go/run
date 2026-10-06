@@ -1,0 +1,23 @@
+#!/usr/bin/with-contenv bash
+# shellcheck shell=bash
+
+if [ "${NASTOOL_UI_MODE:-legacy}" != "react" ]; then
+    exec sleep infinity
+fi
+
+if [ -f "${NASTOOL_CONFIG}" ]; then
+    NT_PORT=$(yq '.app.web_port' "${NASTOOL_CONFIG}")
+else
+    NT_PORT=3000
+fi
+if ! [[ "${NT_PORT}" =~ ^[0-9]+$ ]]; then
+    NT_PORT=3000
+fi
+
+export NASTOOL_GO_ADDRESS="${NASTOOL_GO_ADDRESS:-0.0.0.0:${NT_PORT}}"
+export NASTOOL_LEGACY_URL="${NASTOOL_LEGACY_URL:-http://127.0.0.1:${NASTOOL_LEGACY_PORT:-3002}}"
+export NASTOOL_FRONTEND_DIST="${NASTOOL_FRONTEND_DIST:-${WORKDIR}/frontend/dist}"
+
+exec \
+    s6-notifyoncheck -d -n 300 -w 1000 -c "wget -q -O - http://127.0.0.1:${NT_PORT}/api/v1/health >/dev/null" \
+    s6-setuidgid nt /usr/local/bin/nas-tools-go

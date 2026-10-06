@@ -3,10 +3,21 @@
 
 umask ${UMASK}
 
-if [ -f ${NASTOOL_CONFIG} ]; then
-    NT_PORT=$(yq '.app.web_port' /config/config.yaml)
+if [ "${NASTOOL_UI_MODE:-legacy}" = "react" ]; then
+    export NASTOOL_LEGACY_PORT="${NASTOOL_LEGACY_PORT:-3002}"
+    NT_PORT="${NASTOOL_LEGACY_PORT}"
+elif [ -f ${NASTOOL_CONFIG} ]; then
+    NT_PORT=$(yq '.app.web_port' "${NASTOOL_CONFIG}")
 else
     NT_PORT=3000
+fi
+if ! [[ "${NT_PORT}" =~ ^[0-9]+$ ]]; then
+    if [ "${NASTOOL_UI_MODE:-legacy}" = "react" ]; then
+        NT_PORT=3002
+        export NASTOOL_LEGACY_PORT="${NT_PORT}"
+    else
+        NT_PORT=3000
+    fi
 fi
 
 exec \

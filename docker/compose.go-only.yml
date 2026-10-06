@@ -1,0 +1,11 @@
+services:
+  nas-tools-go-only:
+    build:
+      context: ..
+      dockerfile: docker/go-only.Dockerfile
+    image: nas-tools:go-only-candidate
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../config:/config
+    restart: unless-stopped
