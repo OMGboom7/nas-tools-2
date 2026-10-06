@@ -38,13 +38,11 @@ func (p *rssWorkerPlan) reconcile(now time.Time, tasks []rsstaskconfig.Task) []i
 			continue
 		}
 		entry, exists := p.tasks[task.ID]
-		// Unsupported task types stay visible as one sanitized warning, not
-		// as a successfully executed or silently substituted download task.
 		key := task.Uses + ":" + raw
 		if !exists || entry.raw != key {
 			entry = rssScheduledTask{raw: key}
-			if task.Uses != "D" {
-				slog.Warn("native RSS scheduled task type is not migrated", "task_id", task.ID)
+			if task.Uses != "D" && task.Uses != "R" && task.Uses != "S" {
+				slog.Warn("native RSS scheduled task type is invalid", "task_id", task.ID)
 			} else {
 				schedule, err := parseRSSSchedule(raw, p.location)
 				if err == nil {
@@ -136,7 +134,7 @@ func (api *rssRunAPI) executeScheduled(ctx context.Context, id int64, raw string
 	// Recheck immediately before execution: disable/delete/edit takes effect
 	// even if the task was due in the last snapshot.
 	task, err := api.preview.tasks.Get(ctx, id)
-	if err != nil || ctx.Err() != nil || !rssTaskEnabled(task) || task.Uses != "D" || task.Uses+":"+strings.TrimSpace(task.Interval) != raw {
+	if err != nil || ctx.Err() != nil || !rssTaskEnabled(task) || (task.Uses != "D" && task.Uses != "R" && task.Uses != "S") || task.Uses+":"+strings.TrimSpace(task.Interval) != raw {
 		return
 	}
 	result, failure := api.execute(ctx, id)
@@ -147,7 +145,7 @@ func (api *rssRunAPI) executeScheduled(ctx context.Context, id int64, raw string
 		}
 		return
 	}
-	slog.Info("native RSS scheduled execution finished", "task_id", id, "total", result.Total, "downloaded", result.Downloaded, "skipped", result.Skipped, "uncertain", result.Uncertain)
+	slog.Info("native RSS scheduled execution finished", "task_id", id, "total", result.Total, "downloaded", result.Downloaded, "subscribed", result.Subscribed, "skipped", result.Skipped, "uncertain", result.Uncertain)
 }
 
 func rssWorkerLocation() (*time.Location, error) {

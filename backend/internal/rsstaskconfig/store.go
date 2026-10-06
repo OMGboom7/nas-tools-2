@@ -170,14 +170,14 @@ func (store *Store) History(ctx context.Context, taskID int64) ([]HistoryEntry, 
 
 // IsProcessed uses the same shared enclosure key as the legacy RSS checker.
 func (store *Store) IsProcessed(ctx context.Context, uses, title, year, enclosure string) (bool, error) {
-	if uses != "D" && uses != "R" {
+	if uses != "D" && uses != "R" && uses != "S" {
 		return false, nil
 	}
 	name := title
 	if year != "" {
 		name += " " + year
 	}
-	if uses == "R" {
+	if uses != "D" {
 		enclosure = name
 	}
 	var exists int

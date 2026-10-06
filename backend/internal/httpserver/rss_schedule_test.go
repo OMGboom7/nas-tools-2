@@ -79,7 +79,7 @@ func TestRSSScheduleDSTAndTimezone(t *testing.T) {
 func TestRSSWorkerReconcilesLiveSchedules(t *testing.T) {
 	base := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
 	plan := rssWorkerPlan{location: time.UTC}
-	tasks := []rsstaskconfig.Task{{ID: 1, State: "Y", Uses: "D", Interval: "2"}, {ID: 2, State: "1", Uses: "D", Interval: "* * * * *"}, {ID: 3, State: "N", Uses: "D", Interval: "1"}, {ID: 4, State: "Y", Uses: "R", Interval: "1"}, {ID: 5, State: "Y", Uses: "D", Interval: "bad"}}
+	tasks := []rsstaskconfig.Task{{ID: 1, State: "Y", Uses: "D", Interval: "2"}, {ID: 2, State: "1", Uses: "D", Interval: "* * * * *"}, {ID: 3, State: "N", Uses: "D", Interval: "1"}, {ID: 4, State: "Y", Uses: "X", Interval: "1"}, {ID: 5, State: "Y", Uses: "D", Interval: "bad"}}
 	check := func(now time.Time, want ...int64) {
 		t.Helper()
 		got := plan.reconcile(now, tasks)

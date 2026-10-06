@@ -59,14 +59,6 @@ func (service subscriptionService) serveNativeSubscriptionUpsert(response http.R
 }
 
 func (service subscriptionService) upsertNativeSubscription(ctx context.Context, input subscriptionUpsertRequest, metadata *nativeSubscriptionMetadata) (int64, error) {
-	var id int64
-	if input.ID != "" {
-		parsed, err := strconv.ParseInt(input.ID, 10, 64)
-		if err != nil || parsed <= 0 {
-			return 0, errInvalidSubscriptionSelector
-		}
-		id = parsed
-	}
 	database, err := service.openNativeSubscriptionWriteDatabase()
 	if err != nil {
 		return 0, err
@@ -77,6 +69,27 @@ func (service subscriptionService) upsertNativeSubscription(ctx context.Context,
 		return 0, err
 	}
 	defer transaction.Rollback()
+	id, err := upsertNativeSubscriptionTx(ctx, transaction, input, metadata)
+	if err != nil {
+		return 0, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// RSS subscriptions share the same transaction with their processed marker
+// and successful task counter. No local completion is recorded before a write.
+func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input subscriptionUpsertRequest, metadata *nativeSubscriptionMetadata) (int64, error) {
+	var id int64
+	if input.ID != "" {
+		parsed, err := strconv.ParseInt(input.ID, 10, 64)
+		if err != nil || parsed <= 0 {
+			return 0, errInvalidSubscriptionSelector
+		}
+		id = parsed
+	}
 	table := "RSS_MOVIES"
 	if input.Type == "TV" {
 		table = "RSS_TVS"
@@ -185,9 +198,6 @@ func (service subscriptionService) upsertNativeSubscription(ctx context.Context,
 		if err != nil {
 			return 0, err
 		}
-	}
-	if err := transaction.Commit(); err != nil {
-		return 0, err
 	}
 	return id, nil
 }

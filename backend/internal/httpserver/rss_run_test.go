@@ -136,11 +136,11 @@ func TestRSSRunDownloadsFiltersAndPersistsWithoutPython(t *testing.T) {
 	if response.Code != 422 || feeds != before {
 		t.Fatal(response.Code, response.Body.String(), feeds)
 	}
-	if _, err := db.Exec(`UPDATE CONFIG_USER_RSS SET USES='R' WHERE ID=7`); err != nil {
+	if _, err := db.Exec(`UPDATE CONFIG_USER_RSS SET USES='X' WHERE ID=7`); err != nil {
 		t.Fatal(err)
 	}
 	response = performFormRequest(handler, "/api/v1/rss/run", token, url.Values{"id": {"7"}})
-	if response.Code != 501 || feeds != before {
+	if response.Code != 422 || feeds != before {
 		t.Fatal(response.Code, response.Body.String(), feeds)
 	}
 	if response := performFormRequest(handler, "/api/v1/rss/run", "", url.Values{"id": {"7"}}); response.Code != 401 {
