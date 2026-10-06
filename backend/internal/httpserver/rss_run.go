@@ -27,6 +27,7 @@ type rssRunAPI struct {
 	pureGo      bool
 	mu          sync.Mutex
 	running     map[int64]bool
+	refresh     *subscriptionRefreshAPI
 }
 
 type rssRunResult struct {

@@ -57,7 +57,9 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid native RSS worker timezone")
 		}
-		wait = startRSSWorker(workerContext, runner, location)
+		waitRSS := startRSSWorker(workerContext, runner, location)
+		waitRefresh := startSubscriptionRefreshWorker(workerContext, runner.refresh)
+		wait = func() { waitRSS(); waitRefresh() }
 	}
 	return handler, wait, nil
 }
@@ -289,6 +291,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},
 	}
 	mux.HandleFunc("POST /api/v1/rss/run", rssRunner.serveHTTP)
+	rssRunner.refresh = &subscriptionRefreshAPI{service: subscriptions, auth: nativeAuth, pureGo: cfg.DisableLegacy}
+	mux.HandleFunc("POST /api/v1/subscriptions/refresh", rssRunner.refresh.serveHTTP)
 	mux.HandleFunc("POST /api/v1/rss/name/test", (rssNameAPI{tasks: nativeRSSTasks, filters: nativeFilters, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}).serveHTTP)
 	mux.HandleFunc("POST /api/v1/service/name/test", (mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}).serveHTTP)
 	mux.HandleFunc("GET /api/v1/service/mediainfo", (mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}).serveAPIKey)
