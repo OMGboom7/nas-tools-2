@@ -12,15 +12,18 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
 	"github.com/0xforee/nas-tools/backend/internal/regexcompat"
+	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/dlclark/regexp2"
 )
 
 type subscriptionCandidate struct {
-	Title    string `json:"title"`
-	Site     string `json:"site"`
-	Priority int    `json:"priority"`
-	Episodes []int  `json:"episodes,omitempty"`
-	resource externalindexer.Resource
+	Title     string `json:"title"`
+	Site      string `json:"site"`
+	Priority  int    `json:"priority"`
+	Episodes  []int  `json:"episodes,omitempty"`
+	resource  externalindexer.Resource
+	site      *siteconfig.Site
+	siteOrder int
 }
 
 type subscriptionCandidateInput struct {
@@ -32,10 +35,13 @@ type subscriptionCandidateInput struct {
 }
 
 type identifiedSubscriptionResource struct {
-	resource externalindexer.Resource
-	meta     mediameta.Metadata
-	revised  string
-	subtitle string
+	resource  externalindexer.Resource
+	meta      mediameta.Metadata
+	revised   string
+	subtitle  string
+	site      *siteconfig.Site
+	siteOrder int
+	siteGroup *int64
 }
 
 var candidateEpisodeChain = regexp.MustCompile(`(?i)(?:s[0-9]{1,2})?(e[0-9]{1,4}(?:e[0-9]{1,4})+)`)
@@ -162,14 +168,18 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 				continue
 			}
 		}
-		result, err := filterconfig.MatchGroups(groups, input.Group, filterconfig.TorrentMetadata{Title: item.revised, Subtitle: item.subtitle, SizeBytes: float64(item.resource.Size), Movie: !input.TV, Episodes: episodeCount, UploadFactor: item.resource.UploadFactor, DownloadFactor: item.resource.DownloadFactor, RequireKnown: true})
+		group := input.Group
+		if group == 0 && item.siteGroup != nil {
+			group = *item.siteGroup
+		}
+		result, err := filterconfig.MatchGroups(groups, group, filterconfig.TorrentMetadata{Title: item.revised, Subtitle: item.subtitle, SizeBytes: float64(item.resource.Size), Movie: !input.TV, Episodes: episodeCount, UploadFactor: item.resource.UploadFactor, DownloadFactor: item.resource.DownloadFactor, RequireKnown: true})
 		if err != nil {
 			return nil, nil, err
 		}
 		if !result.Matched {
 			continue
 		}
-		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, resource: item.resource})
+		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, resource: item.resource, site: item.site, siteOrder: item.siteOrder})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
@@ -178,6 +188,9 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 		}
 		if len(a.Episodes) != len(b.Episodes) {
 			return len(a.Episodes) > len(b.Episodes)
+		}
+		if a.siteOrder != b.siteOrder {
+			return a.siteOrder > b.siteOrder
 		}
 		if (a.resource.Seeders != nil) != (b.resource.Seeders != nil) {
 			return a.resource.Seeders != nil

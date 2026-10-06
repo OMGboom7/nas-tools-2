@@ -16,6 +16,8 @@ type subscriptionSearchPlanner struct {
 	search *nativeExternalResourceSearch
 }
 
+type subscriptionResourceProvider func(context.Context, map[string]any, string, string) ([]identifiedSubscriptionResource, *recognitionFailure)
+
 type subscriptionSearchPlan struct {
 	Candidates      []subscriptionCandidate `json:"candidates"`
 	Remaining       []int                   `json:"remaining"`
@@ -73,6 +75,10 @@ func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id i
 }
 
 func (api subscriptionSearchPlanner) planSelected(ctx context.Context, kind string, id int64, expectedState string, executing bool) (subscriptionSearchPlan, *recognitionFailure) {
+	return api.planResources(ctx, kind, id, expectedState, executing, nil)
+}
+
+func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind string, id int64, expectedState string, executing bool, provider subscriptionResourceProvider) (subscriptionSearchPlan, *recognitionFailure) {
 	plan := subscriptionSearchPlan{Candidates: []subscriptionCandidate{}, Remaining: []int{}}
 	fail := func(status int, message string) (subscriptionSearchPlan, *recognitionFailure) {
 		return plan, &recognitionFailure{status, message}
@@ -208,6 +214,18 @@ func (api subscriptionSearchPlanner) planSelected(ctx context.Context, kind stri
 	}
 	if _, _, err := planSubscriptionCandidates(ctx, selection, groups, nil); err != nil {
 		return fail(422, "invalid subscription filter configuration")
+	}
+	if provider != nil {
+		identified, failure := provider(ctx, raw, mediaKind, input.MediaID)
+		if failure != nil {
+			return plan, failure
+		}
+		plan.Fetched = len(identified)
+		plan.Candidates, plan.Remaining, err = planSubscriptionCandidates(ctx, selection, groups, identified)
+		if err != nil {
+			return fail(422, "subscription RSS candidate planning failed")
+		}
+		return plan, nil
 	}
 	// Do not normalize malformed saved JSON into an empty/global selection.
 	encoded := json.RawMessage(text(raw["SEARCH_SITES"]))

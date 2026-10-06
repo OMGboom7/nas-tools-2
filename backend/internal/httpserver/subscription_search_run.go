@@ -13,6 +13,7 @@ type subscriptionSearchRunner struct {
 	planner subscriptionSearchPlanner
 	mu      sync.Mutex
 	running map[string]bool
+	feeds   *subscriptionRSSAPI
 }
 
 type subscriptionSearchRunResult struct {
@@ -64,6 +65,10 @@ func (api *subscriptionSearchRunner) execute(parent context.Context, kind string
 }
 
 func (api *subscriptionSearchRunner) executeForState(parent context.Context, kind string, id int64, state string) (subscriptionSearchRunResult, *recognitionFailure) {
+	return api.executeResources(parent, kind, id, state, nil)
+}
+
+func (api *subscriptionSearchRunner) executeResources(parent context.Context, kind string, id int64, state string, provider subscriptionResourceProvider) (subscriptionSearchRunResult, *recognitionFailure) {
 	result := subscriptionSearchRunResult{Remaining: []int{}}
 	fail := func(status int, message string) (subscriptionSearchRunResult, *recognitionFailure) {
 		return result, &recognitionFailure{status, message}
@@ -85,7 +90,7 @@ func (api *subscriptionSearchRunner) executeForState(parent context.Context, kin
 	defer func() { api.mu.Lock(); delete(api.running, key); api.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
-	plan, failure := api.planner.planSelected(ctx, kind, id, state, true)
+	plan, failure := api.planner.planResources(ctx, kind, id, state, true, provider)
 	if failure != nil {
 		return result, failure
 	}
@@ -117,7 +122,7 @@ func (api *subscriptionSearchRunner) executeForState(parent context.Context, kin
 		if err != nil {
 			return fail(503, "subscription download settings are unavailable or unsupported")
 		}
-		magnet, torrent, err := download.prepareNativeSearchTorrent(ctx, candidate.resource)
+		magnet, torrent, err := download.prepareSubscriptionTorrent(ctx, candidate)
 		if err != nil {
 			return fail(502, "subscription torrent could not be retrieved")
 		}

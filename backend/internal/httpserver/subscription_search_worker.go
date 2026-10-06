@@ -17,6 +17,41 @@ const subscriptionQueueInterval = 5 * time.Minute
 type subscriptionWorkerPlan struct {
 	nextQueue, nextRecurring time.Time
 	interval                 time.Duration
+	nextFeed                 time.Time
+	feedInterval             time.Duration
+}
+
+func subscriptionFeedInterval(value any) (time.Duration, error) {
+	raw := strings.TrimSpace(text(value))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseFloat(raw, 64)
+	if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > 3153600000 {
+		return 0, errors.New("invalid subscription RSS interval")
+	}
+	n = math.RoundToEven(n)
+	if n == 0 {
+		return 0, nil
+	}
+	if n < 300 {
+		n = 300
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
+func (p *subscriptionWorkerPlan) reconcileFeed(now time.Time, interval time.Duration) bool {
+	if p.feedInterval != interval {
+		p.feedInterval, p.nextFeed = interval, time.Time{}
+		if interval > 0 {
+			p.nextFeed = now.Add(interval)
+		}
+	}
+	if p.nextFeed.IsZero() || p.nextFeed.After(now) {
+		return false
+	}
+	p.nextFeed = now.Add(interval - now.Sub(p.nextFeed)%interval)
+	return true
 }
 
 // Equivalent to Python's round for ordinary numeric config values; minimum
@@ -91,6 +126,16 @@ func (api *subscriptionSearchRunner) recurringInterval() (time.Duration, string,
 	return interval, text(value), err
 }
 
+func (api *subscriptionRSSAPI) interval() (time.Duration, string, error) {
+	configuration, err := api.runner.planner.runner.recognition.service.configStore.Snapshot()
+	if err != nil {
+		return 0, "", err
+	}
+	value := objectValue(configuration["pt"])["pt_check_interval"]
+	interval, err := subscriptionFeedInterval(value)
+	return interval, text(value), err
+}
+
 func runSubscriptionSearchWorker(parent context.Context, runner *subscriptionSearchRunner, initial time.Time, ticks <-chan time.Time) {
 	if runner == nil || runner.planner.runner == nil || !runner.planner.runner.pureGo || runner.planner.search == nil {
 		return
@@ -102,6 +147,8 @@ func runSubscriptionSearchWorker(parent context.Context, runner *subscriptionSea
 	plan := subscriptionWorkerPlan{}
 	lastInvalid := ""
 	invalidReported := false
+	lastInvalidFeed := ""
+	invalidFeedReported := false
 	poll := func(now time.Time) {
 		if ctx.Err() != nil {
 			return
@@ -116,7 +163,22 @@ func runSubscriptionSearchWorker(parent context.Context, runner *subscriptionSea
 			invalidReported = false
 		}
 		states := plan.reconcile(now, interval)
-		if len(states) == 0 {
+		feedInterval := time.Duration(0)
+		if runner.feeds != nil {
+			var raw string
+			var err error
+			feedInterval, raw, err = runner.feeds.interval()
+			if err != nil {
+				if !invalidFeedReported || raw != lastInvalidFeed {
+					slog.Warn("native subscription RSS interval is invalid or unavailable")
+				}
+				lastInvalidFeed, invalidFeedReported = raw, true
+			} else {
+				invalidFeedReported = false
+			}
+		}
+		feedDue := plan.reconcileFeed(now, feedInterval)
+		if len(states) == 0 && !feedDue {
 			return
 		}
 		select {
@@ -129,7 +191,25 @@ func runSubscriptionSearchWorker(parent context.Context, runner *subscriptionSea
 		go func() {
 			defer batches.Done()
 			defer func() { <-batchSlot }()
-			runner.executeSearchBatch(ctx, states, interval)
+			if len(states) > 0 {
+				runner.executeSearchBatch(ctx, states, interval)
+			}
+			if feedDue && ctx.Err() == nil {
+				current, _, err := runner.feeds.interval()
+				if err != nil || current == 0 || current != feedInterval {
+					return
+				}
+				feedCtx, stop := context.WithTimeout(ctx, 5*time.Minute)
+				defer stop()
+				result, failure := runner.feeds.execute(feedCtx)
+				if failure != nil {
+					if ctx.Err() == nil {
+						slog.Warn("native subscription RSS scan failed", "status", failure.status)
+					}
+				} else {
+					slog.Info("native subscription RSS scan finished", "subscriptions", result.Subscriptions, "submitted", result.Submitted, "completed", result.Completed, "failed", result.Failed)
+				}
+			}
 		}()
 	}
 	poll(initial)
@@ -147,6 +227,10 @@ func runSubscriptionSearchWorker(parent context.Context, runner *subscriptionSea
 }
 
 func (api *subscriptionSearchRunner) scheduledSubscriptions(ctx context.Context, states []string) ([]scheduledSubscription, error) {
+	return api.selectScheduledSubscriptions(ctx, states, false)
+}
+
+func (api *subscriptionSearchRunner) selectScheduledSubscriptions(ctx context.Context, states []string, includeFuzzy bool) ([]scheduledSubscription, error) {
 	db, err := api.planner.runner.recognition.service.openNativeSubscriptionDatabase(ctx)
 	if err != nil {
 		return nil, err
@@ -171,7 +255,7 @@ func (api *subscriptionSearchRunner) scheduledSubscriptions(ctx context.Context,
 				continue
 			}
 			item := normalizeNativeSubscriptionRow(row)
-			if truthy(item["fuzzy_match"]) {
+			if !includeFuzzy && truthy(item["fuzzy_match"]) {
 				continue
 			} // Same as the legacy search worker.
 			id, err := strconv.ParseInt(text(row["ID"]), 10, 64)

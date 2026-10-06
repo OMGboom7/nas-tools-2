@@ -122,3 +122,20 @@ func (service downloadService) prepareNativeSearchTorrent(ctx context.Context, r
 	}
 	return "", contents, nil
 }
+
+func (service downloadService) prepareSubscriptionTorrent(ctx context.Context, candidate subscriptionCandidate) (string, []byte, error) {
+	if candidate.site == nil || validMagnet(candidate.resource.DownloadURL) {
+		return service.prepareNativeSearchTorrent(ctx, candidate.resource)
+	}
+	if !subscriptionSiteOriginAllowed(*candidate.site, candidate.resource.DownloadURL) {
+		return "", nil, errSiteLinkNotAllowed
+	}
+	contents, err := service.fetchSiteTorrent(ctx, *candidate.site, candidate.resource.DownloadURL)
+	if err != nil {
+		return "", nil, err
+	}
+	if validMagnet(string(contents)) {
+		return string(contents), nil, nil
+	}
+	return "", contents, nil
+}
