@@ -86,10 +86,11 @@ func (api mediaNameAPI) serveHTTP(response http.ResponseWriter, request *http.Re
 }
 
 type nativeRecognition struct {
-	data   map[string]any
-	meta   mediameta.Metadata
-	detail tmdbMediaDetails
-	kind   string
+	data     map[string]any
+	meta     mediameta.Metadata
+	detail   tmdbMediaDetails
+	kind     string
+	subtitle string
 }
 
 type recognitionFailure struct {
@@ -201,7 +202,7 @@ func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forc
 			episodeLink += "/episode/" + strconv.Itoa(*meta.Episodes.Episode)
 		}
 	}
-	return &nativeRecognition{meta: meta, detail: detail, kind: kind, data: map[string]any{
+	return &nativeRecognition{meta: meta, detail: detail, kind: kind, subtitle: processedSubtitle.Title, data: map[string]any{
 		"type": typeName, "name": meta.Title, "title": verifiedTitle, "year": year,
 		"season_episode": seasonEpisode, "part": "", "tmdbid": detail.ID, "tmdblink": link, "tmdb_S_E_link": episodeLink,
 		"category": category, "restype": meta.Source, "effect": meta.Effect, "pix": meta.Resolution,
