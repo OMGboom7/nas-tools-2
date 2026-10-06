@@ -65,21 +65,7 @@ func (api *rssRunAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, 400, "invalid RSS task id")
 		return
 	}
-	api.mu.Lock()
-	if api.running == nil {
-		api.running = map[int64]bool{}
-	}
-	if api.running[id] {
-		api.mu.Unlock()
-		writeAPIError(w, 409, 409, "RSS task is already running")
-		return
-	}
-	api.running[id] = true
-	api.mu.Unlock()
-	defer func() { api.mu.Lock(); delete(api.running, id); api.mu.Unlock() }()
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
-	result, failure := api.run(ctx, id)
+	result, failure := api.execute(r.Context(), id)
 	if failure != nil {
 		writeJSON(w, failure.status, map[string]any{"code": failure.status, "success": false, "message": failure.message, "data": result})
 		return
@@ -89,6 +75,28 @@ func (api *rssRunAPI) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		code, message = 1, "some submissions require downloader verification and will not be retried automatically"
 	}
 	writeJSON(w, 200, map[string]any{"code": code, "success": code == 0, "message": message, "data": result})
+}
+
+// execute is shared by HTTP and the native worker, so scheduled and manual
+// executions cannot overlap even before a resource obtains its durable claim.
+func (api *rssRunAPI) execute(parent context.Context, id int64) (rssRunResult, *recognitionFailure) {
+	if !api.pureGo {
+		return rssRunResult{}, &recognitionFailure{501, "native RSS execution requires disabled legacy backend"}
+	}
+	api.mu.Lock()
+	if api.running == nil {
+		api.running = map[int64]bool{}
+	}
+	if api.running[id] {
+		api.mu.Unlock()
+		return rssRunResult{}, &recognitionFailure{409, "RSS task is already running"}
+	}
+	api.running[id] = true
+	api.mu.Unlock()
+	defer func() { api.mu.Lock(); delete(api.running, id); api.mu.Unlock() }()
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	defer cancel()
+	return api.run(ctx, id)
 }
 
 func (api *rssRunAPI) run(ctx context.Context, id int64) (rssRunResult, *recognitionFailure) {

@@ -21,20 +21,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler, err := httpserver.New(cfg)
+	shutdownSignal, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	workerContext, cancelWorkers := context.WithCancel(shutdownSignal)
+	defer cancelWorkers()
+	handler, waitWorkers, err := httpserver.NewWithContext(workerContext, cfg)
 	if err != nil {
 		slog.Error("cannot create HTTP server", "error", err)
 		os.Exit(1)
 	}
+	defer waitWorkers()
 
 	server := &http.Server{
 		Addr:              cfg.Address,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	shutdownSignal, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		<-shutdownSignal.Done()
@@ -47,7 +49,10 @@ func main() {
 
 	slog.Info("Go migration gateway started", "address", cfg.Address, "legacy", cfg.LegacyBackendURL)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		cancelWorkers()
+		waitWorkers()
 		slog.Error("server stopped unexpectedly", "error", err)
 		os.Exit(1)
 	}
+	cancelWorkers()
 }

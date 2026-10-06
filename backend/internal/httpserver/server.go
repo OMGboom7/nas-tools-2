@@ -34,6 +34,35 @@ func New(cfg config.Config) (http.Handler, error) {
 }
 
 func newHandler(cfg config.Config, transport http.RoundTripper) (http.Handler, error) {
+	handler, _, err := newRuntimeHandler(nil, cfg, transport)
+	return handler, err
+}
+
+// NewWithContext starts production workers only in pure-Go mode. The returned
+// wait function joins them after ctx cancellation; handler-only New is useful
+// for embedders that do not own background execution.
+func NewWithContext(ctx context.Context, cfg config.Config) (http.Handler, func(), error) {
+	return newRuntimeHandler(ctx, cfg, http.DefaultTransport)
+}
+
+func newRuntimeHandler(workerContext context.Context, cfg config.Config, transport http.RoundTripper) (http.Handler, func(), error) {
+	var runner *rssRunAPI
+	handler, err := buildHandler(cfg, transport, &runner)
+	if err != nil {
+		return nil, nil, err
+	}
+	wait := func() {}
+	if workerContext != nil && cfg.DisableLegacy && runner.preview.tasks != nil {
+		location, err := rssWorkerLocation()
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid native RSS worker timezone")
+		}
+		wait = startRSSWorker(workerContext, runner, location)
+	}
+	return handler, wait, nil
+}
+
+func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rssRunAPI) (http.Handler, error) {
 	if cfg.HostsPath != "" && (!filepath.IsAbs(cfg.HostsPath) || !cfg.DisableLegacy) {
 		return nil, fmt.Errorf("native hosts restoration requires an absolute path and disabled legacy backend")
 	}
@@ -389,6 +418,7 @@ func newHandler(cfg config.Config, transport http.RoundTripper) (http.Handler, e
 			slog.Info("native CustomHosts restored", "invalid_lines", len(result.Invalid), "legacy_block", result.LegacyBlock)
 		}
 	}
+	*runnerOut = rssRunner
 	return logging(handler), nil
 }
 
