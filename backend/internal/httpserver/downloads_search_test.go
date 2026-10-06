@@ -101,7 +101,7 @@ func TestCachedSearchDownloadIsPrivateAndNeverCallsPython(t *testing.T) {
 	if w := call("fake-token", ids[1], ""); w.Code != 401 {
 		t.Fatal(w.Code)
 	}
-	if w := call(token, ids[1], `,"directory":"override"`); w.Code != 501 {
+	if w := call(token, ids[1], `,"directory":"override"`); w.Code != 400 {
 		t.Fatal(w.Code)
 	}
 	fetchFailure = true

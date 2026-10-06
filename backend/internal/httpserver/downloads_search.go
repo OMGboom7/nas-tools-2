@@ -33,10 +33,6 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 		writeAPIError(response, 403, 403, "download permission is required")
 		return
 	}
-	if input.Directory != "" || input.Setting != "" {
-		writeAPIError(response, 501, 501, "custom search download directories/settings are not migrated")
-		return
-	}
 	owner := strconv.FormatInt(user.ID, 10) + ":" + user.Name
 	resource, done, err := service.resources.Claim(owner, input.ResourceID)
 	if err != nil {
@@ -55,13 +51,21 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 	defer func() { service.resources.Finish(owner, input.ResourceID, succeeded) }()
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
 	defer cancel()
-	downloader, _, handled, err := service.configuredDownloader(ctx, "")
-	if err != nil || !handled || downloader.ID == 0 || downloader.Enabled == 0 {
-		writeAPIError(response, 503, 503, "default downloader is unavailable or disabled")
+	downloader, options, err := service.searchDownloadSettings(ctx, resource.Indexer, input)
+	if errors.Is(err, errSearchDownloadSelection) {
+		writeAPIError(response, 400, 400, "invalid download setting or directory selection")
+		return
+	}
+	if errors.Is(err, errDownloadOptionsUnsupported) {
+		writeAPIError(response, 501, 501, "selected downloader does not support these download settings")
+		return
+	}
+	if err != nil {
+		writeAPIError(response, 503, 503, "selected download configuration is unavailable or disabled")
 		return
 	}
 	if downloader.Type != "qbittorrent" && downloader.Type != "transmission" && downloader.Type != "aria2" && downloader.Type != "pan115" {
-		writeAPIError(response, 501, 501, "default downloader type is not migrated")
+		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
 		return
 	}
 	magnet := resource.DownloadURL
@@ -97,9 +101,13 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 			torrent = contents
 		}
 	}
-	_, handled, err = service.nativeAddDownloadWithOptions(ctx, magnet, torrent, strconv.FormatInt(downloader.ID, 10), downloadAddOptions{})
+	_, handled, err := service.nativeAddDownloadWithOptions(ctx, magnet, torrent, strconv.FormatInt(downloader.ID, 10), options)
 	if !handled {
-		writeAPIError(response, 501, 501, "default downloader type is not migrated")
+		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
+		return
+	}
+	if errors.Is(err, errDownloadOptionsUnsupported) {
+		writeAPIError(response, 501, 501, "selected downloader does not support these download settings")
 		return
 	}
 	if err != nil {
