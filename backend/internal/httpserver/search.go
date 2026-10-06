@@ -20,8 +20,9 @@ type searchService struct {
 }
 
 type searchRequest struct {
-	Keyword string `json:"keyword"`
-	Quick   bool   `json:"quick"`
+	Keyword  string   `json:"keyword"`
+	Quick    bool     `json:"quick"`
+	Indexers []string `json:"indexers,omitempty"`
 }
 
 type searchData struct {
@@ -99,9 +100,13 @@ func (service searchService) serveHTTP(response http.ResponseWriter, request *ht
 	ctx, cancel := context.WithTimeout(request.Context(), 90*time.Second)
 	defer cancel()
 	if service.native != nil {
-		data, handled, err := service.native.search(ctx, token, input.Keyword, input.Quick)
+		data, handled, err := service.native.searchSelected(ctx, token, input.Keyword, input.Quick, input.Indexers)
 		if handled {
 			if err != nil {
+				if errors.Is(err, errNativeSearchSelection) {
+					writeAPIError(response, 400, 400, "requested search indexer is not enabled")
+					return
+				}
 				if errors.Is(err, errNativeSearchPermission) {
 					writeAPIError(response, 403, 403, "resource search permission is required")
 					return
@@ -112,6 +117,10 @@ func (service searchService) serveHTTP(response http.ResponseWriter, request *ht
 			writeJSON(response, 200, map[string]any{"code": 0, "success": true, "data": data})
 			return
 		}
+	}
+	if len(input.Indexers) > 0 {
+		writeAPIError(response, 501, 501, "scoped indexer search requires native configuration")
+		return
 	}
 	form := url.Values{"search_word": {input.Keyword}}
 	if input.Quick {

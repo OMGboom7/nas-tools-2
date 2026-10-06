@@ -2,13 +2,11 @@ package httpserver
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
@@ -33,6 +31,10 @@ type nativeExternalResourceSearch struct {
 var errNativeSearchPermission = errors.New("resource search permission is required")
 
 func (service *nativeExternalResourceSearch) search(ctx context.Context, token, keyword string, quick bool) (searchData, bool, error) {
+	return service.searchSelected(ctx, token, keyword, quick, nil)
+}
+
+func (service *nativeExternalResourceSearch) searchSelected(ctx context.Context, token, keyword string, quick bool, requested []string) (searchData, bool, error) {
 	data := searchData{Keyword: keyword, Items: []searchMedia{}}
 	claims, err := service.auth.service.VerifyToken(token)
 	if err != nil {
@@ -49,99 +51,9 @@ func (service *nativeExternalResourceSearch) search(ctx context.Context, token, 
 	if !permitted {
 		return data, true, errNativeSearchPermission
 	}
-	raw, err := service.system.Get(ctx, "UserIndexerSites")
+	resources, err := service.fetchResources(ctx, keyword, requested)
 	if err != nil {
 		return data, true, err
-	}
-	selected := []string{}
-	if raw != "" && (len(raw) > 64<<10 || json.Unmarshal([]byte(raw), &selected) != nil || len(selected) > 1024) {
-		return data, true, errors.New("invalid selected indexers")
-	}
-	if len(selected) == 0 {
-		return data, true, nil
-	}
-	needed := map[string]bool{}
-	allowed := map[string]bool{}
-	builtin := map[string]bool{}
-	for _, id := range selected {
-		kind := "Jackett"
-		if strings.HasSuffix(id, "-prowlarr") {
-			kind = "Prowlarr"
-		} else if !strings.HasSuffix(id, "-jackett") {
-			builtin[id] = true
-			continue
-		}
-		needed[kind] = true
-		allowed[id] = true
-	}
-	raw, err = service.system.Get(ctx, "UserInstalledPlugins")
-	if err != nil {
-		return data, true, err
-	}
-	installed, err := decodeInstalledPlugins(raw)
-	if err != nil {
-		return data, true, err
-	}
-	active := map[string]bool{}
-	for _, id := range installed {
-		if id != "Jackett" && id != "Prowlarr" && id != "CustomReleaseGroups" && id != "Customization" && id != "CustomHosts" {
-			return data, true, errors.New("installed search plugin is not supported natively")
-		}
-		active[id] = true
-	}
-	resources := []externalindexer.Resource{}
-	if len(builtin) != 0 {
-		resources, err = service.searchBuiltin(ctx, builtin, keyword)
-		if err != nil {
-			return data, true, err
-		}
-	}
-	for _, kind := range []string{"Jackett", "Prowlarr"} {
-		if !needed[kind] {
-			continue
-		}
-		if !active[kind] {
-			return data, true, errors.New("selected provider is not installed")
-		}
-		raw, err := service.system.Get(ctx, "plugin."+kind)
-		if err != nil {
-			return data, true, err
-		}
-		values, err := decodeMetadataConfig(raw)
-		if err != nil {
-			return data, true, err
-		}
-		configuration := externalindexer.Config{Kind: kind}
-		for key, target := range map[string]*string{"host": &configuration.Host, "api_key": &configuration.APIKey, "password": &configuration.Password} {
-			if raw, exists := values[key]; exists {
-				value, ok := raw.(string)
-				if !ok {
-					return data, true, externalindexer.ErrConfig
-				}
-				*target = value
-			}
-		}
-		indexers, err := externalindexer.Discover(ctx, configuration, service.transport)
-		if err != nil {
-			return data, true, err
-		}
-		for _, indexer := range indexers {
-			if !allowed[indexer.ID] {
-				continue
-			}
-			delete(allowed, indexer.ID)
-			items, err := externalindexer.Search(ctx, configuration, indexer, keyword, service.transport)
-			if err != nil {
-				return data, true, err
-			}
-			resources = append(resources, items...)
-			if len(resources) > 2000 {
-				return data, true, searchcache.ErrCapacity
-			}
-		}
-	}
-	if len(allowed) > 0 {
-		return data, true, errors.New("selected indexer is unavailable")
 	}
 	if len(resources) == 0 {
 		return data, true, nil
