@@ -45,7 +45,7 @@ func (service subscriptionService) nativeSubscriptionList(ctx context.Context) (
 }
 
 func (service subscriptionService) openNativeSubscriptionDatabase(ctx context.Context) (*sql.DB, error) {
-	databaseURL := (&url.URL{Scheme: "file", Path: service.databasePath, RawQuery: "mode=ro"}).String()
+	databaseURL := (&url.URL{Scheme: "file", Path: service.databasePath, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}).String()
 	database, err := sql.Open("sqlite", databaseURL)
 	if err != nil {
 		return nil, err
@@ -58,6 +58,19 @@ func (service subscriptionService) openNativeSubscriptionDatabase(ctx context.Co
 }
 
 func readSubscriptionRows(ctx context.Context, database *sql.DB, table string) ([]map[string]any, error) {
+	return querySubscriptionRows(ctx, database, table, "")
+}
+
+func readNativeSubscriptionRow(ctx context.Context, database *sql.DB, table string, id int64) (map[string]any, error) {
+	rows, err := querySubscriptionRows(ctx, database, table, " WHERE ID=?", id)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return rows[0], nil
+}
+
+// The table and predicate are fixed by internal callers, never request text.
+func querySubscriptionRows(ctx context.Context, database *sql.DB, table, predicate string, args ...any) ([]map[string]any, error) {
 	var exists int
 	if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", table).Scan(&exists); err != nil {
 		return nil, err
@@ -66,7 +79,7 @@ func readSubscriptionRows(ctx context.Context, database *sql.DB, table string) (
 		return []map[string]any{}, nil
 	}
 	// table is selected only from the three fixed names supplied by nativeSubscriptionList.
-	rows, err := database.QueryContext(ctx, "SELECT * FROM "+table)
+	rows, err := database.QueryContext(ctx, "SELECT * FROM "+table+predicate, args...)
 	if err != nil {
 		return nil, err
 	}

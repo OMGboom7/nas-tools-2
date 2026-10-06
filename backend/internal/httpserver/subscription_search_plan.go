@@ -69,6 +69,10 @@ func (api subscriptionSearchPlanner) serveHTTP(w http.ResponseWriter, r *http.Re
 }
 
 func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id int64) (subscriptionSearchPlan, *recognitionFailure) {
+	return api.planSelected(ctx, kind, id, "", false)
+}
+
+func (api subscriptionSearchPlanner) planSelected(ctx context.Context, kind string, id int64, expectedState string, executing bool) (subscriptionSearchPlan, *recognitionFailure) {
 	plan := subscriptionSearchPlan{Candidates: []subscriptionCandidate{}, Remaining: []int{}}
 	fail := func(status int, message string) (subscriptionSearchPlan, *recognitionFailure) {
 		return plan, &recognitionFailure{status, message}
@@ -83,22 +87,27 @@ func (api subscriptionSearchPlanner) plan(ctx context.Context, kind string, id i
 	if kind == "TV" {
 		table = "RSS_TVS"
 	}
-	rows, err := readSubscriptionRows(ctx, db, table)
+	raw, err := readNativeSubscriptionRow(ctx, db, table, id)
 	if err != nil {
 		return fail(503, "subscription configuration is unavailable")
-	}
-	var raw map[string]any
-	for _, row := range rows {
-		if text(row["ID"]) == strconv.FormatInt(id, 10) {
-			raw = row
-			break
-		}
 	}
 	if raw == nil {
 		return fail(404, "subscription is unavailable")
 	}
 	item := normalizeNativeSubscriptionRow(raw)
 	plan.raw = raw
+	if expectedState != "" && text(raw["STATE"]) != expectedState {
+		return fail(409, "subscription scheduled state changed")
+	}
+	if executing {
+		pending, err := readPendingSubscriptionSubmission(ctx, db, kind, id)
+		if err != nil {
+			return fail(503, "subscription submission state is unavailable")
+		}
+		if pending {
+			return fail(409, "subscription submission requires verification before retrying")
+		}
+	}
 	if truthy(item["fuzzy_match"]) || truthy(item["over_edition"]) {
 		return fail(501, "fuzzy/edition-upgrade subscription planning is not migrated")
 	}

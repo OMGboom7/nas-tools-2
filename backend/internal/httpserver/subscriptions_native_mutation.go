@@ -124,7 +124,9 @@ func (service subscriptionService) removeNativeSubscription(ctx context.Context,
 }
 
 func (service subscriptionService) openNativeSubscriptionWriteDatabase() (*sql.DB, error) {
-	databaseURL := (&url.URL{Scheme: "file", Path: service.databasePath, RawQuery: "mode=rw&_pragma=busy_timeout(5000)"}).String()
+	// Reserve the writer at BEGIN, before reading the source snapshot. Deferred
+	// read-to-write upgrades can fail immediately when another writer is waiting.
+	databaseURL := (&url.URL{Scheme: "file", Path: service.databasePath, RawQuery: "mode=rw&_pragma=busy_timeout(5000)&_txlock=immediate"}).String()
 	database, err := sql.Open("sqlite", databaseURL)
 	if err != nil {
 		return nil, err

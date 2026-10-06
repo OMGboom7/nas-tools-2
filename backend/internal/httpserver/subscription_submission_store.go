@@ -16,6 +16,21 @@ import (
 
 var errSubscriptionSubmissionConflict = errors.New("subscription submission conflicts with current state")
 
+// Older databases have no native ledger yet. A present ledger with missing
+// shared claims is an error, not proof that an uncertain submission is absent.
+func readPendingSubscriptionSubmission(ctx context.Context, db *sql.DB, kind string, id int64) (bool, error) {
+	var exists bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_SUBSCRIPTION_DOWNLOAD_CLAIMS')`).Scan(&exists); err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	var pending bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_SUBSCRIPTION_DOWNLOAD_CLAIMS s JOIN GO_RSS_DOWNLOAD_CLAIMS r USING(RESOURCE_KEY) WHERE r.STATE='pending' AND s.KIND=? AND s.SUB_ID=?)`, kind, id).Scan(&pending)
+	return pending, err
+}
+
 func subscriptionResourceKey(raw string) string {
 	hash := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(hash[:])
@@ -34,6 +49,8 @@ func ensureSubscriptionSubmissionSchema(ctx context.Context, tx *sql.Tx) error {
 		// Sharing the unique key prevents RSS/subscription duplicate submission.
 		`CREATE TABLE IF NOT EXISTS GO_RSS_DOWNLOAD_CLAIMS (RESOURCE_KEY TEXT PRIMARY KEY,TASK_ID INTEGER NOT NULL,STATE TEXT NOT NULL,UPDATED_AT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_SUBSCRIPTION_DOWNLOAD_CLAIMS (RESOURCE_KEY TEXT PRIMARY KEY,OWNER TEXT NOT NULL,KIND TEXT NOT NULL,SUB_ID INTEGER NOT NULL,MEDIA_ID TEXT NOT NULL,SEASON INTEGER NOT NULL,EPISODES TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS GO_SUBSCRIPTION_CLAIMS_OWNER ON GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(KIND,SUB_ID)`,
+		`CREATE INDEX IF NOT EXISTS GO_SUBSCRIPTION_CLAIMS_MEDIA ON GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(KIND,MEDIA_ID,SEASON)`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return err

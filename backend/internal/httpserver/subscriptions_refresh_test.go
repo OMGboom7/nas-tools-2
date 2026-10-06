@@ -22,7 +22,7 @@ func refreshFixture(t *testing.T, transport http.RoundTripper) (http.Handler, st
 	if err := config.NewStore(appPath).Update(map[string]any{"app.rmt_tmdbkey": "private-key", "app.tmdb_domain": "tmdb.test"}); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=rw&_pragma=busy_timeout(5000)"}).String())
 	if err != nil {
 		t.Fatal(err)
 	}

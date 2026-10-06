@@ -59,7 +59,8 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		}
 		waitRSS := startRSSWorker(workerContext, runner, location)
 		waitRefresh := startSubscriptionRefreshWorker(workerContext, runner.refresh)
-		wait = func() { waitRSS(); waitRefresh() }
+		waitSearch := startSubscriptionSearchWorker(workerContext, runner.search)
+		wait = func() { waitRSS(); waitRefresh(); waitSearch() }
 	}
 	return handler, wait, nil
 }
@@ -293,6 +294,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/rss/run", rssRunner.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/search/plan", (subscriptionSearchPlanner{runner: rssRunner, search: search.native}).serveHTTP)
 	subscriptionRunner := &subscriptionSearchRunner{planner: subscriptionSearchPlanner{runner: rssRunner, search: search.native}}
+	rssRunner.search = subscriptionRunner
 	mux.HandleFunc("POST /api/v1/subscriptions/search/run", subscriptionRunner.serveHTTP)
 	rssRunner.refresh = &subscriptionRefreshAPI{service: subscriptions, auth: nativeAuth, pureGo: cfg.DisableLegacy}
 	mux.HandleFunc("POST /api/v1/subscriptions/refresh", rssRunner.refresh.serveHTTP)

@@ -17,6 +17,7 @@ import (
 )
 
 type subscriptionRunFixture struct {
+	runner                                  *rssRunAPI
 	noResults                               bool
 	transport                               http.RoundTripper
 	handler                                 http.Handler
@@ -103,6 +104,7 @@ func newSubscriptionRunFixture(t *testing.T) *subscriptionRunFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.runner = runner
 	downloaders := runner.download.downloaders
 	downloader, err := downloaders.Upsert(t.Context(), downloaderconfig.Downloader{Name: "qB", Type: "qbittorrent", Enabled: 1, Config: `{"host":"qb.local","port":8080,"username":"admin","password":"private-downloader"}`})
 	if err != nil {

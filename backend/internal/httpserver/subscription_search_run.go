@@ -60,6 +60,10 @@ func (api *subscriptionSearchRunner) serveHTTP(w http.ResponseWriter, r *http.Re
 }
 
 func (api *subscriptionSearchRunner) execute(parent context.Context, kind string, id int64) (subscriptionSearchRunResult, *recognitionFailure) {
+	return api.executeForState(parent, kind, id, "")
+}
+
+func (api *subscriptionSearchRunner) executeForState(parent context.Context, kind string, id int64, state string) (subscriptionSearchRunResult, *recognitionFailure) {
 	result := subscriptionSearchRunResult{Remaining: []int{}}
 	fail := func(status int, message string) (subscriptionSearchRunResult, *recognitionFailure) {
 		return result, &recognitionFailure{status, message}
@@ -81,7 +85,7 @@ func (api *subscriptionSearchRunner) execute(parent context.Context, kind string
 	defer func() { api.mu.Lock(); delete(api.running, key); api.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
-	plan, failure := api.planner.plan(ctx, kind, id)
+	plan, failure := api.planner.planSelected(ctx, kind, id, state, true)
 	if failure != nil {
 		return result, failure
 	}
