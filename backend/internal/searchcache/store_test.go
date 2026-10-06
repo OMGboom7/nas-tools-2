@@ -15,25 +15,28 @@ func TestPrivateResourcesOwnershipExpiryAndRetry(t *testing.T) {
 	now := time.Now()
 	store.now = func() time.Time { return now }
 	seeders := int64(5)
-	ids, err := store.Put("alice", []externalindexer.Resource{{Title: "Movie", DownloadURL: "https://tracker.local/download?secret=hidden", Seeders: &seeders}})
+	seedTime, ratio := int64(90000), 0.8
+	ids, err := store.Put("alice", []externalindexer.Resource{{Title: "Movie", DownloadURL: "https://tracker.local/download?secret=hidden", Seeders: &seeders, MinimumSeedTime: &seedTime, MinimumRatio: &ratio}})
 	if err != nil || len(ids) != 1 || !strings.HasPrefix(ids[0], Prefix) || strings.Contains(ids[0], "hidden") {
 		t.Fatal(ids, err)
 	}
 	seeders = 99
+	seedTime, ratio = 99, 99
 	if _, _, err := store.Claim("bob", ids[0]); !errors.Is(err, ErrMissing) {
 		t.Fatal(err)
 	}
 	resource, done, err := store.Claim("alice", ids[0])
-	if err != nil || done || *resource.Seeders != 5 {
+	if err != nil || done || *resource.Seeders != 5 || *resource.MinimumSeedTime != 90000 || *resource.MinimumRatio != 0.8 {
 		t.Fatal(resource, done, err)
 	}
 	*resource.Seeders = 77
+	*resource.MinimumSeedTime, *resource.MinimumRatio = 77, 77
 	if _, _, err := store.Claim("alice", ids[0]); !errors.Is(err, ErrBusy) {
 		t.Fatal(err)
 	}
 	store.Finish("alice", ids[0], false)
 	resource, done, err = store.Claim("alice", ids[0])
-	if err != nil || done || *resource.Seeders != 5 {
+	if err != nil || done || *resource.Seeders != 5 || *resource.MinimumSeedTime != 90000 || *resource.MinimumRatio != 0.8 {
 		t.Fatal(resource, done, err)
 	}
 	store.Finish("alice", ids[0], true)

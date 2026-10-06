@@ -46,26 +46,28 @@ type searchMedia struct {
 }
 
 type searchResource struct {
-	ID             string   `json:"id"`
-	Season         string   `json:"season"`
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	Site           string   `json:"site"`
-	PageURL        string   `json:"pageUrl"`
-	Size           string   `json:"size"`
-	Seeders        int      `json:"seeders"`
-	Resolution     string   `json:"resolution"`
-	Medium         string   `json:"medium"`
-	Effect         string   `json:"effect"`
-	ReleaseGroup   string   `json:"releaseGroup"`
-	VideoCodec     string   `json:"videoCodec"`
-	Labels         []string `json:"labels"`
-	UploadFactor   float64  `json:"uploadFactor"`
-	DownloadFactor float64  `json:"downloadFactor"`
-	PromotionKnown *bool    `json:"promotionKnown,omitempty"`
-	SeedersKnown   *bool    `json:"seedersKnown,omitempty"`
-	Exists         *bool    `json:"exists,omitempty"`
-	ExistsKnown    *bool    `json:"existsKnown,omitempty"`
+	ID              string   `json:"id"`
+	Season          string   `json:"season"`
+	Name            string   `json:"name"`
+	Description     string   `json:"description"`
+	Site            string   `json:"site"`
+	PageURL         string   `json:"pageUrl"`
+	Size            string   `json:"size"`
+	Seeders         int      `json:"seeders"`
+	Resolution      string   `json:"resolution"`
+	Medium          string   `json:"medium"`
+	Effect          string   `json:"effect"`
+	ReleaseGroup    string   `json:"releaseGroup"`
+	VideoCodec      string   `json:"videoCodec"`
+	Labels          []string `json:"labels"`
+	UploadFactor    float64  `json:"uploadFactor"`
+	DownloadFactor  float64  `json:"downloadFactor"`
+	PromotionKnown  *bool    `json:"promotionKnown,omitempty"`
+	SeedersKnown    *bool    `json:"seedersKnown,omitempty"`
+	MinimumSeedTime *int64   `json:"minimumSeedTime,omitempty"`
+	MinimumRatio    *float64 `json:"minimumRatio,omitempty"`
+	Exists          *bool    `json:"exists,omitempty"`
+	ExistsKnown     *bool    `json:"existsKnown,omitempty"`
 }
 
 func (service searchService) serveHTTP(response http.ResponseWriter, request *http.Request) {

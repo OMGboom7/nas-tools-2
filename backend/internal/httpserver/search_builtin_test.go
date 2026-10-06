@@ -58,6 +58,7 @@ func TestMixedBuiltinAndExternalSearchDownloadWithoutPython(t *testing.T) {
 	_, _, database := nativeServicesFixture(t, "", &downloader, transport)
 	catalogPath := filepath.Join(filepath.Dir(database), "catalog.bin")
 	catalog := `{"indexer":[{"id":"native-tracker","name":"Builtin","domain":"https://tracker.local/","search":{"paths":[{"path":"torrents.php"}],"params":{"search":"{keyword}"}},"torrents":{"list":{"selector":"table.torrents > tr:has(a)"},"fields":{"title":{"selector":"a.title"},"download":{"selector":"a.download","attribute":"href"},"size":{"selector":".size"},"seeders":{"selector":".seeders"},"downloadvolumefactor":{"case":{"*":0.5}},"uploadvolumefactor":{"case":{"*":1}}}}}],"conf":{}}`
+	catalog = strings.Replace(catalog, `"seeders":{"selector":".seeders"}`, `"seeders":{"selector":".seeders"},"minimumseedtime":{"text":90000},"minimumratio":{"text":0.8}`, 1)
 	if err := os.WriteFile(catalogPath, []byte(base64.StdEncoding.EncodeToString([]byte(catalog))), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +106,13 @@ func TestMixedBuiltinAndExternalSearchDownloadWithoutPython(t *testing.T) {
 	if resource.Site != "Native" || resource.DownloadFactor != 0.5 || resource.PromotionKnown == nil || !*resource.PromotionKnown {
 		t.Fatal(resource)
 	}
+	if resource.MinimumSeedTime == nil || *resource.MinimumSeedTime != 90000 || resource.MinimumRatio == nil || *resource.MinimumRatio != 0.8 {
+		t.Fatal("native seeding requirements lost", resource)
+	}
+	external := data.Items[0].Resources[0]
+	if external.MinimumSeedTime != nil || external.MinimumRatio != nil {
+		t.Fatal("unknown external requirements were invented", external)
+	}
 	for i := 0; i < 2; i++ {
 		response := nativeJSONRequest(handler, "POST", "/api/v1/downloads/resource", token, `{"resourceId":"`+resource.ID+`"}`)
 		if response.Code != 200 {
@@ -124,6 +132,11 @@ func TestMixedBuiltinAndExternalSearchDownloadWithoutPython(t *testing.T) {
 	}
 	if len(normalPayload.Data.Warnings) != 1 {
 		t.Fatal("missing unknown inventory warning")
+	}
+	for _, resource := range normalPayload.Data.Items[0].Resources {
+		if resource.Site == "Native" && (resource.MinimumSeedTime == nil || *resource.MinimumSeedTime != 90000 || resource.MinimumRatio == nil || *resource.MinimumRatio != 0.8) {
+			t.Fatal("grouping lost seeding requirements", resource)
+		}
 	}
 	if err := system.Set(t.Context(), "UserIndexerSites", `["native-tracker"]`); err != nil {
 		t.Fatal(err)

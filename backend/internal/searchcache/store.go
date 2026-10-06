@@ -59,6 +59,14 @@ func clone(resource externalindexer.Resource) externalindexer.Resource {
 		v := *resource.Freeleech
 		resource.Freeleech = &v
 	}
+	if resource.MinimumSeedTime != nil {
+		v := *resource.MinimumSeedTime
+		resource.MinimumSeedTime = &v
+	}
+	if resource.MinimumRatio != nil {
+		v := *resource.MinimumRatio
+		resource.MinimumRatio = &v
+	}
 	return resource
 }
 

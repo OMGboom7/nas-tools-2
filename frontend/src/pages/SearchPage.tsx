@@ -1,6 +1,7 @@
 import { type FormEvent, useMemo, useState } from "react";
 import { addSearchResource, ApiError, searchResources, type AuthSession, type SearchData, type SearchResource } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
+import { seedingRequirements } from "../utils/seedingRequirements";
 
 type SearchPageProps = {
   session: AuthSession;
@@ -180,6 +181,9 @@ function ResourceRow({ resource, canDownload, status, onDownload }: {
           {resource.effect && <span>{resource.effect}</span>}
           {resource.labels.map((label) => <span key={label}>{label}</span>)}
           {promotion && <span className={resource.promotionKnown === false ? "" : "is-free"}>{promotion}</span>}
+          {seedingRequirements(resource).map((requirement) => (
+            <span key={requirement} title="来自索引器声明；具体达标条件以站点规则为准">{requirement}</span>
+          ))}
         </div>
       </div>
       <div className="resource-row__meta">

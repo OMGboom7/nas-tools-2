@@ -156,11 +156,20 @@ func ParseResults(ctx context.Context, plan Plan, body []byte, options ResultOpt
 		if err != nil {
 			return nil, err
 		}
+		minimumSeedTime, err := resultSeedTime(fields["minimumseedtime"])
+		if err != nil {
+			return nil, err
+		}
+		minimumRatio, err := resultFactor(fields["minimumratio"])
+		if err != nil {
+			return nil, err
+		}
 		imdb := fields["imdbid"]
 		if imdb != "" && !imdbPattern.MatchString(imdb) {
 			return nil, ErrResponse
 		}
 		resource := externalindexer.Resource{IndexerID: plan.Definition.ID, Indexer: plan.Definition.Name, Title: title, Description: fields["description"], PageURL: page, DownloadURL: download, IMDbID: imdb, Size: size, Seeders: seeders, Peers: peers, DownloadFactor: downloadFactor, UploadFactor: uploadFactor}
+		resource.MinimumSeedTime, resource.MinimumRatio = minimumSeedTime, minimumRatio
 		if downloadFactor != nil {
 			free := *downloadFactor == 0
 			resource.Freeleech = &free
@@ -236,6 +245,22 @@ func resultCount(raw string) (*int64, error) {
 		return nil, ErrResponse
 	}
 	return &number, nil
+}
+
+func resultSeedTime(raw string) (*int64, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	// Seconds must be a non-negative integer, not a count such as "3/5".
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+		return nil, ErrResponse
+	}
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || seconds > 1_000_000_000 {
+		return nil, ErrResponse
+	}
+	return &seconds, nil
 }
 
 func resultFactor(raw string) (*float64, error) {

@@ -56,6 +56,8 @@ export type SearchResource = {
   downloadFactor: number;
   promotionKnown?: boolean;
   seedersKnown?: boolean;
+  minimumSeedTime?: number;
+  minimumRatio?: number;
   exists?: boolean;
   existsKnown?: boolean;
 };

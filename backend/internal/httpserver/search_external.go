@@ -159,6 +159,7 @@ func (service *nativeExternalResourceSearch) search(ctx context.Context, token, 
 		known := resource.DownloadFactor != nil && resource.UploadFactor != nil
 		seedersKnown := resource.Seeders != nil
 		item := searchResource{Name: resource.Title, Site: resource.Indexer, Description: resource.Description, Size: formatBytes(resource.Size), Resolution: meta.Resolution, Medium: meta.Source, Effect: meta.Effect, ReleaseGroup: meta.Team, VideoCodec: meta.VideoCodec, Labels: []string{}, UploadFactor: 1, DownloadFactor: 1, PromotionKnown: &known, SeedersKnown: &seedersKnown}
+		item.MinimumSeedTime, item.MinimumRatio = resource.MinimumSeedTime, resource.MinimumRatio
 		// Page URLs may contain private tracker tokens too. The native quick
 		// view displays names without outbound links until safe URL policy is ready.
 		if resource.Seeders != nil {

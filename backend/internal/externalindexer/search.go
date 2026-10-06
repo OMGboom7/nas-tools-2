@@ -28,6 +28,9 @@ type Resource struct {
 	Peers                                                   *int64
 	DownloadFactor, UploadFactor                            *float64
 	Freeleech                                               *bool
+	// Nil is unknown; explicit zero is a declared zero requirement.
+	MinimumSeedTime *int64
+	MinimumRatio    *float64
 }
 
 func validRemoteID(kind, id string) bool {
