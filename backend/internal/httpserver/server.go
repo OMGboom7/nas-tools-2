@@ -254,6 +254,12 @@ func newHandler(cfg config.Config, transport http.RoundTripper) (http.Handler, e
 		words:        nativeWords,
 	}
 	mux.HandleFunc("GET /api/v1/subscriptions", subscriptions.serveList)
+	rssRunner := &rssRunAPI{pureGo: cfg.DisableLegacy, filters: nativeFilters,
+		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},
+		download:    rssItemDownloadAPI{tasks: nativeRSSTasks, downloaders: nativeDownloaders, system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, service: downloads},
+		recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},
+	}
+	mux.HandleFunc("POST /api/v1/rss/run", rssRunner.serveHTTP)
 	mux.HandleFunc("POST /api/v1/rss/name/test", (rssNameAPI{tasks: nativeRSSTasks, filters: nativeFilters, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}).serveHTTP)
 	mux.HandleFunc("POST /api/v1/service/name/test", (mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}).serveHTTP)
 	mux.HandleFunc("GET /api/v1/service/mediainfo", (mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}).serveAPIKey)

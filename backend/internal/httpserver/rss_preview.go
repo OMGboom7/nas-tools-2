@@ -50,7 +50,9 @@ type rssPreviewArticle struct {
 	Date         string `json:"date"`
 	FinishFlag   bool   `json:"finish_flag"`
 	Year         string `json:"year"`
+	Type         string `json:"type,omitempty"`
 	AddressIndex int    `json:"address_index"`
+	rawSize      string
 }
 
 func (api rssPreviewAPI) serveHTTP(response http.ResponseWriter, request *http.Request) {
@@ -275,6 +277,7 @@ func parseRSSPreview(data []byte, kind string, format rssFormat, addressIndex in
 			Title: fields["title"], Link: fields["link"], Enclosure: fields["enclosure"],
 			Size: rssPreviewSize(fields["size"]), Description: fields["description"],
 			Date: rssPreviewDate(fields["date"]), Year: year, AddressIndex: addressIndex,
+			Type: fields["type"], rawSize: fields["size"],
 		})
 	}
 	return result, nil

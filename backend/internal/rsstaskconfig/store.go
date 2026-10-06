@@ -45,6 +45,7 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("ensure rss task table: %w", err)
 	}
 	for _, statement := range []string{
+		`CREATE TABLE IF NOT EXISTS GO_RSS_DOWNLOAD_CLAIMS (RESOURCE_KEY TEXT PRIMARY KEY, TASK_ID INTEGER NOT NULL, STATE TEXT NOT NULL, UPDATED_AT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS USERRSS_TASK_HISTORY (ID INTEGER PRIMARY KEY, TASK_ID TEXT, TITLE TEXT, DOWNLOADER TEXT, DATE TEXT)`,
 		`CREATE TABLE IF NOT EXISTS RSS_TORRENTS (ID INTEGER PRIMARY KEY, TORRENT_NAME TEXT, ENCLOSURE TEXT, TYPE TEXT, TITLE TEXT, YEAR TEXT, SEASON TEXT, EPISODE TEXT)`,
 	} {
@@ -200,7 +201,15 @@ func (store *Store) RecordDownload(ctx context.Context, taskID int64, title, yea
 		return err
 	}
 	defer transaction.Rollback()
+	if err := recordDownloadTx(ctx, transaction, taskID, title, year, enclosure, downloaderName); err != nil {
+		return err
+	}
+	return transaction.Commit()
+}
+
+func recordDownloadTx(ctx context.Context, transaction *sql.Tx, taskID int64, title, year, enclosure, downloaderName string) error {
 	var exists int
+	var err error
 	if err := transaction.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM CONFIG_USER_RSS WHERE ID=?)`, taskID).Scan(&exists); err != nil {
 		return err
 	}
@@ -223,7 +232,7 @@ func (store *Store) RecordDownload(ctx context.Context, taskID int64, title, yea
 	if _, err := transaction.ExecContext(ctx, `INSERT INTO USERRSS_TASK_HISTORY (TASK_ID,TITLE,DOWNLOADER,DATE) VALUES (?,?,?,?)`, strconv.FormatInt(taskID, 10), title, downloaderName, time.Now().Format("2006-01-02 15:04:05")); err != nil {
 		return err
 	}
-	return transaction.Commit()
+	return nil
 }
 
 type Article struct {
@@ -277,6 +286,13 @@ func (store *Store) SetArticles(ctx context.Context, taskID int64, flag string, 
 		}
 		if task.Uses == "D" && strings.TrimSpace(enclosure) == "" {
 			_, err = transaction.ExecContext(ctx, `DELETE FROM RSS_TORRENTS WHERE TORRENT_NAME=?`, name)
+		} else if task.Uses == "D" {
+			// Download history uses the enclosure as its global identity, even
+			// when the feed's display title/year has changed since submission.
+			_, err = transaction.ExecContext(ctx, `DELETE FROM RSS_TORRENTS WHERE ENCLOSURE=?`, enclosure)
+			if err == nil {
+				_, err = transaction.ExecContext(ctx, `DELETE FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND STATE='submitted'`, claimKey(enclosure))
+			}
 		} else {
 			_, err = transaction.ExecContext(ctx, `DELETE FROM RSS_TORRENTS WHERE TORRENT_NAME=? AND ENCLOSURE=?`, name, enclosure)
 		}

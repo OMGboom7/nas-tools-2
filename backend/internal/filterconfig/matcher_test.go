@@ -31,6 +31,10 @@ func TestRuleMatchingPreservesLegacyConditions(t *testing.T) {
 		{"promotion satisfied", Rule{Free: "1.0 0.0"}, TorrentMetadata{UploadFactor: &upload, DownloadFactor: &freeDownload}, true},
 		{"promotion fails", Rule{Free: "1.0 0.0"}, TorrentMetadata{UploadFactor: &upload, DownloadFactor: &paidDownload}, false},
 		{"unknown promotion", Rule{Free: "1.0 0.0"}, TorrentMetadata{}, true},
+		{"strict unknown promotion", Rule{Free: "1.0 0.0"}, TorrentMetadata{RequireKnown: true}, false},
+		{"strict unknown size", Rule{Size: "1,3"}, TorrentMetadata{Movie: true, RequireKnown: true}, false},
+		{"strict unknown episode count", Rule{Size: "1,3"}, TorrentMetadata{SizeBytes: 40 * (1 << 30), RequireKnown: true}, false},
+		{"strict known promotion", Rule{Free: "1.0 0.0"}, TorrentMetadata{UploadFactor: &upload, DownloadFactor: &freeDownload, RequireKnown: true}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result, err := MatchGroups([]GroupInfo{{Group: Group{ID: 1, Default: true}, Rules: []Rule{test.rule}}}, 0, test.metadata)

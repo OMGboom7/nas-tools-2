@@ -106,6 +106,23 @@ func (api rssItemDownloadAPI) serveHTTP(response http.ResponseWriter, request *h
 		return
 	}
 	for _, article := range articles {
+		processed, err := api.tasks.IsProcessed(ctx, "D", article.Title, article.Year, article.Enclosure)
+		if err != nil {
+			writeAPIError(response, 503, 503, "RSS download history is unavailable")
+			return
+		}
+		if processed {
+			continue
+		}
+		pending, err := api.tasks.HasPendingDownload(ctx, article.Enclosure)
+		if err != nil {
+			writeAPIError(response, 503, 503, "RSS submission state is unavailable")
+			return
+		}
+		if pending {
+			writeAPIError(response, 409, 409, "RSS submission requires downloader verification before retrying")
+			return
+		}
 		magnet := ""
 		var torrent []byte
 		if validMagnet(article.Enclosure) {
@@ -122,7 +139,29 @@ func (api rssItemDownloadAPI) serveHTTP(response http.ResponseWriter, request *h
 				torrent = contents
 			}
 		}
+		reserved, err := api.tasks.ReserveDownload(ctx, taskID, article.Enclosure)
+		if err != nil {
+			writeAPIError(response, 503, 503, "RSS resource could not be reserved")
+			return
+		}
+		if !reserved {
+			pending, err := api.tasks.HasPendingDownload(ctx, article.Enclosure)
+			if err != nil || pending {
+				writeAPIError(response, 409, 409, "RSS submission requires downloader verification before retrying")
+				return
+			}
+			continue
+		}
 		_, handled, err := api.service.nativeAddDownloadWithOptions(ctx, magnet, torrent, strconv.FormatInt(downloader.ID, 10), options)
+		if (err != nil || !handled) && downloadDefinitelyNotSubmitted(handled, err) {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			releaseErr := api.tasks.ReleaseUnsubmittedDownload(cleanup, taskID, article.Enclosure)
+			cancel()
+			if releaseErr != nil {
+				writeAPIError(response, 503, 503, "RSS reservation could not be released after a rejected submission")
+				return
+			}
+		}
 		if !handled {
 			writeAPIError(response, http.StatusNotImplemented, 501, "downloader type is not migrated")
 			return
@@ -131,7 +170,7 @@ func (api rssItemDownloadAPI) serveHTTP(response http.ResponseWriter, request *h
 			writeJSON(response, http.StatusOK, map[string]any{"code": 1})
 			return
 		}
-		if err := api.tasks.RecordDownload(ctx, taskID, article.Title, article.Year, article.Enclosure, downloader.Name); err != nil {
+		if err := api.tasks.CompleteReservedManualDownload(ctx, taskID, article.Title, article.Year, article.Enclosure, downloader.Name); err != nil {
 			writeAPIError(response, http.StatusBadGateway, 502, "RSS download succeeded but history could not be saved")
 			return
 		}

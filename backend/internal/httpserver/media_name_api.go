@@ -98,6 +98,13 @@ type recognitionFailure struct {
 }
 
 func (api mediaNameAPI) recognize(ctx context.Context, title, subtitle string) (*nativeRecognition, *recognitionFailure) {
+	return api.recognizeKind(ctx, title, subtitle, "")
+}
+
+func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forcedKind string) (*nativeRecognition, *recognitionFailure) {
+	if forcedKind != "" && forcedKind != "movie" && forcedKind != "tv" {
+		return nil, &recognitionFailure{422, "invalid media type"}
+	}
 	if api.service.words == nil || api.service.configStore == nil || api.service.systemConfig == nil {
 		return nil, &recognitionFailure{503, "native media recognition is unavailable"}
 	}
@@ -125,12 +132,13 @@ func (api mediaNameAPI) recognize(ctx context.Context, title, subtitle string) (
 		return nil, nil
 	}
 	kind, mediaType := "movie", "MOV"
-	if meta.Episodes.TV {
+	if forcedKind == "tv" || forcedKind == "" && meta.Episodes.TV {
 		kind, mediaType = "tv", "TV"
 	}
+	meta.Episodes.TV = kind == "tv"
 	input := subscriptionUpsertRequest{Name: meta.Title, Year: meta.Year, Type: mediaType}
 	id, err := api.service.resolveNativeMediaID(ctx, input, true)
-	if err == nil && id == "" && !meta.Episodes.TV {
+	if err == nil && id == "" && !meta.Episodes.TV && forcedKind == "" {
 		input.Type, kind = "TV", "tv"
 		id, err = api.service.resolveNativeMediaID(ctx, input, true)
 	}
@@ -140,6 +148,7 @@ func (api mediaNameAPI) recognize(ctx context.Context, title, subtitle string) (
 	if id == "" {
 		return nil, nil
 	}
+	meta.Episodes.TV = kind == "tv"
 	detail, err := fetchNativeTMDBDetails(ctx, api.service.configStore, api.service.client.Transport, kind, id)
 	if err != nil {
 		return nil, &recognitionFailure{502, "media details are unavailable"}

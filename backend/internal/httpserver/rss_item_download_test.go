@@ -106,6 +106,10 @@ func TestNativeRSSItemDownloadRecordsSuccessfulSubmissions(t *testing.T) {
 	if statuses != 2 || history != 2 {
 		t.Fatalf("statuses=%d history=%d", statuses, history)
 	}
+	repeated := performFormRequest(handler, "/api/v1/rss/item/download", token, url.Values{"taskid": {"7"}, "articles": {articles}})
+	if repeated.Code != 200 || adds != 2 || fetches != 1 {
+		t.Fatal("manual/automatic RSS deduplication failed", repeated.Code, adds, fetches)
+	}
 	bad := performFormRequest(handler, "/api/v1/rss/item/download", token, url.Values{"taskid": {"7"}, "articles": {`[{"title":"X","enclosure":"file:///etc/passwd"}]`}})
 	if bad.Code != http.StatusBadRequest || adds != 2 {
 		t.Fatalf("invalid enclosure=%d adds=%d", bad.Code, adds)

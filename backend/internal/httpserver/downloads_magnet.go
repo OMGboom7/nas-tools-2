@@ -100,6 +100,12 @@ func (service downloadService) nativeAddDownload(ctx context.Context, magnet str
 
 var errDownloadOptionsUnsupported = errors.New("downloader does not support these per-task settings")
 
+// Only validation/authentication failures known to precede acceptance may be
+// retried. Connection errors and malformed replies remain ambiguous.
+func downloadDefinitelyNotSubmitted(handled bool, err error) bool {
+	return !handled || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration)
+}
+
 type downloadAddOptions struct {
 	SavePath         string
 	Category         string

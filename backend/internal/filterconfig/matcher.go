@@ -23,6 +23,8 @@ type TorrentMetadata struct {
 	Episodes        int
 	UploadFactor    *float64
 	DownloadFactor  *float64
+	// Automatic submission must not bypass constraints on unknown metadata.
+	RequireKnown bool
 }
 
 type MatchResult struct {
@@ -118,6 +120,12 @@ func matchRule(rule Rule, text string, metadata TorrentMetadata) (bool, error) {
 	if hasExclusion && allExcluded {
 		return false, nil
 	}
+	if rule.Size != "" && metadata.RequireKnown && (metadata.SizeBytes == 0 || (!metadata.Movie && metadata.Episodes == 0)) {
+		if _, _, err := ruleSizeBounds(rule.Size); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
 	if rule.Size != "" && metadata.SizeBytes != 0 && (metadata.Movie || metadata.Episodes > 0) {
 		minimum, maximum, err := ruleSizeBounds(rule.Size)
 		if err != nil {
@@ -131,14 +139,20 @@ func matchRule(rule Rule, text string, metadata TorrentMetadata) (bool, error) {
 			return false, nil
 		}
 	}
-	if rule.Free != "" && metadata.UploadFactor != nil && metadata.DownloadFactor != nil {
+	if rule.Free != "" && (metadata.RequireKnown || metadata.UploadFactor != nil && metadata.DownloadFactor != nil) {
 		factors := strings.Fields(rule.Free)
 		if len(factors) != 2 {
 			return false, fmt.Errorf("%w: promotion factors", ErrInvalidRule)
 		}
 		minimumUpload, uploadErr := strconv.ParseFloat(factors[0], 64)
 		maximumDownload, downloadErr := strconv.ParseFloat(factors[1], 64)
-		if uploadErr != nil || downloadErr != nil || !finiteFactor(minimumUpload) || !finiteFactor(maximumDownload) || !finiteFactor(*metadata.UploadFactor) || !finiteFactor(*metadata.DownloadFactor) {
+		if uploadErr != nil || downloadErr != nil || !finiteFactor(minimumUpload) || !finiteFactor(maximumDownload) {
+			return false, fmt.Errorf("%w: promotion factors", ErrInvalidRule)
+		}
+		if metadata.UploadFactor == nil || metadata.DownloadFactor == nil {
+			return false, nil
+		}
+		if !finiteFactor(*metadata.UploadFactor) || !finiteFactor(*metadata.DownloadFactor) {
 			return false, fmt.Errorf("%w: promotion factors", ErrInvalidRule)
 		}
 		if minimumUpload > *metadata.UploadFactor || maximumDownload < *metadata.DownloadFactor {

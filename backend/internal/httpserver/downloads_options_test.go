@@ -53,3 +53,18 @@ func TestNativeAddDownloadWithTaskOptions(t *testing.T) {
 		t.Fatalf("invalid settings handled=%v err=%v", handled, err)
 	}
 }
+
+func TestOnlyProvenRejectionsAllowReservationRelease(t *testing.T) {
+	for _, test := range []struct {
+		handled bool
+		err     error
+		want    bool
+	}{
+		{false, nil, true}, {true, qbittorrent.ErrConfiguration, true}, {true, qbittorrent.ErrAuthentication, true},
+		{true, errDownloadOptionsUnsupported, true}, {true, qbittorrent.ErrConnection, false}, {true, qbittorrent.ErrResponse, false}, {true, errors.New("unknown failure"), false}, {true, nil, false},
+	} {
+		if got := downloadDefinitelyNotSubmitted(test.handled, test.err); got != test.want {
+			t.Fatal(test.err, got)
+		}
+	}
+}

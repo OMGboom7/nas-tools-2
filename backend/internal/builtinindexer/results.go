@@ -213,6 +213,10 @@ func resultURL(base *url.URL, raw string, download bool) (string, error) {
 var sizePattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)\s*(B|KB|KiB|MB|MiB|GB|GiB|TB|TiB)?$`)
 var imdbPattern = regexp.MustCompile(`^tt[0-9]+$`)
 
+// SizeBytes is the shared bounded tracker/RSS size decoder. Empty or malformed
+// values are errors; callers must retain unknown size rather than fabricate one.
+func SizeBytes(raw string) (int64, error) { return resultSize(raw) }
+
 func resultSize(raw string) (int64, error) {
 	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\n", ""))
 	if raw == "" {
