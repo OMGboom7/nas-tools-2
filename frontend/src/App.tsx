@@ -6,6 +6,7 @@ import { DownloadsPage } from "./pages/DownloadsPage";
 import { DiscoveryPage } from "./pages/DiscoveryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotificationsPage } from "./pages/NotificationsPage";
+import { OrganizationPage } from "./pages/OrganizationPage";
 import { PluginsPage } from "./pages/PluginsPage";
 import { SearchPage } from "./pages/SearchPage";
 import { SitesPage } from "./pages/SitesPage";
@@ -53,6 +54,10 @@ export function App() {
   }
 
   if (!session) return <LoginPage onLogin={handleLogin} />;
+  if (path === "/organization" && session.user.userpris.includes("媒体整理")) {
+    return <OrganizationPage session={session} currentPath="/organization" onNavigate={handleNavigate}
+      onLogout={handleLogout} onSessionExpired={handleSessionExpired} />;
+  }
   if (path === "/search" && session.user.userpris.includes("资源搜索")) {
     return <SearchPage session={session} currentPath="/search" onNavigate={handleNavigate}
       onLogout={handleLogout} onSessionExpired={handleSessionExpired} />;

@@ -14,6 +14,7 @@ const navigation: NavigationItem[] = [
   { permission: "探索", label: "探索", mark: "◇", path: "/discover" },
   { permission: "订阅管理", label: "订阅", mark: "◎", path: "/subscriptions" },
   { permission: "下载管理", label: "下载", mark: "↓", path: "/downloads" },
+  { permission: "媒体整理", label: "整理预览", mark: "⇥", path: "/organization" },
   { permission: "站点管理", label: "站点", mark: "▦", path: "/sites" },
   { permission: "服务", label: "服务", mark: "⌘", path: "/services" },
   { permission: "插件", label: "插件", mark: "⬡", path: "/plugins" },

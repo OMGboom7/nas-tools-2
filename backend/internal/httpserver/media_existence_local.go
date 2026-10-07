@@ -25,10 +25,21 @@ func init() {
 	}
 }
 
-func localInventorySettings(media map[string]any, detail tmdbMediaDetails, tv bool) ([]string, string, error) {
-	pathKey, formatKey, format := "movie_path", "movie_name_format", "{title} ({year})/{title} ({year})-{part} - {videoFormat}"
+func localNamingTemplate(media map[string]any, tv bool) string {
+	key, format := "movie_name_format", "{title} ({year})/{title} ({year})-{part} - {videoFormat}"
 	if tv {
-		pathKey, formatKey, format = "tv_path", "tv_name_format", "{title} ({year})/Season {season}/{title} - {season_episode}-{part} - 第 {episode} 集"
+		key, format = "tv_name_format", "{title} ({year})/Season {season}/{title} - {season_episode}-{part} - 第 {episode} 集"
+	}
+	if custom := text(media[key]); custom != "" {
+		format = custom
+	}
+	return format
+}
+
+func localInventorySettings(media map[string]any, detail tmdbMediaDetails, tv bool) ([]string, string, error) {
+	pathKey, format := "movie_path", localNamingTemplate(media, tv)
+	if tv {
+		pathKey = "tv_path"
 		if text(media["anime_path"]) != "" || len(categoryArray(media["anime_path"])) > 0 {
 			for _, genre := range categoryArray(detail.Attributes["genres"]) {
 				if fmt.Sprint(objectValue(genre)["id"]) == "16" {
@@ -54,9 +65,6 @@ func localInventorySettings(media map[string]any, detail tmdbMediaDetails, tv bo
 	}
 	if len(roots) > 32 {
 		return nil, "", mediaserver.ErrConfiguration
-	}
-	if custom := text(media[formatKey]); custom != "" {
-		format = custom
 	}
 	return roots, format, nil
 }

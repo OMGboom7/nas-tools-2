@@ -288,6 +288,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		words:        nativeWords,
 	}
 	mux.HandleFunc("GET /api/v1/subscriptions", subscriptions.serveList)
+	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
+	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
+	mux.HandleFunc("POST /api/v1/organization/plan", organizer.servePlan)
 	rssRunner := &rssRunAPI{pureGo: cfg.DisableLegacy, filters: nativeFilters,
 		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},
 		download:    rssItemDownloadAPI{tasks: nativeRSSTasks, downloaders: nativeDownloaders, system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, service: downloads},
