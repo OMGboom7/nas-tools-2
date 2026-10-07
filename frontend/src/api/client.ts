@@ -674,8 +674,9 @@ export async function getSubscriptions(token: string): Promise<SubscriptionsData
 }
 
 export type OrganizationRoot = { id: string; path: string; label: string; type: string };
-export type OrganizationRoots = { sources: OrganizationRoot[]; targets: OrganizationRoot[] };
-export type OrganizationPlan = { previewOnly: boolean; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; status: string; reason?: string; tmdbId?: string }> };
+export type OrganizationRoots = { sources: OrganizationRoot[]; targets: OrganizationRoot[]; executionModes?: string[] };
+export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string }> };
+export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string }> };
 export async function getOrganizationRoots(token: string): Promise<OrganizationRoots> {
   const result = await readResponse<OrganizationRoots>(await fetch("/api/v1/organization/roots", { headers: { Authorization: token } }));
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理目录加载失败", result.code);
@@ -683,7 +684,22 @@ export async function getOrganizationRoots(token: string): Promise<OrganizationR
 }
 export async function previewOrganization(token: string, input: { sourceId: string; targetId: string; path: string; mode: string }): Promise<OrganizationPlan> {
   const result = await readResponse<OrganizationPlan>(await fetch("/api/v1/organization/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
-  if (!result.success || result.code !== 0 || !result.data || result.data.previewOnly !== true) throw new ApiError(result.message || "整理预览失败", result.code);
+  if (!result.success || result.code !== 0 || !result.data || result.data.previewOnly !== true || typeof result.data.fingerprint !== "string" || result.data.fingerprint.length !== 64) throw new ApiError(result.message || "整理预览失败", result.code);
+  return result.data;
+}
+export async function getOrganizationJobs(token: string): Promise<OrganizationJob[]> {
+  const result = await readResponse<OrganizationJob[]>(await fetch("/api/v1/organization/jobs", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务加载失败", result.code);
+  return result.data;
+}
+export async function createOrganizationJob(token: string, input: { sourceId: string; targetId: string; path: string; mode: string; fingerprint: string }): Promise<OrganizationJob> {
+  const result = await readResponse<OrganizationJob>(await fetch("/api/v1/organization/jobs", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务创建失败", result.code);
+  return result.data;
+}
+export async function controlOrganizationJob(token: string, id: string, action: "execute" | "reconcile" | "cancel"): Promise<OrganizationJob> {
+  const result = await readResponse<OrganizationJob>(await fetch(`/api/v1/organization/jobs/${encodeURIComponent(id)}/${action}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务操作失败，请刷新查看已保存状态", result.code);
   return result.data;
 }
 

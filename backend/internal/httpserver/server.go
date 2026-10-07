@@ -19,6 +19,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
 	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
+	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/rssparserconfig"
 	"github.com/0xforee/nas-tools/backend/internal/rsstaskconfig"
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
@@ -288,9 +289,20 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		words:        nativeWords,
 	}
 	mux.HandleFunc("GET /api/v1/subscriptions", subscriptions.serveList)
-	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
+	var organizationJobs *organization.Store
+	if cfg.DisableLegacy && nativeUserDatabasePath != "" && organization.CopySupported {
+		organizationJobs, err = organization.OpenStore(nativeUserDatabasePath)
+		if err != nil {
+			return nil, fmt.Errorf("open native organization journal: %w", err)
+		}
+	}
+	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("POST /api/v1/organization/plan", organizer.servePlan)
+	mux.HandleFunc("GET /api/v1/organization/jobs", organizer.serveJobs)
+	mux.HandleFunc("POST /api/v1/organization/jobs", organizer.serveCreateJob)
+	mux.HandleFunc("GET /api/v1/organization/jobs/{id}", organizer.serveJob)
+	mux.HandleFunc("POST /api/v1/organization/jobs/{id}/{action}", organizer.serveJobAction)
 	rssRunner := &rssRunAPI{pureGo: cfg.DisableLegacy, filters: nativeFilters,
 		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},
 		download:    rssItemDownloadAPI{tasks: nativeRSSTasks, downloaders: nativeDownloaders, system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, service: downloads},

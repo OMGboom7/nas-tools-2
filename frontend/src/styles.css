@@ -946,6 +946,9 @@ a.nav-item:hover { color: #d9e5f2; background: #101e31; }
 .organization-preview label { display: grid; gap: 8px; min-width: 0; color: #cbd6e4; }
 .organization-preview input, .organization-preview select { width: 100%; padding: 10px; border: 1px solid #30445c; border-radius: 8px; background: #091321; color: #dce6f1; }
 .organization-preview button { justify-self: start; padding: 10px 16px; border: 1px solid #315d52; border-radius: 8px; background: #14372e; color: #8ae5cc; }
+.organization-preview .organization-confirm { display: flex; align-items: center; gap: 10px; margin: 16px 0; line-height: 1.6; }
+.organization-preview input[type="checkbox"] { width: auto; flex-shrink: 0; accent-color: #55d6b4; }
+.organization-preview section[aria-label="持久复制任务"] { margin-top: 32px; display: grid; gap: 16px; }
 .organization-preview :disabled { opacity: .5; }
 .organization-preview :focus-visible { outline: 2px solid #55d6b4; outline-offset: 2px; }
 .organization-table { overflow-x: auto; }

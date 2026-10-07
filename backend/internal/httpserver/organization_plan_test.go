@@ -28,6 +28,9 @@ func organizationFixture(t *testing.T) (*subscriptionRunFixture, string, string,
 	if err := config.NewStore(f.path).Update(map[string]any{"media.movie_path": target, "media.tv_path": target, "media.movie_name_format": "{title} ({year})/{title} ({year})-{videoFormat}", "media.tv_name_format": "{title} ({year})/Season {season:0>2}/{title}.{season_episode}"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := config.NewStore(f.path).Update(map[string]any{"media.min_filesize": 0}); err != nil {
+		t.Fatal(err)
+	}
 	input := organizationPlanInput{SourceID: subscriptionResourceKey("source:" + source + ":"), TargetID: subscriptionResourceKey("target:" + target + ":MOV"), Path: ".", Mode: "copy"}
 	return f, source, target, input
 }

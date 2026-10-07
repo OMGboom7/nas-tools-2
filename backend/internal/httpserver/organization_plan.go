@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +21,8 @@ type organizationAPI struct {
 	service     subscriptionService
 	auth        *nativeAuthentication
 	recognition mediaNameAPI
+	jobs        *organization.Store
+	pureGo      bool
 }
 type organizationRoot struct {
 	ID    string `json:"id"`
@@ -27,8 +31,9 @@ type organizationRoot struct {
 	Type  string `json:"type"`
 }
 type organizationRoots struct {
-	Sources []organizationRoot `json:"sources"`
-	Targets []organizationRoot `json:"targets"`
+	Sources        []organizationRoot `json:"sources"`
+	Targets        []organizationRoot `json:"targets"`
+	ExecutionModes []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
 	SourceID string `json:"sourceId"`
@@ -37,20 +42,28 @@ type organizationPlanInput struct {
 	Mode     string `json:"mode"`
 }
 type organizationPlanItem struct {
-	Source   string `json:"source"`
-	Target   string `json:"target,omitempty"`
-	Kind     string `json:"kind"`
-	Size     int64  `json:"size"`
-	Modified string `json:"modified"`
-	Status   string `json:"status"`
-	Reason   string `json:"reason,omitempty"`
-	TMDBID   string `json:"tmdbId,omitempty"`
+	Source        string `json:"source"`
+	Target        string `json:"target,omitempty"`
+	Kind          string `json:"kind"`
+	Size          int64  `json:"size"`
+	Modified      string `json:"modified"`
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	TMDBID        string `json:"tmdbId,omitempty"`
+	Identity      string `json:"identity"`
+	Title         string `json:"title,omitempty"`
+	Year          string `json:"year,omitempty"`
+	MediaType     string `json:"mediaType,omitempty"`
+	Category      string `json:"category,omitempty"`
+	SeasonEpisode string `json:"seasonEpisode,omitempty"`
 }
 type organizationPlan struct {
 	Items       []organizationPlanItem `json:"items"`
 	Mode        string                 `json:"mode"`
 	PreviewOnly bool                   `json:"previewOnly"`
 	Skipped     int                    `json:"skipped"`
+	Fingerprint string                 `json:"fingerprint"`
+	definition  organization.Definition
 }
 
 func (api organizationAPI) authorize(w http.ResponseWriter, r *http.Request) bool {
@@ -85,7 +98,10 @@ func (api organizationAPI) serveRoots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error) {
-	result := organizationRoots{Sources: []organizationRoot{}, Targets: []organizationRoot{}}
+	result := organizationRoots{Sources: []organizationRoot{}, Targets: []organizationRoot{}, ExecutionModes: []string{}}
+	if api.pureGo && api.jobs != nil && organization.CopySupported {
+		result.ExecutionModes = []string{"copy"}
+	}
 	seen := map[string]bool{}
 	add := func(role, path, label, kind string) error {
 		if path == "" {
@@ -298,16 +314,46 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		return fail(503, "organization configuration is unavailable")
 	}
 	media := objectValue(snapshot["media"])
+	sourceInfo, e1 := os.Stat(sourcePath)
+	targetInfo, e2 := os.Stat(targetPath)
+	if e1 != nil || e2 != nil || !sourceInfo.IsDir() || !targetInfo.IsDir() || os.SameFile(sourceInfo, targetInfo) {
+		return fail(422, "organization roots changed")
+	}
+	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
+	if result.definition.ConfigDigest == "" {
+		return fail(503, "organization configuration snapshot is unsupported")
+	}
+	minimumMB := int64(150)
+	if value, exists := media["min_filesize"]; exists {
+		minimumMB, err = strconv.ParseInt(text(value), 10, 64)
+		if err != nil || minimumMB < 0 || minimumMB > 1000000 {
+			return fail(422, "configured minimum media file size is invalid")
+		}
+	}
+	selectionRoot, err := organization.OpenRoot(sourcePath)
+	if err != nil {
+		return fail(422, "source selection changed")
+	}
+	selectedInfo, err := selectionRoot.Lstat(input.Path)
+	selectionRoot.Close()
+	if err != nil {
+		return fail(422, "source selection changed")
+	}
 	for _, file := range scan.Files {
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
 		}
-		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Status: "unmatched"}
+		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Identity: file.Identity, Status: "unmatched"}
 		if file.Kind != "media" {
 			result.Items = append(result.Items, item)
 			continue
 		}
 		bluray := false
+		if selectedInfo.IsDir() && file.Size < minimumMB*1024*1024 {
+			item.Status, item.Reason = "blocked", "file is below the configured minimum media size"
+			result.Items = append(result.Items, item)
+			continue
+		}
 		for _, part := range strings.Split(filepath.ToSlash(file.Path), "/") {
 			if strings.EqualFold(part, "BDMV") || strings.EqualFold(part, "CERTIFICATE") {
 				bluray = true
@@ -333,6 +379,10 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			continue
 		}
 		item.TMDBID = text(recognition.data["tmdbid"])
+		item.Title, item.Year, item.MediaType, item.SeasonEpisode = text(recognition.data["title"]), text(recognition.data["year"]), text(recognition.data["type"]), text(recognition.data["season_episode"])
+		if categories := stringsOf(recognition.data["category"]); len(categories) > 0 {
+			item.Category = categories[0]
+		}
 		kind := "MOV"
 		if recognition.kind == "tv" {
 			kind = "TV"
@@ -389,6 +439,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		suffix := strings.TrimPrefix(filepath.Base(item.Source), stem)
 		item.Target = strings.TrimSuffix(video.Target, filepath.Ext(video.Target)) + suffix
 		item.TMDBID = video.TMDBID
+		item.Title, item.Year, item.MediaType, item.Category, item.SeasonEpisode = video.Title, video.Year, video.MediaType, video.Category, video.SeasonEpisode
 		item.Status, err = organization.TargetStatus(ctx, target.Path, item.Target)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -401,6 +452,20 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if ctx.Err() != nil {
 		return fail(504, "organization preview was cancelled or timed out")
 	}
+	for _, item := range result.Items {
+		if item.Status == "available" {
+			result.definition.Entries = append(result.definition.Entries, organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode})
+		}
+	}
+	// Publish primary media before companions; a failed media copy must not
+	// leave subtitles/audio that appear to belong to an unpublished movie.
+	sort.SliceStable(result.definition.Entries, func(i, j int) bool {
+		return result.definition.Entries[i].Kind == "media" && result.definition.Entries[j].Kind != "media"
+	})
+	result.Fingerprint = organization.Digest(struct {
+		Definition organization.Definition
+		Items      []organizationPlanItem
+	}{result.definition, result.Items})
 	return result, nil
 }
 

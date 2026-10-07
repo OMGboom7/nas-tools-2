@@ -22,6 +22,7 @@ type File struct {
 	Kind     string `json:"kind"`
 	Size     int64  `json:"size"`
 	Modified int64  `json:"modified"`
+	Identity string `json:"identity"`
 }
 
 type ScanResult struct {
@@ -132,7 +133,7 @@ func Scan(ctx context.Context, base, selected string) (ScanResult, error) {
 			if len(result.Files) >= 1000 {
 				return ErrLimit
 			}
-			result.Files = append(result.Files, File{name, kind, info.Size(), info.ModTime().UnixNano()})
+			result.Files = append(result.Files, File{Path: name, Kind: kind, Size: info.Size(), Modified: info.ModTime().UnixNano(), Identity: Identity(info)})
 			return nil
 		}
 		directory, err := root.Open(name)
