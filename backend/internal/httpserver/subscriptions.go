@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +19,6 @@ import (
 )
 
 type subscriptionService struct {
-	legacyURL    string
 	client       *http.Client
 	images       *mediaImageProxy
 	downloaders  *downloaderconfig.Store
@@ -150,36 +148,11 @@ func (service subscriptionService) upsert(response http.ResponseWriter, request 
 		writeAPIError(response, http.StatusBadRequest, 400, message)
 		return
 	}
-	if service.databasePath != "" && (input.FuzzyMatch || numericTMDBID(input.MediaID) || input.MediaID == "" || strings.HasPrefix(input.MediaID, "BG:") || strings.HasPrefix(input.MediaID, "DB:")) {
-		service.serveNativeSubscriptionUpsert(response, request, input)
+	if service.databasePath == "" {
+		writeAPIError(response, 503, 503, "native subscription storage is unavailable")
 		return
 	}
-	form := url.Values{
-		"name": {input.Name}, "type": {input.Type}, "fuzzy_match": {boolNumber(input.FuzzyMatch)},
-		"over_edition": {boolNumber(input.OverEdition)}, "in_form": {"manual"},
-	}
-	optionalForm(form, "rssid", input.ID)
-	optionalForm(form, "year", input.Year)
-	optionalForm(form, "season", input.Season)
-	optionalForm(form, "mediaid", input.MediaID)
-	optionalForm(form, "keyword", input.Keyword)
-	optionalForm(form, "rss_sites", strings.Join(input.RSSSites, ","))
-	optionalForm(form, "search_sites", strings.Join(input.SearchSites, ","))
-	optionalForm(form, "filter_restype", input.Quality)
-	optionalForm(form, "filter_pix", input.Resolution)
-	optionalForm(form, "filter_team", input.ReleaseGroup)
-	optionalForm(form, "filter_rule", input.FilterRule)
-	optionalForm(form, "filter_include", input.Include)
-	optionalForm(form, "filter_exclude", input.Exclude)
-	optionalForm(form, "save_path", input.SavePath)
-	optionalForm(form, "download_setting", input.DownloadSetting)
-	if input.TotalEpisodes != nil {
-		form.Set("total_ep", strconv.Itoa(*input.TotalEpisodes))
-	}
-	if input.CurrentEpisode != nil {
-		form.Set("current_ep", strconv.Itoa(*input.CurrentEpisode))
-	}
-	service.forwardMutation(response, request, token, "/api/v1/subscribe/add", form)
+	service.serveNativeSubscriptionUpsert(response, request, input)
 }
 
 func validateSubscription(input *subscriptionUpsertRequest) string {
@@ -192,6 +165,9 @@ func validateSubscription(input *subscriptionUpsertRequest) string {
 		input.MediaID = strconv.FormatInt(id, 10)
 	}
 	input.Keyword = strings.TrimSpace(input.Keyword)
+	if !input.FuzzyMatch && input.MediaID != "" && !numericTMDBID(input.MediaID) && !strings.HasPrefix(input.MediaID, "BG:") && !strings.HasPrefix(input.MediaID, "DB:") {
+		return "invalid media ID"
+	}
 	if input.Name == "" || len([]rune(input.Name)) > 200 {
 		return "subscription name is required and must not exceed 200 characters"
 	}
@@ -226,19 +202,6 @@ func validateSubscription(input *subscriptionUpsertRequest) string {
 	return ""
 }
 
-func optionalForm(form url.Values, key, value string) {
-	if value = strings.TrimSpace(value); value != "" {
-		form.Set(key, value)
-	}
-}
-
-func boolNumber(value bool) string {
-	if value {
-		return "1"
-	}
-	return "0"
-}
-
 func (service subscriptionService) control(response http.ResponseWriter, request *http.Request) {
 	token, kind, id, action, ok := subscriptionAction(request)
 	if !ok {
@@ -249,22 +212,17 @@ func (service subscriptionService) control(response http.ResponseWriter, request
 		writeAPIError(response, http.StatusUnauthorized, 401, "missing authorization token")
 		return
 	}
-	var path string
-	form := url.Values{"type": {kind}, "rssid": {id}}
+	if service.databasePath == "" {
+		writeAPIError(response, 503, 503, "native subscription storage is unavailable")
+		return
+	}
 	switch action {
-	case "refresh":
-		path = "/api/v1/subscribe/search"
 	case "remove":
-		if service.databasePath != "" {
-			service.serveNativeSubscriptionRemove(response, request, kind, id, false)
-			return
-		}
-		path = "/api/v1/subscribe/delete"
+		service.serveNativeSubscriptionRemove(response, request, kind, id, false)
 	default:
 		writeAPIError(response, http.StatusBadRequest, 400, "unsupported subscription action")
 		return
 	}
-	service.forwardMutation(response, request, token, path, form)
 }
 
 func (service subscriptionService) controlHistory(response http.ResponseWriter, request *http.Request) {
@@ -277,27 +235,19 @@ func (service subscriptionService) controlHistory(response http.ResponseWriter, 
 		writeAPIError(response, http.StatusUnauthorized, 401, "missing authorization token")
 		return
 	}
-	var path string
-	form := url.Values{"rssid": {id}}
+	if service.databasePath == "" {
+		writeAPIError(response, 503, 503, "native subscription storage is unavailable")
+		return
+	}
 	switch action {
 	case "redo":
-		if service.databasePath != "" {
-			service.serveNativeSubscriptionHistoryRedo(response, request, kind, id, false)
-			return
-		}
-		path = "/api/v1/subscribe/redo"
-		form.Set("type", kind)
+		service.serveNativeSubscriptionHistoryRedo(response, request, kind, id, false)
 	case "remove":
-		if service.databasePath != "" {
-			service.serveNativeSubscriptionRemove(response, request, kind, id, true)
-			return
-		}
-		path = "/api/v1/subscribe/history/delete"
+		service.serveNativeSubscriptionRemove(response, request, kind, id, true)
 	default:
 		writeAPIError(response, http.StatusBadRequest, 400, "unsupported subscription history action")
 		return
 	}
-	service.forwardMutation(response, request, token, path, form)
 }
 
 func subscriptionAction(request *http.Request) (token, kind, id, action string, ok bool) {
@@ -309,28 +259,17 @@ func subscriptionAction(request *http.Request) (token, kind, id, action string, 
 	return
 }
 
-func (service subscriptionService) forwardMutation(response http.ResponseWriter, request *http.Request, token, path string, form url.Values) {
-	ctx, cancel := context.WithTimeout(request.Context(), 90*time.Second)
-	defer cancel()
-	result, err := postLegacy(ctx, service.client, service.legacyURL, path, token, form)
-	if err != nil {
-		writeAPIError(response, http.StatusBadGateway, 502, "legacy subscription service is unavailable")
-		return
-	}
-	code := int(number(result["code"]))
-	if code == 403 {
-		writeAPIError(response, http.StatusUnauthorized, 401, "authorization token is invalid or expired")
-		return
-	}
-	if code != 0 || result["success"] == false {
-		message := text(result["message"])
-		if message == "" {
-			message = "subscription action failed"
+func (service subscriptionService) withNativeStorage(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requireServiceToken(w, r); !ok {
+			return
 		}
-		writeJSON(response, http.StatusBadRequest, map[string]any{"code": code, "success": false, "message": message})
-		return
+		if service.databasePath == "" {
+			writeAPIError(w, 503, 503, "native subscription storage is unavailable")
+			return
+		}
+		handler(w, r)
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": text(result["message"])})
 }
 
 func (service subscriptionService) normalizeItems(value any, kind string) []subscriptionItem {

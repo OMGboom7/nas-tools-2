@@ -801,32 +801,11 @@ func TestNativeSubscriptionRowReadsLegacyJSONSettings(t *testing.T) {
 	}
 }
 
-func TestSubscriptionMutationsForwardForms(t *testing.T) {
+func TestSubscriptionMutationsNeverFallbackWithoutNativeStorage(t *testing.T) {
 	t.Parallel()
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		payload, _ := io.ReadAll(request.Body)
-		form, _ := url.ParseQuery(string(payload))
-		switch request.URL.Path {
-		case "/api/v1/subscribe/search":
-			if form.Get("type") != "TV" || form.Get("rssid") != "8" {
-				t.Errorf("unexpected refresh form: %v", form)
-			}
-		case "/api/v1/subscribe/delete":
-			if form.Get("type") != "MOV" || form.Get("rssid") != "7" {
-				t.Errorf("unexpected remove form: %v", form)
-			}
-		case "/api/v1/subscribe/redo":
-			if form.Get("type") != "MOV" || form.Get("rssid") != "9" {
-				t.Errorf("unexpected redo form: %v", form)
-			}
-		case "/api/v1/subscribe/history/delete":
-			if form.Get("rssid") != "9" {
-				t.Errorf("unexpected history remove form: %v", form)
-			}
-		default:
-			t.Fatalf("unexpected path %q", request.URL.Path)
-		}
-		return jsonResponse(request, `{"code":0,"success":true,"data":{}}`), nil
+		t.Fatalf("unconfigured native subscriptions reached external service: %s", request.URL)
+		return nil, nil
 	})
 	handler, err := newHandler(config.Config{LegacyBackendURL: "http://legacy:3000"}, transport)
 	if err != nil {
@@ -837,27 +816,31 @@ func TestSubscriptionMutationsForwardForms(t *testing.T) {
 		"/api/v1/subscriptions/MOV/7/remove",
 		"/api/v1/subscriptions/history/MOV/9/redo",
 		"/api/v1/subscriptions/history/MOV/9/remove",
+		"/api/v1/subscribe/add",
+		"/api/v1/subscribe/delete",
+		"/api/v1/subscribe/redo",
+		"/api/v1/subscribe/history/delete",
+		"/api/v1/subscribe/movie/list",
+		"/api/v1/subscribe/tv/list",
+		"/api/v1/subscribe/history",
+		"/api/v1/subscribe/search",
 	}
 	for _, path := range paths {
 		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
 		request.Header.Set("Authorization", "test-token")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusOK {
+		if response.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s status = %d: %s", path, response.Code, response.Body.String())
 		}
 	}
 }
 
-func TestSubscriptionUpsertUsesDefaultSettings(t *testing.T) {
+func TestSubscriptionUpsertRequiresNativeStorage(t *testing.T) {
 	t.Parallel()
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		payload, _ := io.ReadAll(request.Body)
-		form, _ := url.ParseQuery(string(payload))
-		if request.URL.Path != "/api/v1/subscribe/add" || form.Get("name") != "测试剧集" || form.Get("type") != "TV" || form.Get("mediaid") != "200" || form.Get("season") != "2" {
-			t.Fatalf("unexpected subscription form: %s %v", request.URL.Path, form)
-		}
-		return jsonResponse(request, `{"code":0,"success":true,"message":"添加订阅成功","data":{}}`), nil
+		t.Fatalf("missing storage used a legacy or metadata request: %s", request.URL)
+		return nil, nil
 	})
 	handler, err := newHandler(config.Config{LegacyBackendURL: "http://legacy:3000"}, transport)
 	if err != nil {
@@ -868,7 +851,39 @@ func TestSubscriptionUpsertUsesDefaultSettings(t *testing.T) {
 	request.Header.Set("Authorization", "test-token")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSubscriptionUnknownIdentifiersNeverFallback(t *testing.T) {
+	handler, token, databasePath := nativeServicesFixture(t, "", nil, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("invalid identifier reached an external service: %s", r.URL)
+		return nil, nil
+	}))
+	for _, selector := range []string{"tt123456", "XX:123", "-1", "0", "9223372036854775808"} {
+		for _, compat := range []bool{false, true} {
+			path, body, contentType := "/api/v1/subscriptions", `{"name":"Test","type":"MOV","mediaId":"`+selector+`"}`, "application/json"
+			if compat {
+				path, body, contentType = "/api/v1/subscribe/add", url.Values{"name": {"Test"}, "type": {"MOV"}, "mediaid": {selector}, "in_form": {"manual"}}.Encode(), "application/x-www-form-urlencoded"
+			}
+			r := httptest.NewRequest("POST", path, strings.NewReader(body))
+			r.Header.Set("Authorization", token)
+			r.Header.Set("Content-Type", contentType)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != 400 {
+				t.Fatal(selector, compat, w.Code, w.Body.String())
+			}
+		}
+	}
+	db, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var exists bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='RSS_MOVIES')`).Scan(&exists); err != nil || exists {
+		t.Fatal("invalid requests created subscription data", exists, err)
 	}
 }

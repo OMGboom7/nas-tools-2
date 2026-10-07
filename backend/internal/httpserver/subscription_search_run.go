@@ -23,6 +23,18 @@ type subscriptionSearchRunResult struct {
 	Uncertain bool  `json:"uncertain"`
 }
 
+func (api *subscriptionSearchRunner) serveCompatSearch(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	if r.ParseForm() != nil {
+		writeAPIError(w, 400, 400, "invalid subscription search form")
+		return
+	}
+	r.SetPathValue("action", "refresh")
+	r.SetPathValue("type", r.PostForm.Get("type"))
+	r.SetPathValue("id", r.PostForm.Get("rssid"))
+	api.serveHTTP(w, r)
+}
+
 func (api *subscriptionSearchRunner) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if api.planner.runner == nil || api.planner.search == nil || api.planner.runner.download.service.auth == nil {
 		writeAPIError(w, 503, 503, "native subscription execution is unavailable")

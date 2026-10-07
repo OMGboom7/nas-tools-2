@@ -276,7 +276,6 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		downloads.serveCompatControl(response, request, "remove")
 	})
 	subscriptions := subscriptionService{
-		legacyURL:    cfg.LegacyBackendURL,
 		client:       &http.Client{Transport: transport},
 		images:       images,
 		downloaders:  nativeDownloaders,
@@ -311,21 +310,20 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		response.Header().Set("Allow", "GET, HEAD")
 		writeAPIError(response, http.StatusMethodNotAllowed, 405, "method not allowed")
 	})
-	if nativeUserDatabasePath != "" {
-		mux.HandleFunc("POST /api/v1/subscribe/movie/list", subscriptions.serveCompatMovieList)
-		mux.HandleFunc("POST /api/v1/subscribe/tv/list", subscriptions.serveCompatTVList)
-		mux.HandleFunc("POST /api/v1/subscribe/history", subscriptions.serveCompatHistoryList)
-		mux.HandleFunc("POST /api/v1/subscribe/redo", subscriptions.serveCompatSubscriptionHistoryRedo)
-		mux.HandleFunc("POST /api/v1/subscribe/add", subscriptions.serveCompatSubscriptionUpsert)
-		mux.HandleFunc("POST /api/v1/subscribe/delete", subscriptions.serveCompatSubscriptionRemove)
-		mux.HandleFunc("POST /api/v1/subscribe/history/delete", subscriptions.serveCompatHistoryRemove)
-	}
+	mux.HandleFunc("POST /api/v1/subscribe/movie/list", subscriptions.withNativeStorage(subscriptions.serveCompatMovieList))
+	mux.HandleFunc("POST /api/v1/subscribe/tv/list", subscriptions.withNativeStorage(subscriptions.serveCompatTVList))
+	mux.HandleFunc("POST /api/v1/subscribe/history", subscriptions.withNativeStorage(subscriptions.serveCompatHistoryList))
+	mux.HandleFunc("POST /api/v1/subscribe/redo", subscriptions.withNativeStorage(subscriptions.serveCompatSubscriptionHistoryRedo))
+	mux.HandleFunc("POST /api/v1/subscribe/add", subscriptions.withNativeStorage(subscriptions.serveCompatSubscriptionUpsert))
+	mux.HandleFunc("POST /api/v1/subscribe/delete", subscriptions.withNativeStorage(subscriptions.serveCompatSubscriptionRemove))
+	mux.HandleFunc("POST /api/v1/subscribe/history/delete", subscriptions.withNativeStorage(subscriptions.serveCompatHistoryRemove))
+	mux.HandleFunc("POST /api/v1/subscribe/search", subscriptionRunner.serveCompatSearch)
 	mux.HandleFunc("POST /api/v1/subscriptions", subscriptions.upsert)
 	mux.HandleFunc("POST /api/v1/media/tv/seasons", subscriptions.serveCompatTVSeasons)
 	mux.HandleFunc("GET /api/v1/subscriptions/options", subscriptions.serveOptions)
 	mux.HandleFunc("POST /api/v1/site/indexers", subscriptions.serveCompatIndexers)
 	mux.HandleFunc("POST /api/v1/subscriptions/{type}/{id}/{action}", func(w http.ResponseWriter, r *http.Request) {
-		if cfg.DisableLegacy && r.PathValue("action") == "refresh" {
+		if r.PathValue("action") == "refresh" {
 			subscriptionRunner.serveHTTP(w, r)
 			return
 		}

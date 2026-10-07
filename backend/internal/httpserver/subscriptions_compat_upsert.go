@@ -12,7 +12,7 @@ import (
 )
 
 func (service subscriptionService) serveCompatSubscriptionUpsert(response http.ResponseWriter, request *http.Request) {
-	token, ok := requireServiceToken(response, request)
+	_, ok := requireServiceToken(response, request)
 	if !ok {
 		return
 	}
@@ -38,11 +38,6 @@ func (service subscriptionService) serveCompatSubscriptionUpsert(response http.R
 	fuzzy, err := parseCompatSubscriptionFlag(form.Get("fuzzy_match"))
 	if err != nil {
 		writeAPIError(response, http.StatusBadRequest, 400, "invalid fuzzy matching flag")
-		return
-	}
-	// Unknown external identifier schemes retain the old resolver until ported.
-	if !fuzzy && form.Get("mediaid") != "" && !numericTMDBID(form.Get("mediaid")) && !strings.HasPrefix(form.Get("mediaid"), "BG:") && !strings.HasPrefix(form.Get("mediaid"), "DB:") {
-		service.forwardMutation(response, request, token, "/api/v1/subscribe/add", form)
 		return
 	}
 	overEdition, err := parseCompatSubscriptionFlag(form.Get("over_edition"))

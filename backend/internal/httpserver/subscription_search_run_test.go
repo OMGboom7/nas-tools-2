@@ -28,6 +28,37 @@ type subscriptionRunFixture struct {
 	afterAdd, afterSearch                   func()
 }
 
+func TestCompatSubscriptionSearchUsesNativeExecution(t *testing.T) {
+	f := newSubscriptionRunFixture(t)
+	r := performFormRequest(f.handler, "/api/v1/subscribe/search", f.token, url.Values{"type": {"MOV"}, "rssid": {"1"}})
+	if r.Code != 200 || f.adds != 1 || !strings.Contains(r.Body.String(), `"completed":true`) {
+		t.Fatal(r.Code, r.Body.String(), f.adds)
+	}
+	r = performFormRequest(f.handler, "/api/v1/subscribe/search", f.token, url.Values{"type": {"MOV"}, "rssid": {"1"}})
+	if r.Code != 404 || f.adds != 1 {
+		t.Fatal("compat search repeated submission", r.Code, f.adds)
+	}
+}
+
+func TestCompatSubscriptionSearchPreservesPendingAndPureGoGuard(t *testing.T) {
+	f := pendingSubmissionFixture(t, false, verifyPresent)
+	form := url.Values{"type": {"MOV"}, "rssid": {"1"}}
+	r := performFormRequest(f.handler, "/api/v1/subscribe/search", f.token, form)
+	if r.Code != 409 || f.adds != 1 || f.queries != 1 {
+		t.Fatal("compat search bypassed durable pending state", r.Code, f.adds, f.queries)
+	}
+	handler, err := newHandler(config.Config{ApplicationConfigPath: f.path, LegacyBackendURL: "http://legacy:3000"}, f.transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/subscribe/search", "/api/v1/subscriptions/MOV/1/refresh"} {
+		r = performFormRequest(handler, path, f.token, form)
+		if r.Code != 501 || f.adds != 1 || f.queries != 1 {
+			t.Fatal("mixed mode must not silently use Python execution", path, r.Code, r.Body.String())
+		}
+	}
+}
+
 func newSubscriptionRunFixture(t *testing.T) *subscriptionRunFixture {
 	t.Helper()
 	f := &subscriptionRunFixture{}
