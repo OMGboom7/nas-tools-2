@@ -15,18 +15,21 @@ func (api organizationAPI) jobsAuthorized(w http.ResponseWriter, r *http.Request
 		return false
 	}
 	if !api.pureGo || api.jobs == nil {
-		writeAPIError(w, 501, 501, "native copy execution requires the Python backend to be disabled")
+		writeAPIError(w, 501, 501, "native organization execution requires the Python backend to be disabled")
 		return false
 	}
 	return true
 }
 func writeOrganizationError(w http.ResponseWriter, err error) {
-	status, message := 503, "organization journal is unavailable"
+	status, message := 503, "organization operation failed; inspect the saved job state"
 	if errors.Is(err, organization.ErrNotFound) {
 		status, message = 404, "organization job not found"
 	}
 	if errors.Is(err, organization.ErrState) || errors.Is(err, organization.ErrClaimed) || errors.Is(err, organization.ErrPath) {
 		status, message = 409, "organization state or configuration changed; review the job before any retry"
+	}
+	if errors.Is(err, organization.ErrMode) {
+		status, message = 422, "selected organization mode is unavailable on this filesystem or with current permissions; no mode fallback was performed"
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		status, message = 504, "organization operation was interrupted; inspect its saved state"
@@ -70,8 +73,8 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 	if !decodeServiceRequest(w, r, &input, "invalid organization job request") {
 		return
 	}
-	if input.Mode != "copy" || len(input.Fingerprint) != 64 {
-		writeAPIError(w, 400, 400, "copy mode and the reviewed preview fingerprint are required")
+	if !organization.SupportedMode(input.Mode) || len(input.Fingerprint) != 64 {
+		writeAPIError(w, 400, 400, "a supported organization mode and the reviewed preview fingerprint are required")
 		return
 	}
 	if input.Path == "" {
@@ -183,7 +186,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 }
 
 func (api organizationAPI) runJob(ctx context.Context, job organization.Job, reconcile bool) error {
-	if job.Definition.Mode != "copy" || job.State == "cancelled" {
+	if !organization.SupportedMode(job.Definition.Mode) || job.State == "cancelled" {
 		return organization.ErrState
 	}
 	for _, item := range job.Items {
@@ -218,7 +221,7 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 		if !claimed {
 			return organization.ErrState
 		}
-		proof, err := organization.Copy(ctx, job.Definition, item.Entry, organization.TempName(job.ID, item.Index), func(p organization.Proof) error {
+		proof, err := organization.Transfer(ctx, job.Definition, item.Entry, organization.TempName(job.ID, item.Index), func(p organization.Proof) error {
 			if err := api.validateJob(ctx, job); err != nil {
 				return err
 			}

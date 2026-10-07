@@ -18,6 +18,12 @@ import (
 var ErrClaimed = errors.New("organization target is already reserved")
 var ErrState = errors.New("organization item requires review")
 var ErrNotFound = errors.New("organization job not found")
+var ErrMode = errors.New("organization mode is unavailable on this filesystem")
+
+func SupportedMode(mode string) bool { return mode == "copy" || mode == "link" || mode == "softlink" }
+func ModeLabel(mode string) string {
+	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接"}[mode]
+}
 
 type Entry struct {
 	Source        string `json:"source"`
@@ -52,6 +58,8 @@ type Proof struct {
 	ParentIdentity  string `json:"parentIdentity"`
 	StagingIdentity string `json:"stagingIdentity"`
 	Digest          string `json:"digest"`
+	Kind            string `json:"kind,omitempty"`
+	LinkTarget      string `json:"linkTarget,omitempty"`
 }
 
 type JobItem struct {
@@ -106,7 +114,7 @@ func OpenStore(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (string, error) {
-	if len(fingerprint) != 64 || d.Mode != "copy" || len(d.Entries) == 0 || len(d.Entries) > 1000 || d.SourceIdentity == "" || d.TargetIdentity == "" || !filepath.IsAbs(d.SourceRoot) || !filepath.IsAbs(d.TargetRoot) {
+	if len(fingerprint) != 64 || !SupportedMode(d.Mode) || len(d.Entries) == 0 || len(d.Entries) > 1000 || d.SourceIdentity == "" || d.TargetIdentity == "" || !filepath.IsAbs(d.SourceRoot) || !filepath.IsAbs(d.TargetRoot) {
 		return "", ErrPath
 	}
 	for _, entry := range d.Entries {
@@ -312,6 +320,9 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 // Publication and the database cannot be one transaction. The prepared proof
 // remains reserved across crashes; Complete atomically writes state + history.
 func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
+	if !SupportedMode(job.Definition.Mode) {
+		return ErrMode
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -336,7 +347,7 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 			return err
 		}
 		source, target := filepath.Join(job.Definition.SourceRoot, item.Source), filepath.Join(job.Definition.TargetRoot, item.Target)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO TRANSFER_HISTORY (MODE,TYPE,CATEGORY,TMDBID,TITLE,YEAR,SEASON_EPISODE,SOURCE,SOURCE_PATH,SOURCE_FILENAME,DEST,DEST_PATH,DEST_FILENAME,DATE) VALUES ('复制',?,?,?,?,?,?,'手动整理',?,?,?,?,?,?)`, item.MediaType, item.Category, item.TMDBID, item.Title, item.Year, item.SeasonEpisode, filepath.Dir(source), filepath.Base(source), job.Definition.TargetRoot, filepath.Dir(target), filepath.Base(target), time.Now().Format("2006-01-02 15:04:05")); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO TRANSFER_HISTORY (MODE,TYPE,CATEGORY,TMDBID,TITLE,YEAR,SEASON_EPISODE,SOURCE,SOURCE_PATH,SOURCE_FILENAME,DEST,DEST_PATH,DEST_FILENAME,DATE) VALUES (?,?,?,?,?,?,?,'手动整理',?,?,?,?,?,?)`, ModeLabel(job.Definition.Mode), item.MediaType, item.Category, item.TMDBID, item.Title, item.Year, item.SeasonEpisode, filepath.Dir(source), filepath.Base(source), job.Definition.TargetRoot, filepath.Dir(target), filepath.Base(target), time.Now().Format("2006-01-02 15:04:05")); err != nil {
 			return err
 		}
 	}

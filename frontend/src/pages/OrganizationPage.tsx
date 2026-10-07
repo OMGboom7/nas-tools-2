@@ -4,7 +4,8 @@ import { WorkspaceLayout } from "../components/WorkspaceLayout";
 
 type Props = { session: AuthSession; currentPath: string; onNavigate: (path: string) => void; onLogout: () => Promise<void>; onSessionExpired: () => void };
 const statusLabels: Record<string, string> = { available: "可规划", conflict: "目标冲突", blocked: "已阻止", unmatched: "附件未匹配", unrecognized: "媒体未识别" };
-const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "复制凭证已保存，待核实" };
+const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "转移凭证已保存，待核实" };
+const modeLabels: Record<string,string> = {copy:"复制",link:"硬链接",softlink:"软链接",move:"移动"};
 
 export function OrganizationPage({ session, currentPath, onNavigate, onLogout, onSessionExpired }: Props) {
   const [roots, setRoots] = useState<OrganizationRoots>({ sources: [], targets: [] });
@@ -26,7 +27,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     void getOrganizationRoots(session.token).then(async (data) => {
       if (!active) return;
       setRoots(data); setSourceId(data.sources[0]?.id || ""); setTargetId(data.targets[0]?.id || ""); setError("");
-      if (data.executionModes?.includes("copy")) {
+      if (data.executionModes?.length) {
         const saved = await getOrganizationJobs(session.token);
         if (active) { setJobs(saved); setJobId(saved[0]?.id || ""); }
       }
@@ -69,7 +70,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   return <WorkspaceLayout user={session.user} currentPath={currentPath} section="媒体整理" page="整理预览" onNavigate={onNavigate} onLogout={onLogout}>
     <section className="organization-preview">
       <h1>整理预览</h1>
-      <p>此功能仅限管理员使用。生成预览不会改动文件；本地复制需先保存任务，再单独确认执行，且不会覆盖目标或删除源文件。移动与链接模式目前仅支持预览。</p>
+      <p>此功能仅限管理员使用。复制、硬链接和软链接需先保存任务，再单独确认执行，不会覆盖目标或删除源文件；移动目前仅支持预览。硬链接共享文件内容，软链接依赖源文件长期存在。</p>
       {error && <p role="alert">{error}</p>}
       {loading ? <p>正在读取配置目录…</p> : <form onSubmit={(event) => void preview(event)}>
         <label>来源目录<select value={sourceId} disabled={busy} required onChange={(e) => { setSourceId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.sources.map((root) => <option key={root.id} value={root.id}>{root.label} · {root.path}</option>)}</select></label>
@@ -81,17 +82,17 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       </form>}
       {plan && <div aria-live="polite"><p>共 {plan.items.length} 个媒体或附件；跳过 {plan.skipped} 个隐藏、非媒体或常见未完成后缀项。此预览不能直接执行，也不证明文件已下载完成。</p>
         <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>核验状态</th></tr></thead><tbody>{plan.items.map((item) => <tr key={item.source}><td>{item.source}<small>{item.size} 字节 · {item.kind}</small></td><td>{item.target || "未生成"}{item.tmdbId && <small>TMDB {item.tmdbId}</small>}</td><td>{statusLabels[item.status] || item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
-        {mode === "copy" && roots.executionModes?.includes("copy") && <><p>仅将“可规划”的文件保存为待确认复制任务；冲突、未识别和已阻止的文件不会执行。</p><button type="button" disabled={busy || !plan.items.some((item) => item.status === "available")} onClick={() => void jobOperation("create")}>保存待确认复制任务</button></>}
+        {roots.executionModes?.includes(mode) && <><p>仅将“可规划”的文件保存为待确认{modeLabels[mode] || mode}任务；冲突、未识别和已阻止的文件不会执行。</p><button type="button" disabled={busy || !plan.items.some((item) => item.status === "available")} onClick={() => void jobOperation("create")}>保存待确认{modeLabels[mode] || mode}任务</button></>}
       </div>}
-      {!loading && !roots.executionModes?.includes("copy") && <p>当前运行模式仅支持预览。实际复制只在旧后端已禁用的 Go 模式开放；请勿直接切换未经完整验收的生产环境。</p>}
-      {roots.executionModes?.includes("copy") && <section aria-label="持久复制任务">
-        <h2>已保存的复制任务</h2>
+      {!loading && !roots.executionModes?.length && <p>当前运行模式仅支持预览。实际转移只在旧后端已禁用的 Go 模式开放；请勿直接切换未经完整验收的生产环境。</p>}
+      {!!roots.executionModes?.length && <section aria-label="持久整理任务">
+        <h2>已保存的整理任务</h2>
         <button type="button" disabled={busy} onClick={() => void jobOperation("refresh")}>刷新任务状态</button>
-        <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
-        {job && <><p>{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新复制。</p>
+        <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
+        {job && <><p>转移方式：{modeLabels[job.mode] || job.mode}。{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新转移。</p>
           <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>任务状态</th></tr></thead><tbody>{job.items.map((item) => <tr key={item.index}><td>{item.source}</td><td>{item.target}</td><td>{jobLabels[item.state] || item.state}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
-          {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意复制以上待执行文件。</label><button type="button" disabled={busy || !confirmed} onClick={() => void jobOperation("execute")}>确认执行复制</button></>}
-          {job.state === "needs_review" && <button type="button" disabled={busy} onClick={() => void jobOperation("reconcile")}>核对已发布文件，不重试复制</button>}
+          {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意按{modeLabels[job.mode] || job.mode}方式整理以上待执行文件。</label><button type="button" disabled={busy || !confirmed} onClick={() => void jobOperation("execute")}>确认执行{modeLabels[job.mode] || job.mode}</button></>}
+          {job.state === "needs_review" && <button type="button" disabled={busy} onClick={() => void jobOperation("reconcile")}>核对已发布文件，不重试转移</button>}
           {job.items.every((item) => item.state === "planned") && <button type="button" disabled={busy} onClick={() => void jobOperation("cancel")}>取消未执行任务</button>}
         </>}
       </section>}

@@ -73,3 +73,19 @@ test("organization root loading is authenticated and preserves source/target rol
   });
   assert.deepEqual(await getOrganizationRoots("test-token"), data);
 });
+
+for (const mode of ["link", "softlink"]) {
+  test(`${mode} job creation preserves reviewed mode without copy fallback or execution`, async (t) => {
+    const input = { sourceId: "s", targetId: "t", path: ".", mode, fingerprint: "c".repeat(64) };
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async (path, options) => {
+      calls++;
+      assert.equal(path, "/api/v1/organization/jobs");
+      assert.equal(options.headers.Authorization, "token");
+      assert.deepEqual(JSON.parse(options.body), input);
+      return new Response(JSON.stringify({ code: 0, success: true, data: { id: "job", mode, state: "ready" } }));
+    });
+    assert.equal((await createOrganizationJob("token", input)).mode, mode);
+    assert.equal(calls, 1);
+  });
+}

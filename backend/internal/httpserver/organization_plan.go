@@ -100,7 +100,7 @@ func (api organizationAPI) serveRoots(w http.ResponseWriter, r *http.Request) {
 func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error) {
 	result := organizationRoots{Sources: []organizationRoot{}, Targets: []organizationRoot{}, ExecutionModes: []string{}}
 	if api.pureGo && api.jobs != nil && organization.CopySupported {
-		result.ExecutionModes = []string{"copy"}
+		result.ExecutionModes = []string{"copy", "link", "softlink"}
 	}
 	seen := map[string]bool{}
 	add := func(role, path, label, kind string) error {
@@ -409,6 +409,14 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			}
 			return fail(422, "target path is unavailable or unsafe")
 		}
+		if item.Status == "available" && organization.CopySupported && organization.SupportedMode(input.Mode) {
+			if err := organization.ValidateMode(ctx, result.definition, item.entry()); err != nil {
+				if ctx.Err() != nil {
+					return fail(504, "organization preview was cancelled or timed out")
+				}
+				item.Status, item.Reason = "blocked", "selected mode is unavailable on this filesystem or the target changed"
+			}
+		}
 		result.Items = append(result.Items, item)
 	}
 	markOrganizationConflicts(result.Items)
@@ -447,6 +455,14 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			}
 			return fail(422, "companion target is unavailable or unsafe")
 		}
+		if item.Status == "available" && organization.CopySupported && organization.SupportedMode(input.Mode) {
+			if err := organization.ValidateMode(ctx, result.definition, item.entry()); err != nil {
+				if ctx.Err() != nil {
+					return fail(504, "organization preview was cancelled or timed out")
+				}
+				item.Status, item.Reason = "blocked", "selected mode is unavailable for this companion"
+			}
+		}
 	}
 	markOrganizationConflicts(result.Items)
 	if ctx.Err() != nil {
@@ -454,7 +470,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	for _, item := range result.Items {
 		if item.Status == "available" {
-			result.definition.Entries = append(result.definition.Entries, organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode})
+			result.definition.Entries = append(result.definition.Entries, item.entry())
 		}
 	}
 	// Publish primary media before companions; a failed media copy must not
@@ -467,6 +483,10 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		Items      []organizationPlanItem
 	}{result.definition, result.Items})
 	return result, nil
+}
+
+func (item organizationPlanItem) entry() organization.Entry {
+	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode}
 }
 
 func markOrganizationConflicts(items []organizationPlanItem) {

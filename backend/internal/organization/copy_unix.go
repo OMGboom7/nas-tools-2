@@ -102,14 +102,27 @@ func (r contextReader) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
-// Copy never removes the source and never overwrites any target. Uncertain
-// staging files stay reserved rather than being deleted or silently retried.
 func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepared func(Proof) error) (Proof, error) {
+	if d.Mode != "copy" {
+		return Proof{}, ErrMode
+	}
+	return Transfer(ctx, d, item, tempName, prepared)
+}
+
+// Transfer never removes the source or overwrites a target. The journal mode
+// is executed literally: unsupported links never silently turn into copies.
+func Transfer(ctx context.Context, d Definition, item Entry, tempName string, prepared func(Proof) error) (Proof, error) {
 	var proof Proof
-	if d.Mode != "copy" || !strings.HasPrefix(tempName, ".nastool-copy-") || filepath.Base(tempName) != tempName {
+	if !SupportedMode(d.Mode) {
+		return proof, ErrMode
+	}
+	if !strings.HasPrefix(tempName, ".nastool-copy-") || filepath.Base(tempName) != tempName || !validRelative(tempName) {
 		return proof, ErrPath
 	}
 	if err := ctx.Err(); err != nil {
+		return proof, err
+	}
+	if err := ValidateMode(ctx, d, item); err != nil {
 		return proof, err
 	}
 	sourceRoot, err := anchoredRoot(d.SourceRoot, d.SourceIdentity)
@@ -146,6 +159,15 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 		return proof, err
 	}
 	defer targetParent.Close()
+	if d.Mode == "link" {
+		parentInfo, err := targetParent.Stat()
+		if err != nil {
+			return proof, err
+		}
+		if !sameDevice(Identity(info), Identity(parentInfo)) {
+			return proof, ErrMode
+		}
+	}
 	var stat unix.Stat_t
 	if err := unix.Fstatat(int(targetParent.Fd()), targetName, &stat, unix.AT_SYMLINK_NOFOLLOW); err == nil || !errors.Is(err, unix.ENOENT) {
 		return proof, ErrClaimed
@@ -165,19 +187,9 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 	if err = unix.Fstat(stageFD, &stageStat); err != nil || stageStat.Uid != uint32(os.Geteuid()) || stageStat.Mode&0777 != 0700 {
 		return proof, ErrPath
 	}
-	fd, err := unix.Openat(stageFD, "payload", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
-	if err != nil {
-		return proof, ErrState
-	}
-	temp := os.NewFile(uintptr(fd), tempName)
-	defer temp.Close()
-	hash := sha256.New()
-	n, err := io.CopyBuffer(io.MultiWriter(temp, hash), contextReader{ctx, io.LimitReader(source, item.Size+1)}, make([]byte, 256<<10))
+	proof, err = preparePayload(ctx, d, item, source, info, sourceParent, sourceName, stage)
 	if err != nil {
 		return proof, err
-	}
-	if n != item.Size {
-		return proof, ErrPath
 	}
 	info, err = source.Stat()
 	if err != nil || !matches(info, item) {
@@ -192,19 +204,6 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 	if err != nil || !matches(currentInfo, item) {
 		return proof, ErrPath
 	}
-	if err = temp.Chmod(info.Mode().Perm() & 0777); err != nil {
-		return proof, err
-	}
-	if err = unix.Futimes(fd, []unix.Timeval{unix.NsecToTimeval(time.Now().UnixNano()), unix.NsecToTimeval(info.ModTime().UnixNano())}); err != nil {
-		return proof, err
-	}
-	if err = temp.Sync(); err != nil {
-		return proof, err
-	}
-	tempInfo, err := temp.Stat()
-	if err != nil {
-		return proof, err
-	}
 	parentInfo, err := targetParent.Stat()
 	if err != nil {
 		return proof, err
@@ -213,7 +212,7 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 	if err != nil {
 		return proof, err
 	}
-	proof = Proof{Temp: tempName, Identity: Identity(tempInfo), ParentIdentity: Identity(parentInfo), StagingIdentity: Identity(stageInfo), Digest: hex.EncodeToString(hash.Sum(nil))}
+	proof.Temp, proof.ParentIdentity, proof.StagingIdentity = tempName, Identity(parentInfo), Identity(stageInfo)
 	// Persist the inode + digest and flush directory entries BEFORE publication.
 	if err = stage.Sync(); err != nil {
 		return proof, err
@@ -240,6 +239,9 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 	if err != nil || !matches(currentInfo, item) {
 		return proof, ErrPath
 	}
+	if err := validateSourceBinding(d, item); err != nil {
+		return proof, err
+	}
 	// Reject a root or target directory replaced while the copy was prepared.
 	checkRoot, err := anchoredRoot(d.TargetRoot, d.TargetIdentity)
 	if err != nil {
@@ -261,7 +263,7 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 		if errors.Is(err, unix.EEXIST) {
 			return proof, ErrClaimed
 		}
-		return proof, err
+		return proof, modeOperationError(err)
 	}
 	if err = stage.Sync(); err != nil {
 		return proof, err
@@ -302,6 +304,15 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 	if err != nil || Identity(stageInfo) != p.StagingIdentity {
 		return ErrState
 	}
+	if d.Mode == "softlink" {
+		return verifySoftlink(ctx, d, item, p, parent, name, stage)
+	}
+	if d.Mode != "copy" && d.Mode != "link" || p.Kind != "" && p.Kind != "regular" || p.LinkTarget != "" {
+		return ErrState
+	}
+	if d.Mode == "link" && p.Identity != item.Identity {
+		return ErrState
+	}
 	anchor, err := openRegular(stage, "payload")
 	if err != nil {
 		return ErrState
@@ -319,6 +330,9 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 	info, err := target.Stat()
 	if err != nil || Identity(info) != p.Identity || info.Size() != item.Size {
 		return ErrState
+	}
+	if d.Mode == "link" && !matches(info, item) {
+		return ErrPath
 	}
 	hash := sha256.New()
 	n, err := io.CopyBuffer(hash, contextReader{ctx, io.LimitReader(target, item.Size+1)}, make([]byte, 256<<10))
@@ -340,6 +354,9 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 	named.Close()
 	if err != nil || Identity(namedInfo) != p.Identity {
 		return ErrState
+	}
+	if err := validateDestinationBinding(d, item, p); err != nil {
+		return err
 	}
 	return parent.Sync()
 }
@@ -377,14 +394,15 @@ func Cleanup(d Definition, item Entry, p Proof) error {
 	if err != nil || Identity(stageInfo) != p.StagingIdentity {
 		return ErrState
 	}
-	f, err := openRegular(stage, "payload")
+	stat, err := lstatAt(stage, "payload")
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if err == nil {
-		tempInfo, err := f.Stat()
-		f.Close()
-		if err != nil || Identity(tempInfo) != p.Identity {
+		if statIdentity(stat) != p.Identity || stat.Mode&unix.S_IFMT != unix.S_IFREG && stat.Mode&unix.S_IFMT != unix.S_IFLNK {
+			return ErrState
+		}
+		if (d.Mode == "softlink") != (stat.Mode&unix.S_IFMT == unix.S_IFLNK) {
 			return ErrState
 		}
 		if err = unix.Unlinkat(stageFD, "payload", 0); err != nil {
