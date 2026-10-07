@@ -67,11 +67,12 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
     };
   }, [state, mediaType, status, keyword]);
 
-  async function handleItemAction(item: SubscriptionItem, action: "refresh" | "remove") {
+  async function handleItemAction(item: SubscriptionItem, action: "refresh" | "remove" | "reconcile") {
     if (action === "remove" && !window.confirm(`确定删除“${item.name}”的订阅吗？删除后将停止后续搜索。`)) return;
     await runAction(`item-${item.type}-${item.id}`, async () => {
       const result = await controlSubscription(session.token, item.type, item.id, action);
       const message = action === "remove" ? `已删除“${item.name}”订阅`
+        : action === "reconcile" ? `已核实下载器收到资源，已恢复“${item.name}”的订阅进度`
         : typeof result?.submitted !== "number" ? `已触发“${item.name}”搜索`
         : result.completed ? `“${item.name}”订阅已完成，所需资源已存在或已提交下载`
         : result.submitted > 0 ? `已提交 ${result.submitted} 个资源，继续等待剩余所需资源`
@@ -168,7 +169,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   );
 }
 
-function SubscriptionCard({ item, busy, onEdit, onAction }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onAction: (action: "refresh" | "remove") => void }) {
+function SubscriptionCard({ item, busy, onEdit, onAction }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onAction: (action: "refresh" | "remove" | "reconcile") => void }) {
   const tags = [item.overEdition ? "洗版" : "", item.quality, item.resolution, item.releaseGroup, ...item.rssSites, ...item.searchSites].filter(Boolean);
   return <article className="subscription-card">
     <div className="subscription-art"><strong>{item.name.slice(0, 1)}</strong>{item.image && <img src={item.image} alt={`${item.name} 海报`} loading="lazy" />}</div>
@@ -176,7 +177,8 @@ function SubscriptionCard({ item, busy, onEdit, onAction }: { item: Subscription
       <div className="subscription-title"><div><h3>{item.name}</h3><p>{[item.year, item.season !== "S00" ? item.season : ""].filter(Boolean).join(" · ")}</p></div><span className={`subscription-state state-${item.state.toLowerCase()}`}>{item.stateLabel}</span></div>
       {item.type === "TV" && item.total > 0 && <><div className="subscription-progress"><span style={{ width: `${item.progress}%` }} /></div><small>已获取 {item.total - item.remaining}/{item.total} 集</small></>}
       {tags.length > 0 && <div className="subscription-tags">{tags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div>}
-      <div className="subscription-actions"><button type="button" disabled={busy} onClick={onEdit}>编辑</button><button type="button" disabled={busy} onClick={() => onAction("refresh")}>{busy ? "处理中…" : "立即搜索"}</button><button type="button" className="is-danger" disabled={busy} onClick={() => onAction("remove")}>删除</button></div>
+      {item.pendingSubmission && <small>上次提交结果待核实，请先核对下载器任务；核实不会重新提交下载。</small>}
+      <div className="subscription-actions"><button type="button" disabled={busy} onClick={onEdit}>编辑</button>{item.pendingSubmission ? <button type="button" disabled={busy} onClick={() => onAction("reconcile")}>{busy ? "核实中…" : "核实提交"}</button> : <button type="button" disabled={busy} onClick={() => onAction("refresh")}>{busy ? "处理中…" : "立即搜索"}</button>}<button type="button" className="is-danger" disabled={busy} onClick={() => onAction("remove")}>删除</button></div>
     </div>
   </article>;
 }

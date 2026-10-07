@@ -126,7 +126,8 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		if err != nil {
 			return fail(502, "subscription torrent could not be retrieved")
 		}
-		owner, err := service.reserveSubscriptionSubmission(ctx, kind, id, plan, candidate)
+		proof := newSubscriptionSubmissionProof(downloader, magnet, torrent)
+		owner, err := service.reserveSubscriptionSubmission(ctx, kind, id, plan, candidate, proof)
 		if err != nil {
 			return fail(409, "subscription changed or resource is reserved; verify pending downloads before retrying")
 		}

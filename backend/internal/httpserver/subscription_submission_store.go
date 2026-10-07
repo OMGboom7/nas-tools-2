@@ -51,6 +51,7 @@ func ensureSubscriptionSubmissionSchema(ctx context.Context, tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS GO_SUBSCRIPTION_DOWNLOAD_CLAIMS (RESOURCE_KEY TEXT PRIMARY KEY,OWNER TEXT NOT NULL,KIND TEXT NOT NULL,SUB_ID INTEGER NOT NULL,MEDIA_ID TEXT NOT NULL,SEASON INTEGER NOT NULL,EPISODES TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS GO_SUBSCRIPTION_CLAIMS_OWNER ON GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(KIND,SUB_ID)`,
 		`CREATE INDEX IF NOT EXISTS GO_SUBSCRIPTION_CLAIMS_MEDIA ON GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(KIND,MEDIA_ID,SEASON)`,
+		`CREATE TABLE IF NOT EXISTS GO_SUBSCRIPTION_SUBMISSION_PROOFS (RESOURCE_KEY TEXT PRIMARY KEY,OWNER TEXT NOT NULL,PAYLOAD TEXT NOT NULL)`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return err
@@ -102,7 +103,7 @@ func pendingSubscriptionSubmission(ctx context.Context, tx *sql.Tx, kind string,
 	return pending, err
 }
 
-func (service subscriptionService) reserveSubscriptionSubmission(ctx context.Context, kind string, id int64, plan subscriptionSearchPlan, candidate subscriptionCandidate) (string, error) {
+func (service subscriptionService) reserveSubscriptionSubmission(ctx context.Context, kind string, id int64, plan subscriptionSearchPlan, candidate subscriptionCandidate, proofs ...subscriptionSubmissionProof) (string, error) {
 	db, err := service.openNativeSubscriptionWriteDatabase()
 	if err != nil {
 		return "", err
@@ -153,6 +154,22 @@ func (service subscriptionService) reserveSubscriptionSubmission(ctx context.Con
 	if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(RESOURCE_KEY,OWNER,KIND,SUB_ID,MEDIA_ID,SEASON,EPISODES) VALUES (?,?,?,?,?,?,?) ON CONFLICT(RESOURCE_KEY) DO UPDATE SET OWNER=excluded.OWNER,KIND=excluded.KIND,SUB_ID=excluded.SUB_ID,MEDIA_ID=excluded.MEDIA_ID,SEASON=excluded.SEASON,EPISODES=excluded.EPISODES`, key, token, kind, id, plan.mediaID, plan.season, subscriptionEpisodeString(candidate.Episodes)); err != nil {
 		return "", err
 	}
+	if len(proofs) > 1 {
+		return "", errors.New("invalid subscription submission proof")
+	}
+	if len(proofs) == 1 {
+		payload, err := encodeSubscriptionSubmissionProof(proofs[0], plan, candidate)
+		if err != nil {
+			return "", err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_SUBMISSION_PROOFS(RESOURCE_KEY,OWNER,PAYLOAD) VALUES (?,?,?) ON CONFLICT(RESOURCE_KEY) DO UPDATE SET OWNER=excluded.OWNER,PAYLOAD=excluded.PAYLOAD`, key, token, payload); err != nil {
+			return "", err
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM GO_SUBSCRIPTION_SUBMISSION_PROOFS WHERE RESOURCE_KEY=?`, key); err != nil {
+			return "", err
+		}
+	}
 	return token, tx.Commit()
 }
 
@@ -182,6 +199,9 @@ func (service subscriptionService) releaseSubscriptionSubmission(ctx context.Con
 	if _, err := tx.ExecContext(ctx, `DELETE FROM GO_SUBSCRIPTION_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND OWNER=?`, key, owner); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM GO_SUBSCRIPTION_SUBMISSION_PROOFS WHERE RESOURCE_KEY=? AND OWNER=?`, key, owner); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -196,7 +216,7 @@ func subscriptionEpisodeString(episodes []int) string {
 // One transaction confirms ownership, consumes only accepted episodes, records
 // the resource and, when complete, moves the subscription to legacy-compatible
 // history. Rollback leaves the durable pending claim intact after acceptance.
-func (service subscriptionService) persistSubscriptionSubmission(ctx context.Context, kind string, id int64, plan *subscriptionSearchPlan, candidate *subscriptionCandidate, owner string) error {
+func (service subscriptionService) persistSubscriptionSubmission(ctx context.Context, kind string, id int64, plan *subscriptionSearchPlan, candidate *subscriptionCandidate, owner string, guards ...subscriptionReconcileGuard) error {
 	db, err := service.openNativeSubscriptionWriteDatabase()
 	if err != nil {
 		return err
@@ -209,6 +229,29 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 	defer tx.Rollback()
 	if err := ensureSubscriptionSubmissionSchema(ctx, tx); err != nil {
 		return err
+	}
+	if len(guards) > 1 {
+		return errSubscriptionSubmissionConflict
+	}
+	if len(guards) == 1 {
+		guard := guards[0]
+		var payload, configuration, downloaderType string
+		var enabled int
+		if candidate == nil {
+			return errSubscriptionSubmissionConflict
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT PAYLOAD FROM GO_SUBSCRIPTION_SUBMISSION_PROOFS WHERE RESOURCE_KEY=? AND OWNER=?`, subscriptionResourceKey(candidate.resource.DownloadURL), owner).Scan(&payload); err != nil {
+			return err
+		}
+		if payload != guard.payload {
+			return errSubscriptionSubmissionConflict
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(CONFIG,'{}'),COALESCE(TYPE,''),COALESCE(ENABLED,0) FROM DOWNLOADER WHERE ID=?`, guard.proof.DownloaderID).Scan(&configuration, &downloaderType, &enabled); err != nil {
+			return err
+		}
+		if enabled == 0 || downloaderType != guard.proof.DownloaderType || subscriptionResourceKey(configuration) != guard.proof.ConfigHash {
+			return errSubscriptionSubmissionConflict
+		}
 	}
 	if err := verifySubscriptionSnapshot(ctx, tx, kind, id, *plan); err != nil {
 		return err

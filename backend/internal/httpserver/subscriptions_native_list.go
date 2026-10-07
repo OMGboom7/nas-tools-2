@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"sort"
 	"strings"
@@ -29,6 +30,37 @@ func (service subscriptionService) nativeSubscriptionList(ctx context.Context) (
 			items[text(item["id"])] = item
 		}
 		data.Items = append(data.Items, service.normalizeItems(items, table.kind)...)
+	}
+	var ledgerExists bool
+	if err := database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_SUBSCRIPTION_DOWNLOAD_CLAIMS')`).Scan(&ledgerExists); err != nil {
+		return data, err
+	}
+	if ledgerExists {
+		rows, err := database.QueryContext(ctx, `SELECT DISTINCT s.KIND,s.SUB_ID FROM GO_SUBSCRIPTION_DOWNLOAD_CLAIMS s JOIN GO_RSS_DOWNLOAD_CLAIMS r USING(RESOURCE_KEY) WHERE r.STATE='pending' LIMIT 10001`)
+		if err != nil {
+			return data, err
+		}
+		pending := map[string]bool{}
+		for rows.Next() {
+			var kind string
+			var id int64
+			if err := rows.Scan(&kind, &id); err != nil {
+				rows.Close()
+				return data, err
+			}
+			pending[kind+":"+text(id)] = true
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return data, err
+		}
+		if len(pending) > 10000 {
+			return data, errors.New("pending subscription limit exceeded")
+		}
+		for i := range data.Items {
+			data.Items[i].PendingSubmission = pending[data.Items[i].Type+":"+data.Items[i].ID]
+		}
 	}
 	historyRows, err := readSubscriptionRows(ctx, database, "RSS_HISTORY")
 	if err != nil {

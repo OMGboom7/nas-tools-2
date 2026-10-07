@@ -184,6 +184,60 @@ func (client *Client) Tasks(ctx context.Context) ([]Task, error) {
 	return result, nil
 }
 
+func (client *Client) HasTorrent(ctx context.Context, hash string) (bool, error) {
+	if !ValidHash(hash) {
+		return false, ErrConfiguration
+	}
+	legacy, _ := json.Marshal(map[string]any{"method": "torrent-get", "arguments": map[string]any{"ids": []string{hash}, "fields": []string{"hashString"}}})
+	modern, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "torrent_get", "params": map[string]any{"ids": []string{hash}, "fields": []string{"hash_string"}}, "id": 1})
+	body, isModern, err := client.exchange(ctx, legacy, modern)
+	if err != nil {
+		return false, err
+	}
+	var hashes []string
+	if isModern {
+		var result struct {
+			JSONRPC string          `json:"jsonrpc"`
+			Error   json.RawMessage `json:"error"`
+			Result  struct {
+				Torrents []struct {
+					Hash string `json:"hash_string"`
+				} `json:"torrents"`
+			} `json:"result"`
+		}
+		if json.Unmarshal(body, &result) != nil || result.JSONRPC != "2.0" || hasJSONError(result.Error) || result.Result.Torrents == nil {
+			return false, ErrResponse
+		}
+		for _, task := range result.Result.Torrents {
+			hashes = append(hashes, task.Hash)
+		}
+	} else {
+		var result struct {
+			Result    string `json:"result"`
+			Arguments struct {
+				Torrents []struct {
+					Hash string `json:"hashString"`
+				} `json:"torrents"`
+			} `json:"arguments"`
+		}
+		if json.Unmarshal(body, &result) != nil || result.Result != "success" || result.Arguments.Torrents == nil {
+			return false, ErrResponse
+		}
+		for _, task := range result.Arguments.Torrents {
+			hashes = append(hashes, task.Hash)
+		}
+	}
+	if len(hashes) > 1 {
+		return false, ErrResponse
+	}
+	for _, value := range hashes {
+		if !ValidHash(value) || !strings.EqualFold(value, hash) {
+			return false, ErrResponse
+		}
+	}
+	return len(hashes) == 1, nil
+}
+
 func parseTasks(contents []byte, modern bool) ([]Task, error) {
 	if modern {
 		var response struct {

@@ -181,6 +181,33 @@ func ValidHash(value string) bool {
 	return true
 }
 
+// Include completed, seeding and paused tasks. A downloading-only list is not
+// authoritative evidence for uncertain-submission reconciliation.
+func (client *Client) HasTorrent(ctx context.Context, hash string) (bool, error) {
+	if !ValidHash(hash) {
+		return false, ErrConfiguration
+	}
+	if err := client.login(ctx); err != nil {
+		return false, err
+	}
+	body, err := client.request(ctx, http.MethodGet, "torrents/info?filter=all&hashes="+url.QueryEscape(hash), nil)
+	if err != nil {
+		return false, err
+	}
+	var tasks []struct {
+		Hash string `json:"hash"`
+	}
+	if json.Unmarshal(body, &tasks) != nil || tasks == nil || len(tasks) > 1 {
+		return false, ErrResponse
+	}
+	for _, task := range tasks {
+		if !ValidHash(task.Hash) || !strings.EqualFold(task.Hash, hash) {
+			return false, ErrResponse
+		}
+	}
+	return len(tasks) == 1, nil
+}
+
 func (client *Client) Control(ctx context.Context, hash, action string) error {
 	if !ValidHash(hash) {
 		return ErrConfiguration

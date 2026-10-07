@@ -301,6 +301,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	subscriptionRunner.feeds = &subscriptionRSSAPI{runner: subscriptionRunner}
 	mux.HandleFunc("POST /api/v1/subscriptions/rss/run", subscriptionRunner.feeds.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/search/run", subscriptionRunner.serveHTTP)
+	mux.HandleFunc("POST /api/v1/subscriptions/{type}/{id}/reconcile", subscriptionRunner.serveReconcile)
 	rssRunner.refresh = &subscriptionRefreshAPI{service: subscriptions, auth: nativeAuth, pureGo: cfg.DisableLegacy}
 	mux.HandleFunc("POST /api/v1/subscriptions/refresh", rssRunner.refresh.serveHTTP)
 	mux.HandleFunc("POST /api/v1/rss/name/test", (rssNameAPI{tasks: nativeRSSTasks, filters: nativeFilters, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}).serveHTTP)

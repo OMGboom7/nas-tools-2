@@ -122,6 +122,7 @@ export type SubscriptionItem = {
   downloadSetting: string;
   totalEpisodes: number;
   currentEpisode: number;
+  pendingSubmission?: boolean;
 };
 
 export type SubscriptionOptions = {
@@ -679,7 +680,7 @@ export type SubscriptionSearchRunResult = {
   uncertain: boolean;
 };
 
-export async function controlSubscription(token: string, type: "MOV" | "TV", id: string, action: "refresh" | "remove"): Promise<SubscriptionSearchRunResult | undefined> {
+export async function controlSubscription(token: string, type: "MOV" | "TV", id: string, action: "refresh" | "remove" | "reconcile"): Promise<SubscriptionSearchRunResult | undefined> {
   return subscriptionMutation<SubscriptionSearchRunResult>(token, `/api/v1/subscriptions/${type}/${encodeURIComponent(id)}/${action}`);
 }
 
