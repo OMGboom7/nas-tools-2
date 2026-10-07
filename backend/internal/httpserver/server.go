@@ -236,9 +236,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		client:    &http.Client{Transport: transport},
 		images:    images,
 	}
+	siteLimits := &siteRequestLimiter{}
 	if nativeSearchResources != nil {
 		search.native = &nativeExternalResourceSearch{system: nativeSystemConfig, auth: nativeAuth, resources: nativeSearchResources, transport: transport, images: images,
-			sites: nativeSites, config: nativeConfig, catalogPath: cfg.SiteCatalogPath,
+			siteLimits: siteLimits,
+			sites:      nativeSites, config: nativeConfig, catalogPath: cfg.SiteCatalogPath,
 			recognition: &mediaNameAPI{service: subscriptionService{client: &http.Client{Transport: transport}, configStore: nativeConfig, systemConfig: nativeSystemConfig, words: nativeWords}, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},
 		}
 	}
@@ -253,6 +255,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		systemConfig: nativeSystemConfig,
 		resources:    nativeSearchResources,
 		auth:         nativeAuth,
+		siteLimits:   siteLimits,
 	}
 	mux.HandleFunc("GET /api/v1/downloads", downloads.serveList)
 	mux.HandleFunc("POST /api/v1/downloads/resource", downloads.addResource)
@@ -330,7 +333,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/subscriptions/history/{type}/{id}/{action}", subscriptions.controlHistory)
 	discovery := discoveryService{client: &http.Client{Transport: transport}, images: images, config: nativeConfig, databasePath: nativeUserDatabasePath}
 	mux.HandleFunc("POST /api/v1/discovery", discovery.serveHTTP)
-	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath}
+	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits}
 	mux.HandleFunc("GET /api/v1/sites", sites.serveList)
 	mux.HandleFunc("POST /api/v1/sites", sites.create)
 	mux.HandleFunc("GET /api/v1/sites/options", sites.serveOptions)

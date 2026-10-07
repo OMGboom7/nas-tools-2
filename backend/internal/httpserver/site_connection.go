@@ -23,6 +23,10 @@ var (
 // The site check deliberately returns only stable messages: URLs, cookies and
 // server response bodies can contain private tracker credentials.
 func checkSiteConnection(ctx context.Context, site siteconfig.Site, app map[string]any, transport http.RoundTripper) (bool, string, bool) {
+	return checkSiteConnectionAdmitted(ctx, site, app, transport, nil)
+}
+
+func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app map[string]any, transport http.RoundTripper, admit func(context.Context) error) (bool, string, bool) {
 	if strings.TrimSpace(site.Cookie) == "" {
 		return false, "未配置站点Cookie", false
 	}
@@ -89,6 +93,11 @@ func checkSiteConnection(ctx context.Context, site siteconfig.Site, app map[stri
 	request.Header.Set("Cookie", site.Cookie)
 	if method == http.MethodPost {
 		request.Header.Set("X-API-KEY", site.APIKey)
+	}
+	if admit != nil {
+		if err := admit(ctx); err != nil {
+			return false, "站点限流等待被取消或配置无效", false
+		}
 	}
 	response, err := client.Do(request)
 	if err != nil {

@@ -185,7 +185,7 @@ func TestSubscriptionRSSExecutionSourceFailureAndUncertainSubmission(t *testing.
 		uncertain        bool
 	}{
 		{"bad-feed", "", `<html>login</html>`, false}, {"unknown-promotion", `{"parse":"Y"}`, `<rss><channel>` + subscriptionFeedItem("Movie.2026.1080p.WEB-DL", testMagnet, "https://tracker.test/details", "") + `</channel></rss>`, false},
-		{"configured-limits", `{"limit_seconds":"1"}`, `<rss><channel/></rss>`, false}, {"uncertain", "", `<rss><channel>` + subscriptionFeedItem("Movie.2026.1080p.WEB-DL", testMagnet, "", "") + `</channel></rss>`, true},
+		{"invalid-limits", `{"limit_seconds":"-1"}`, `<rss><channel/></rss>`, false}, {"uncertain", "", `<rss><channel>` + subscriptionFeedItem("Movie.2026.1080p.WEB-DL", testMagnet, "", "") + `</channel></rss>`, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newSubscriptionFeedFixture(t, false, test.note, func(r *http.Request) (*http.Response, error) {

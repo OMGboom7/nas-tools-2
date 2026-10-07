@@ -22,7 +22,11 @@ func rssRunFixture(t *testing.T, transport http.RoundTripper) (http.Handler, str
 	downloader := downloaderconfig.Downloader{Name: "qB", Type: "qbittorrent", Enabled: 1, Config: `{"host":"client.local","port":8080,"username":"admin","password":"secret"}`}
 	_, _, path := nativeServicesFixture(t, "", &downloader, transport)
 	appPath := filepath.Join(filepath.Dir(path), "config.yaml")
-	db, err := sql.Open("sqlite", path)
+	// Polling from a separate connection must use the same lock wait as the
+	// native stores; SQLite's default zero timeout spuriously fails while the
+	// worker commits its atomic subscription/marker/counter transaction.
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=rw&_pragma=busy_timeout(5000)"}).String()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

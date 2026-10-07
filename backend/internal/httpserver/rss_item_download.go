@@ -246,6 +246,11 @@ func (api rssItemDownloadAPI) fetchTorrent(ctx context.Context, taskNote string,
 			}
 		}
 	}
+	if site != nil {
+		if err := api.service.siteLimits.Wait(ctx, api.service.sites, site.ID); err != nil {
+			return nil, err
+		}
+	}
 	result, err := client.Do(request)
 	if err != nil {
 		return nil, err

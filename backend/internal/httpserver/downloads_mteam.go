@@ -47,5 +47,8 @@ func (service downloadService) fetchMTeamSearchTorrent(ctx context.Context, deta
 			return nil, err
 		}
 	}
+	if err := service.siteLimits.Wait(ctx, service.sites, matched.ID); err != nil {
+		return nil, err
+	}
 	return builtinindexer.DownloadMTeam(ctx, detail, matched.APIKey, ua, transport)
 }

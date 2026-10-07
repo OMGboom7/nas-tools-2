@@ -39,6 +39,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		seen[definition.ID] = true
 		cookie, note, key := "", "", ""
 		configured := false
+		var siteID int64
 		for _, site := range sites {
 			address := site.SignURL
 			if address == "" {
@@ -51,6 +52,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 				return nil, errors.New("multiple configured sites match selected indexer")
 			}
 			configured = true
+			siteID = site.ID
 			cookie, note = site.Cookie, site.Note
 			key = site.APIKey
 			definition.Name = site.Name
@@ -86,6 +88,11 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 				}
 			}
 			var items []externalindexer.Resource
+			if configured {
+				if err := service.siteLimits.Wait(ctx, service.sites, siteID); err != nil {
+					return nil, err
+				}
+			}
 			if definition.Parser == "TNodeSpider" {
 				items, err = builtinindexer.SearchTNode(ctx, definition, cookie, ua, keyword, 0, 100, transport)
 			} else {
@@ -120,6 +127,11 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 			}
 		}
 		// Cookies/UA come only from the saved site. Never use browser/client credentials.
+		if configured {
+			if err := service.siteLimits.Wait(ctx, service.sites, siteID); err != nil {
+				return nil, err
+			}
+		}
 		body, err := builtinindexer.Fetch(ctx, plan, cookie, ua, transport)
 		if err != nil {
 			return nil, err

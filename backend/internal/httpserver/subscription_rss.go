@@ -224,16 +224,8 @@ func subscriptionRSSSiteNote(site siteconfig.Site) (map[string]any, *int64, int,
 	if text(note["chrome"]) == "Y" || truthy(note["chrome"]) {
 		return nil, nil, 0, errSubscriptionRSSUnsupported
 	}
-	for _, key := range []string{"limit_interval", "limit_count", "limit_seconds"} {
-		if raw := text(note[key]); raw != "" && raw != "0" {
-			n, err := strconv.ParseInt(raw, 10, 64)
-			if err != nil || n < 0 {
-				return nil, nil, 0, errors.New("invalid RSS site request limits")
-			}
-			if n > 0 {
-				return nil, nil, 0, errSubscriptionRSSUnsupported
-			}
-		}
+	if _, err := parseSiteRequestPolicy(note); err != nil {
+		return nil, nil, 0, err
 	}
 	var group *int64
 	if raw := text(note["rule"]); raw != "" {
@@ -306,6 +298,9 @@ func (api *subscriptionRSSAPI) fetchDocument(ctx context.Context, site siteconfi
 	request.Header.Set("User-Agent", ua)
 	if credentials {
 		request.Header.Set("Cookie", site.Cookie)
+	}
+	if err := service.siteLimits.Wait(ctx, service.sites, site.ID); err != nil {
+		return nil, err
 	}
 	response, err := client.Do(request)
 	if err != nil {

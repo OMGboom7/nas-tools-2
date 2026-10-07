@@ -137,6 +137,9 @@ func (service downloadService) fetchSiteTorrent(ctx context.Context, site siteco
 	if site.Cookie != "" {
 		request.Header.Set("Cookie", site.Cookie)
 	}
+	if err := service.siteLimits.Wait(ctx, service.sites, site.ID); err != nil {
+		return nil, err
+	}
 	result, err := client.Do(request)
 	if err != nil {
 		return nil, err

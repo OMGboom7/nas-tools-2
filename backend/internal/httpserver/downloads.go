@@ -31,6 +31,7 @@ type downloadService struct {
 	systemConfig *systemconfig.Store
 	resources    *searchcache.Store
 	auth         *nativeAuthentication
+	siteLimits   *siteRequestLimiter
 }
 
 type downloadsData struct {

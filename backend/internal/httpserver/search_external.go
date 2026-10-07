@@ -26,6 +26,7 @@ type nativeExternalResourceSearch struct {
 	sites       *siteconfig.Store
 	config      *config.Store
 	catalogPath string
+	siteLimits  *siteRequestLimiter
 }
 
 var errNativeSearchPermission = errors.New("resource search permission is required")
