@@ -20,9 +20,11 @@ var ErrState = errors.New("organization item requires review")
 var ErrNotFound = errors.New("organization job not found")
 var ErrMode = errors.New("organization mode is unavailable on this filesystem")
 
+// Move remains unavailable to job creation/execution until the HTTP and React
+// flows provide a separate, explicit source-removal confirmation.
 func SupportedMode(mode string) bool { return mode == "copy" || mode == "link" || mode == "softlink" }
 func ModeLabel(mode string) string {
-	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接"}[mode]
+	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动"}[mode]
 }
 
 type Entry struct {
@@ -53,13 +55,16 @@ type Definition struct {
 }
 
 type Proof struct {
-	Temp            string `json:"temp"`
-	Identity        string `json:"identity"`
-	ParentIdentity  string `json:"parentIdentity"`
-	StagingIdentity string `json:"stagingIdentity"`
-	Digest          string `json:"digest"`
-	Kind            string `json:"kind,omitempty"`
-	LinkTarget      string `json:"linkTarget,omitempty"`
+	Temp                 string `json:"temp"`
+	Identity             string `json:"identity"`
+	ParentIdentity       string `json:"parentIdentity"`
+	StagingIdentity      string `json:"stagingIdentity"`
+	Digest               string `json:"digest"`
+	Kind                 string `json:"kind,omitempty"`
+	LinkTarget           string `json:"linkTarget,omitempty"`
+	SourceHold           string `json:"sourceHold,omitempty"`
+	SourceHoldIdentity   string `json:"sourceHoldIdentity,omitempty"`
+	SourceParentIdentity string `json:"sourceParentIdentity,omitempty"`
 }
 
 type JobItem struct {
@@ -280,7 +285,7 @@ func (s *Store) Prepare(ctx context.Context, id string, index int, p Proof) erro
 }
 
 func (s *Store) RecordError(ctx context.Context, id string, index int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','prepared')`, id, index)
+	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','prepared','moving','quarantined')`, id, index)
 	return err
 }
 
@@ -320,7 +325,7 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 // Publication and the database cannot be one transaction. The prepared proof
 // remains reserved across crashes; Complete atomically writes state + history.
 func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
-	if !SupportedMode(job.Definition.Mode) {
+	if !SupportedMode(job.Definition.Mode) && job.Definition.Mode != "move" {
 		return ErrMode
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -335,11 +340,14 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if state == "completed" {
 		return nil
 	}
-	if state != "prepared" {
+	if job.Definition.Mode == "move" && state != "quarantined" || job.Definition.Mode != "move" && state != "prepared" {
 		return ErrState
 	}
 	var storedProof Proof
 	if err = json.Unmarshal([]byte(rawProof), &storedProof); err != nil || Digest(storedProof) != Digest(item.Proof) || item.Proof.Identity == "" {
+		return ErrState
+	}
+	if job.Definition.Mode == "move" && (storedProof.SourceHold == "" || storedProof.SourceHoldIdentity == "" || storedProof.SourceParentIdentity == "") {
 		return ErrState
 	}
 	if item.Kind == "media" {
@@ -355,4 +363,49 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// BeginMove saves source disposition intent only when its target-copy proof
+// matches the existing prepared ledger. No mode conversion or automatic retry.
+func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) error {
+	if p.SourceHold == "" || p.SourceHoldIdentity == "" || p.SourceParentIdentity == "" {
+		return ErrState
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	original := p
+	original.SourceHold, original.SourceHoldIdentity, original.SourceParentIdentity = "", "", ""
+	previous, err := json.Marshal(original)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='moving',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='prepared' AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode')='move')`, string(raw), id, index, string(previous), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n != 1 {
+		return ErrState
+	}
+	return err
+}
+
+// MarkQuarantined must be called by ContinueMove after positive source capture
+// verification. It cannot infer a completed move from a missing source name.
+func (s *Store) MarkQuarantined(ctx context.Context, id string, index int, p Proof) error {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='quarantined' WHERE JOB_ID=? AND ORDINAL=? AND STATE='moving' AND PROOF=?`, id, index, string(raw))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n != 1 {
+		return ErrState
+	}
+	return err
 }
