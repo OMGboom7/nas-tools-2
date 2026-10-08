@@ -90,7 +90,7 @@ for (const mode of ["link", "softlink", "move"]) {
   });
 }
 
-for (const action of ["execute", "resume-move"]) {
+for (const action of ["execute", "resume-move", "resume-publication"]) {
   test(`move ${action} only sends source-removal authorization when explicitly provided`, async (t) => {
     let calls = 0;
     t.mock.method(globalThis, "fetch", async (path, options) => {

@@ -697,7 +697,7 @@ export async function createOrganizationJob(token: string, input: { sourceId: st
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务创建失败", result.code);
   return result.data;
 }
-export async function controlOrganizationJob(token: string, id: string, action: "execute" | "reconcile" | "cancel" | "resume-move", confirmSourceRemoval = false): Promise<OrganizationJob> {
+export async function controlOrganizationJob(token: string, id: string, action: "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication", confirmSourceRemoval = false): Promise<OrganizationJob> {
   const result = await readResponse<OrganizationJob>(await fetch(`/api/v1/organization/jobs/${encodeURIComponent(id)}/${action}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(confirmSourceRemoval ? { confirm: true, confirmSourceRemoval: true } : { confirm: true }) }));
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务操作失败，请刷新查看已保存状态", result.code);
   return result.data;

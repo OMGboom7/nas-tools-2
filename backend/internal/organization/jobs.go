@@ -293,6 +293,20 @@ func (s *Store) Prepare(ctx context.Context, id string, index int, p Proof) erro
 	return err
 }
 
+// Read-only publication permission; this is not a lease, timeout, or reset.
+// Concurrent publication is bounded by atomic no-overwrite filesystem linking.
+func (s *Store) VerifyPrepared(ctx context.Context, id string, index int, p Proof) error {
+	var state, raw string
+	if err := s.db.QueryRowContext(ctx, `SELECT I.STATE,I.PROOF FROM GO_ORGANIZATION_ITEMS I JOIN GO_ORGANIZATION_JOBS J ON J.ID=I.JOB_ID WHERE I.JOB_ID=? AND I.ORDINAL=? AND J.STATE='active'`, id, index).Scan(&state, &raw); err != nil {
+		return err
+	}
+	var saved Proof
+	if state != "prepared" || json.Unmarshal([]byte(raw), &saved) != nil || Digest(saved) != Digest(p) {
+		return ErrState
+	}
+	return nil
+}
+
 func (s *Store) RecordError(ctx context.Context, id string, index int) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','prepared','moving','quarantined')`, id, index)
 	return err

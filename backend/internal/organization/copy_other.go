@@ -24,6 +24,7 @@ func PrepareMove(context.Context, Definition, Entry, Proof, string) (Proof, erro
 func ContinueMove(context.Context, Definition, Entry, Proof, bool, func() error) error {
 	return ErrMode
 }
-func VerifyQuarantined(context.Context, Definition, Entry, Proof) error  { return ErrMode }
-func CleanupMovedSource(context.Context, Definition, Entry, Proof) error { return ErrMode }
-func CleanupMoveTarget(context.Context, Definition, Entry, Proof) error  { return ErrMode }
+func VerifyQuarantined(context.Context, Definition, Entry, Proof) error             { return ErrMode }
+func CleanupMovedSource(context.Context, Definition, Entry, Proof) error            { return ErrMode }
+func CleanupMoveTarget(context.Context, Definition, Entry, Proof) error             { return ErrMode }
+func PublishPrepared(context.Context, Definition, Entry, Proof, func() error) error { return ErrMode }

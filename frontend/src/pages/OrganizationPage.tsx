@@ -55,14 +55,15 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     } finally { setBusy(false); }
   }
   function invalidate() { setPlan(null); setError(""); }
-  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move") {
-    if ((operation === "execute" || operation === "resume-move") && job?.mode === "move" && (!confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot)) return;
+  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication") {
+    if (operation === "resume-publication" && (!confirmed || !job?.sourceRoot || !job.targetRoot)) return;
+    if ((operation === "execute" || operation === "resume-move" || operation === "resume-publication") && job?.mode === "move" && (!confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot)) return;
     setBusy(true); setError("");
     try {
       if (operation === "refresh") { setJobs(await getOrganizationJobs(session.token)); return; }
       const saved = operation === "create"
         ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, fingerprint: plan!.fingerprint })
-        : await controlOrganizationJob(session.token, jobId, operation, job?.mode === "move" && (operation === "execute" || operation === "resume-move") && sourceRemoval);
+        : await controlOrganizationJob(session.token, jobId, operation, job?.mode === "move" && (operation === "execute" || operation === "resume-move" || operation === "resume-publication") && sourceRemoval);
       setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
       setJobId(saved.id); setPlan(null);
     } catch (err) {
@@ -103,6 +104,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
           {job.mode === "move" && (job.state === "ready" || job.state === "needs_review") && <label className="organization-confirm"><input type="checkbox" checked={sourceRemoval} disabled={busy || !job.sourceRoot || !job.targetRoot} onChange={(event) => setSourceRemoval(event.target.checked)} />我同意从上述任务保存的来源路径移除原源文件名，并在目标核验及历史提交后清理本任务的源恢复备份；不删除新到的同名文件、其他文件或源目录。</label>}
           {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意按{modeLabels[job.mode] || job.mode}方式整理以上待执行文件。</label><button type="button" disabled={busy || !confirmed || (job.mode === "move" && (!sourceRemoval || !job.sourceRoot || !job.targetRoot))} onClick={() => void jobOperation("execute")}>确认执行{modeLabels[job.mode] || job.mode}</button></>}
           {job.state === "needs_review" && (job.mode === "move" ? <><p>普通核对不会继续移动。只有保存凭证能证明原文件身份时才可继续；未知状态仍保留，未开始的文件不会由恢复操作执行。</p><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已检查上述任务路径和恢复记录，同意继续核验移动及清理。</label><button type="button" disabled={busy || !confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot} onClick={() => void jobOperation("resume-move")}>确认继续移动及恢复清理</button></> : <button type="button" disabled={busy} onClick={() => void jobOperation("reconcile")}>核对已发布文件，不重试转移</button>)}
+          {job.state === "needs_review" && job.items.some((item) => item.state === "prepared") && <><p>“继续发布”只使用账本中已完整准备的原暂存对象，重新核验源、暂存和目标，不重新复制、不覆盖现有目标；证据不足时仍保留待核对。移动会在发布核验后按上述授权继续源移除。</p>{job.mode !== "move" && <label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已检查上述任务保存的路径，确认源文件已完成，同意继续发布完整暂存对象并提交整理记录。</label>}<button type="button" disabled={busy || !confirmed || !job.sourceRoot || !job.targetRoot || (job.mode === "move" && !sourceRemoval)} onClick={() => void jobOperation("resume-publication")}>确认继续发布已完整暂存文件{job.mode === "move" ? "并完成移动" : ""}</button></>}
           {job.items.every((item) => item.state === "planned") && <button type="button" disabled={busy} onClick={() => void jobOperation("cancel")}>取消未执行任务</button>}
         </>}
       </section>}

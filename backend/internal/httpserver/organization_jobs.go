@@ -142,7 +142,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
@@ -170,7 +170,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		writeOrganizationError(w, organization.ErrState)
 		return
 	}
-	if job.Definition.Mode == "move" && (action == "execute" || action == "resume-move") && !input.ConfirmSourceRemoval {
+	if job.Definition.Mode == "move" && (action == "execute" || action == "resume-move" || action == "resume-publication") && !input.ConfirmSourceRemoval {
 		writeAPIError(w, 400, 400, "separate source-removal confirmation is required for moving files")
 		return
 	}
@@ -181,6 +181,8 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		if err == nil {
 			if action == "resume-move" {
 				err = api.resumeMove(ctx, job)
+			} else if action == "resume-publication" {
+				err = api.resumePublication(ctx, job)
 			} else {
 				err = api.runJob(ctx, job, action == "reconcile")
 			}
@@ -360,6 +362,57 @@ func (api organizationAPI) resumeMove(ctx context.Context, job organization.Job)
 			err = api.cleanupMove(ctx, job, item)
 		} else {
 			err = api.finishMove(ctx, job, item)
+		}
+		if err != nil {
+			persist, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = api.jobs.RecordError(persist, job.ID, item.Index)
+			cancel()
+			return err
+		}
+	}
+	return nil
+}
+
+func (api organizationAPI) resumePublication(ctx context.Context, job organization.Job) error {
+	if !organization.SupportedMode(job.Definition.Mode) || job.State == "cancelled" {
+		return organization.ErrState
+	}
+	for _, item := range job.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if item.State == "planned" || item.State == "completed" {
+			continue
+		}
+		if item.State != "prepared" {
+			return organization.ErrState
+		}
+		err := organization.PublishPrepared(ctx, job.Definition, item.Entry, item.Proof, func() error {
+			if err := api.validateJob(ctx, job); err != nil {
+				return err
+			}
+			return api.jobs.VerifyPrepared(ctx, job.ID, item.Index, item.Proof)
+		})
+		if err == nil {
+			if job.Definition.Mode == "move" {
+				var current organization.Job
+				current, err = api.jobs.Get(ctx, job.ID)
+				if err == nil {
+					latest := current.Items[item.Index]
+					if latest.State == "completed" {
+						err = api.cleanupMove(ctx, current, latest)
+					} else {
+						err = api.finishMove(ctx, current, latest)
+					}
+				}
+			} else {
+				if err = api.validateJob(ctx, job); err == nil {
+					err = api.jobs.Complete(ctx, job, item)
+				}
+				if err == nil {
+					_ = organization.Cleanup(job.Definition, item.Entry, item.Proof)
+				}
+			}
 		}
 		if err != nil {
 			persist, cancel := context.WithTimeout(context.Background(), 5*time.Second)
