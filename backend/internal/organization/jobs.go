@@ -20,9 +20,15 @@ var ErrState = errors.New("organization item requires review")
 var ErrNotFound = errors.New("organization job not found")
 var ErrMode = errors.New("organization mode is unavailable on this filesystem")
 
-// Move remains unavailable to job creation/execution until the HTTP and React
-// flows provide a separate, explicit source-removal confirmation.
-func SupportedMode(mode string) bool { return mode == "copy" || mode == "link" || mode == "softlink" }
+func SupportedMode(mode string) bool {
+	return mode == "copy" || mode == "link" || mode == "softlink" || mode == "move"
+}
+
+// Persisted receipt values: keep stable across upgrades; translate in the UI,
+// not by changing these strings or clearing a pending receipt on startup.
+const MoveSourceCleanupPending = "Move source recovery cleanup pending; explicit source-removal confirmation required"
+const MoveTargetCleanupPending = "Move target recovery cleanup pending"
+
 func ModeLabel(mode string) string {
 	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动"}[mode]
 }
@@ -81,6 +87,8 @@ type Job struct {
 	Created     string     `json:"created"`
 	State       string     `json:"state"`
 	Mode        string     `json:"mode"`
+	SourceRoot  string     `json:"sourceRoot"`
+	TargetRoot  string     `json:"targetRoot"`
 	Items       []JobItem  `json:"items"`
 	Definition  Definition `json:"-"`
 }
@@ -186,6 +194,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		return job, err
 	}
 	job.Mode = job.Definition.Mode
+	job.SourceRoot, job.TargetRoot = job.Definition.SourceRoot, job.Definition.TargetRoot
 	rows, err := s.db.QueryContext(ctx, `SELECT ORDINAL,STATE,REASON,PROOF FROM GO_ORGANIZATION_ITEMS WHERE JOB_ID=? ORDER BY ORDINAL`, id)
 	if err != nil {
 		return job, err
@@ -222,7 +231,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		}
 	}
 	for _, item := range job.Items {
-		if item.State != "planned" && item.State != "completed" {
+		if item.State != "planned" && item.State != "completed" || item.State == "completed" && item.Reason != "" {
 			job.State = "needs_review"
 		}
 	}
@@ -325,7 +334,7 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 // Publication and the database cannot be one transaction. The prepared proof
 // remains reserved across crashes; Complete atomically writes state + history.
 func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
-	if !SupportedMode(job.Definition.Mode) && job.Definition.Mode != "move" {
+	if !SupportedMode(job.Definition.Mode) {
 		return ErrMode
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -359,7 +368,11 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 			return err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='completed',REASON='' WHERE JOB_ID=? AND ORDINAL=?`, job.ID, item.Index); err != nil {
+	reason := ""
+	if job.Definition.Mode == "move" {
+		reason = MoveSourceCleanupPending
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='completed',REASON=? WHERE JOB_ID=? AND ORDINAL=?`, reason, job.ID, item.Index); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -400,6 +413,28 @@ func (s *Store) MarkQuarantined(ctx context.Context, id string, index int, p Pro
 		return err
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='quarantined' WHERE JOB_ID=? AND ORDINAL=? AND STATE='moving' AND PROOF=?`, id, index, string(raw))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n != 1 {
+		return ErrState
+	}
+	return err
+}
+
+// Cleanup receipts are saved separately from history: a crash after commit
+// cannot hide leftover source data, or repeat source disposition after cleanup.
+func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p Proof, sourceCleaned bool) error {
+	from, to := MoveSourceCleanupPending, MoveTargetCleanupPending
+	if !sourceCleaned {
+		from, to = MoveTargetCleanupPending, ""
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode')='move')`, to, id, index, from, string(raw), id)
 	if err != nil {
 		return err
 	}

@@ -4,7 +4,6 @@ package organization
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,6 +24,7 @@ type moveFixture struct {
 func newMoveFixture(t *testing.T) moveFixture {
 	t.Helper()
 	d, item := copyFixture(t)
+	d.Mode = "move"
 	path := filepath.Join(t.TempDir(), "user.db")
 	s, err := OpenStore(path)
 	if err != nil {
@@ -33,13 +33,6 @@ func newMoveFixture(t *testing.T) moveFixture {
 	t.Cleanup(func() { s.Close() })
 	id, err := s.Create(t.Context(), Digest(d), d)
 	if err != nil {
-		t.Fatal(err)
-	}
-	// Production job creation still rejects move. Seed an internal-only job
-	// to verify the future ledger without opening an unconfirmed deletion API.
-	d.Mode = "move"
-	raw, _ := json.Marshal(d)
-	if _, err = s.db.Exec(`UPDATE GO_ORGANIZATION_JOBS SET DEFINITION=? WHERE ID=?`, string(raw), id); err != nil {
 		t.Fatal(err)
 	}
 	if won, err := s.Claim(t.Context(), id, 0); err != nil || !won {
@@ -130,8 +123,14 @@ func TestMoveFoundationPreservesSourceUntilIntentAndCommitsOneHistory(t *testing
 	if err := CleanupMovedSource(t.Context(), f.d, f.item, f.p); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.s.AdvanceMoveCleanup(t.Context(), f.id, 0, f.p, true); err != nil {
+		t.Fatal(err)
+	}
 	assertMoveAbsent(t, filepath.Dir(f.held("payload")))
 	if err := Cleanup(f.d, f.item, f.p); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.AdvanceMoveCleanup(t.Context(), f.id, 0, f.p, false); err != nil {
 		t.Fatal(err)
 	}
 	assertMoveBytes(t, f.target(), "original")
@@ -419,18 +418,18 @@ func TestMoveLedgerRequiresMatchingPreparedProofAndOneIntentWinner(t *testing.T)
 	f.quarantine(t)
 }
 
-func TestMoveRemainsUnavailableToOrdinaryTransferAndJobCreation(t *testing.T) {
+func TestMoveDraftDoesNotWriteFilesAndOrdinaryTransferCannotBypassDisposition(t *testing.T) {
 	d, item := copyFixture(t)
 	d.Mode = "move"
-	if SupportedMode("move") {
-		t.Fatal("move exposed before separate deletion confirmation")
+	if !SupportedMode("move") {
+		t.Fatal("move mode missing")
 	}
 	s, err := OpenStore(filepath.Join(t.TempDir(), "user.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if _, err = s.Create(t.Context(), Digest(d), d); !errors.Is(err, ErrPath) {
+	if _, err = s.Create(t.Context(), Digest(d), d); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = Transfer(t.Context(), d, item, TempName("test", 0), func(Proof) error { t.Fatal("unconfirmed move prepared"); return nil }); !errors.Is(err, ErrMode) {

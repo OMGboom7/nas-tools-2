@@ -142,14 +142,15 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
 	// Execution requires an explicit confirmation of stable, completed source
 	// files. This is a manual action, not proof from the downloader API.
 	var input struct {
-		Confirm bool `json:"confirm"`
+		Confirm              bool `json:"confirm"`
+		ConfirmSourceRemoval bool `json:"confirmSourceRemoval"`
 	}
 	if !decodeServiceRequest(w, r, &input, "invalid organization confirmation") {
 		return
@@ -165,12 +166,24 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		writeOrganizationError(w, err)
 		return
 	}
+	if action == "resume-move" && job.Definition.Mode != "move" {
+		writeOrganizationError(w, organization.ErrState)
+		return
+	}
+	if job.Definition.Mode == "move" && (action == "execute" || action == "resume-move") && !input.ConfirmSourceRemoval {
+		writeAPIError(w, 400, 400, "separate source-removal confirmation is required for moving files")
+		return
+	}
 	if action == "cancel" {
 		err = api.jobs.Cancel(ctx, job.ID)
 	} else {
 		err = api.validateJob(ctx, job)
 		if err == nil {
-			err = api.runJob(ctx, job, action == "reconcile")
+			if action == "resume-move" {
+				err = api.resumeMove(ctx, job)
+			} else {
+				err = api.runJob(ctx, job, action == "reconcile")
+			}
 		}
 	}
 	if err != nil {
@@ -197,6 +210,11 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 			continue
 		}
 		if reconcile {
+			// A published target alone does not prove source disposition. This
+			// action must never rename or remove any source/recovery objects.
+			if job.Definition.Mode == "move" {
+				continue
+			}
 			if item.State != "prepared" {
 				continue
 			}
@@ -221,17 +239,27 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 		if !claimed {
 			return organization.ErrState
 		}
-		proof, err := organization.Transfer(ctx, job.Definition, item.Entry, organization.TempName(job.ID, item.Index), func(p organization.Proof) error {
+		prepare := func(p organization.Proof) error {
 			if err := api.validateJob(ctx, job); err != nil {
 				return err
 			}
 			return api.jobs.Prepare(ctx, job.ID, item.Index, p)
-		})
+		}
+		transfer := organization.Transfer
+		if job.Definition.Mode == "move" {
+			transfer = organization.PrepareMoveTarget
+		}
+		proof, err := transfer(ctx, job.Definition, item.Entry, organization.TempName(job.ID, item.Index), prepare)
 		if err == nil {
 			item.Proof = proof
-			err = organization.VerifyPublished(ctx, job.Definition, item.Entry, proof)
+			if job.Definition.Mode == "move" {
+				item.State = "prepared"
+				err = api.finishMove(ctx, job, item)
+			} else {
+				err = organization.VerifyPublished(ctx, job.Definition, item.Entry, proof)
+			}
 		}
-		if err == nil {
+		if err == nil && job.Definition.Mode != "move" {
 			err = api.jobs.Complete(ctx, job, item)
 		}
 		if err != nil {
@@ -240,7 +268,105 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 			persistCancel()
 			return err
 		}
-		_ = organization.Cleanup(job.Definition, item.Entry, proof)
+		if job.Definition.Mode != "move" {
+			_ = organization.Cleanup(job.Definition, item.Entry, proof)
+		}
+	}
+	return nil
+}
+
+func (api organizationAPI) finishMove(ctx context.Context, job organization.Job, item organization.JobItem) error {
+	if err := api.validateJob(ctx, job); err != nil {
+		return err
+	}
+	if item.State == "prepared" {
+		p, err := organization.PrepareMove(ctx, job.Definition, item.Entry, item.Proof, organization.MoveHoldName(job.ID, item.Index))
+		if err != nil {
+			return err
+		}
+		if err = api.jobs.BeginMove(ctx, job.ID, item.Index, p); err != nil {
+			return err
+		}
+		item.Proof, item.State = p, "moving"
+	}
+	if item.State != "moving" && item.State != "quarantined" {
+		return organization.ErrState
+	}
+	if err := organization.ContinueMove(ctx, job.Definition, item.Entry, item.Proof, item.State == "quarantined", func() error {
+		if err := api.validateJob(ctx, job); err != nil {
+			return err
+		}
+		return api.jobs.MarkQuarantined(ctx, job.ID, item.Index, item.Proof)
+	}); err != nil {
+		return err
+	}
+	if err := api.validateJob(ctx, job); err != nil {
+		return err
+	}
+	if err := api.jobs.Complete(ctx, job, item); err != nil {
+		return err
+	}
+	// Reload the receipt, including when another confirmed request committed
+	// history first. Never infer cleanup from a stale in-memory item.
+	current, err := api.jobs.Get(ctx, job.ID)
+	if err != nil {
+		return err
+	}
+	return api.cleanupMove(ctx, current, current.Items[item.Index])
+}
+
+func (api organizationAPI) cleanupMove(ctx context.Context, job organization.Job, item organization.JobItem) error {
+	if item.State != "completed" {
+		return organization.ErrState
+	}
+	if item.Reason == "" {
+		return nil
+	}
+	if err := api.validateJob(ctx, job); err != nil {
+		return err
+	}
+	if item.Reason == organization.MoveSourceCleanupPending {
+		if err := organization.CleanupMovedSource(ctx, job.Definition, item.Entry, item.Proof); err != nil {
+			return err
+		}
+		if err := api.jobs.AdvanceMoveCleanup(ctx, job.ID, item.Index, item.Proof, true); err != nil {
+			return err
+		}
+		item.Reason = organization.MoveTargetCleanupPending
+	}
+	if item.Reason != organization.MoveTargetCleanupPending {
+		return organization.ErrState
+	}
+	if err := organization.CleanupMoveTarget(ctx, job.Definition, item.Entry, item.Proof); err != nil {
+		return err
+	}
+	return api.jobs.AdvanceMoveCleanup(ctx, job.ID, item.Index, item.Proof, false)
+}
+
+func (api organizationAPI) resumeMove(ctx context.Context, job organization.Job) error {
+	if job.Definition.Mode != "move" || job.State == "cancelled" {
+		return organization.ErrState
+	}
+	for _, item := range job.Items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if item.State == "planned" {
+			// Never start new items from recovery.
+			continue
+		}
+		var err error
+		if item.State == "completed" {
+			err = api.cleanupMove(ctx, job, item)
+		} else {
+			err = api.finishMove(ctx, job, item)
+		}
+		if err != nil {
+			persist, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = api.jobs.RecordError(persist, job.ID, item.Index)
+			cancel()
+			return err
+		}
 	}
 	return nil
 }

@@ -74,7 +74,7 @@ test("organization root loading is authenticated and preserves source/target rol
   assert.deepEqual(await getOrganizationRoots("test-token"), data);
 });
 
-for (const mode of ["link", "softlink"]) {
+for (const mode of ["link", "softlink", "move"]) {
   test(`${mode} job creation preserves reviewed mode without copy fallback or execution`, async (t) => {
     const input = { sourceId: "s", targetId: "t", path: ".", mode, fingerprint: "c".repeat(64) };
     let calls = 0;
@@ -89,3 +89,43 @@ for (const mode of ["link", "softlink"]) {
     assert.equal(calls, 1);
   });
 }
+
+for (const action of ["execute", "resume-move"]) {
+  test(`move ${action} only sends source-removal authorization when explicitly provided`, async (t) => {
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async (path, options) => {
+      calls++;
+      assert.equal(path, `/api/v1/organization/jobs/job%2Fid/${action}`);
+      assert.equal(options.headers.Authorization, "token");
+      assert.deepEqual(JSON.parse(options.body), calls === 1 ? { confirm: true } : { confirm: true, confirmSourceRemoval: true });
+      return new Response(JSON.stringify({ code: 0, success: true, data: { id: "job/id", mode: "move" } }));
+    });
+    await controlOrganizationJob("token", "job/id", action);
+    await controlOrganizationJob("token", "job/id", action, true);
+    assert.equal(calls, 2);
+  });
+  test(`move ${action} failure never retries or falls back to copying/reconciliation`, async (t) => {
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async (path, options) => {
+      calls++;
+      assert.equal(path, `/api/v1/organization/jobs/job/${action}`);
+      assert.deepEqual(JSON.parse(options.body), { confirm: true, confirmSourceRemoval: true });
+      return new Response(JSON.stringify({ code: 409, success: false, message: "saved proof requires review" }), { status: 409 });
+    });
+    await assert.rejects(controlOrganizationJob("token", "job", action, true));
+    assert.equal(calls, 1);
+  });
+}
+
+test("move jobs load stored source/target roots and cleanup receipts without a mutation", async (t) => {
+  const data = [{ id: "job", mode: "move", state: "needs_review", sourceRoot: "/original-downloads", targetRoot: "/original-library", items: [{ state: "completed", reason: "Move target recovery cleanup pending" }] }];
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, "/api/v1/organization/jobs");
+    assert.equal(options.method, undefined);
+    return new Response(JSON.stringify({ code: 0, success: true, data }));
+  });
+  assert.deepEqual(await getOrganizationJobs("token"), data);
+  assert.equal(calls, 1);
+});

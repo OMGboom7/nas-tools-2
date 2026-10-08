@@ -4,8 +4,13 @@ import { WorkspaceLayout } from "../components/WorkspaceLayout";
 
 type Props = { session: AuthSession; currentPath: string; onNavigate: (path: string) => void; onLogout: () => Promise<void>; onSessionExpired: () => void };
 const statusLabels: Record<string, string> = { available: "可规划", conflict: "目标冲突", blocked: "已阻止", unmatched: "附件未匹配", unrecognized: "媒体未识别" };
-const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "转移凭证已保存，待核实" };
+const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "转移凭证已保存，待核实", moving: "源移除意图已保存，需核验恢复对象", quarantined: "源文件已转入恢复目录，待提交" };
 const modeLabels: Record<string,string> = {copy:"复制",link:"硬链接",softlink:"软链接",move:"移动"};
+const jobReasonLabels: Record<string, string> = {
+  "Move source recovery cleanup pending; explicit source-removal confirmation required": "历史已提交，源恢复备份清理尚未确认完成；请检查后明确授权续办。",
+  "Move target recovery cleanup pending": "源恢复备份已清理，目标暂存清理尚未确认完成；请核验续办。",
+  "Execution interrupted or failed; verify the saved proof before any retry": "操作已中断或失败；必须核验保存凭证，不能盲目重试。",
+};
 
 export function OrganizationPage({ session, currentPath, onNavigate, onLogout, onSessionExpired }: Props) {
   const [roots, setRoots] = useState<OrganizationRoots>({ sources: [], targets: [] });
@@ -20,7 +25,9 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [jobs, setJobs] = useState<OrganizationJob[]>([]);
   const [jobId, setJobId] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [sourceRemoval, setSourceRemoval] = useState(false);
   const job = jobs.find((item) => item.id === jobId);
+  useEffect(() => { setConfirmed(false); setSourceRemoval(false); }, [jobId, session.token]);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -48,13 +55,14 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     } finally { setBusy(false); }
   }
   function invalidate() { setPlan(null); setError(""); }
-  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel") {
+  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move") {
+    if ((operation === "execute" || operation === "resume-move") && job?.mode === "move" && (!confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot)) return;
     setBusy(true); setError("");
     try {
       if (operation === "refresh") { setJobs(await getOrganizationJobs(session.token)); return; }
       const saved = operation === "create"
         ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, fingerprint: plan!.fingerprint })
-        : await controlOrganizationJob(session.token, jobId, operation);
+        : await controlOrganizationJob(session.token, jobId, operation, job?.mode === "move" && (operation === "execute" || operation === "resume-move") && sourceRemoval);
       setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
       setJobId(saved.id); setPlan(null);
     } catch (err) {
@@ -65,12 +73,12 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         // but never automatically retry a mutation or reconciliation.
         try { setJobs(await getOrganizationJobs(session.token)); } catch { /* retain the original error */ }
       }
-    } finally { setConfirmed(false); setBusy(false); }
+    } finally { setConfirmed(false); setSourceRemoval(false); setBusy(false); }
   }
   return <WorkspaceLayout user={session.user} currentPath={currentPath} section="媒体整理" page="整理预览" onNavigate={onNavigate} onLogout={onLogout}>
     <section className="organization-preview">
       <h1>整理预览</h1>
-      <p>此功能仅限管理员使用。复制、硬链接和软链接需先保存任务，再单独确认执行，不会覆盖目标或删除源文件；移动目前仅支持预览。硬链接共享文件内容，软链接依赖源文件长期存在。</p>
+      <p>此功能仅限管理员使用。各方式均需先保存任务，再单独确认执行，且不覆盖目标。复制和链接保留源名；移动会移除源名及核验后的恢复备份，需额外授权。硬链接共享文件内容，软链接依赖源文件长期存在。</p>
       {error && <p role="alert">{error}</p>}
       {loading ? <p>正在读取配置目录…</p> : <form onSubmit={(event) => void preview(event)}>
         <label>来源目录<select value={sourceId} disabled={busy} required onChange={(e) => { setSourceId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.sources.map((root) => <option key={root.id} value={root.id}>{root.label} · {root.path}</option>)}</select></label>
@@ -88,11 +96,13 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       {!!roots.executionModes?.length && <section aria-label="持久整理任务">
         <h2>已保存的整理任务</h2>
         <button type="button" disabled={busy} onClick={() => void jobOperation("refresh")}>刷新任务状态</button>
-        <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
+        <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); setSourceRemoval(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
         {job && <><p>转移方式：{modeLabels[job.mode] || job.mode}。{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新转移。</p>
-          <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>任务状态</th></tr></thead><tbody>{job.items.map((item) => <tr key={item.index}><td>{item.source}</td><td>{item.target}</td><td>{jobLabels[item.state] || item.state}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
-          {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意按{modeLabels[job.mode] || job.mode}方式整理以上待执行文件。</label><button type="button" disabled={busy || !confirmed} onClick={() => void jobOperation("execute")}>确认执行{modeLabels[job.mode] || job.mode}</button></>}
-          {job.state === "needs_review" && <button type="button" disabled={busy} onClick={() => void jobOperation("reconcile")}>核对已发布文件，不重试转移</button>}
+          <p>任务保存的来源：<code>{job.sourceRoot || "未提供，请刷新后确认"}</code><br />任务保存的目标：<code>{job.targetRoot || "未提供，请刷新后确认"}</code></p>
+          <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>任务状态</th></tr></thead><tbody>{job.items.map((item) => <tr key={item.index}><td>{item.source}</td><td>{item.target}</td><td>{jobLabels[item.state] || item.state}{item.reason && <small>{jobReasonLabels[item.reason] || item.reason}</small>}</td></tr>)}</tbody></table></div>
+          {job.mode === "move" && (job.state === "ready" || job.state === "needs_review") && <label className="organization-confirm"><input type="checkbox" checked={sourceRemoval} disabled={busy || !job.sourceRoot || !job.targetRoot} onChange={(event) => setSourceRemoval(event.target.checked)} />我同意从上述任务保存的来源路径移除原源文件名，并在目标核验及历史提交后清理本任务的源恢复备份；不删除新到的同名文件、其他文件或源目录。</label>}
+          {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意按{modeLabels[job.mode] || job.mode}方式整理以上待执行文件。</label><button type="button" disabled={busy || !confirmed || (job.mode === "move" && (!sourceRemoval || !job.sourceRoot || !job.targetRoot))} onClick={() => void jobOperation("execute")}>确认执行{modeLabels[job.mode] || job.mode}</button></>}
+          {job.state === "needs_review" && (job.mode === "move" ? <><p>普通核对不会继续移动。只有保存凭证能证明原文件身份时才可继续；未知状态仍保留，未开始的文件不会由恢复操作执行。</p><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已检查上述任务路径和恢复记录，同意继续核验移动及清理。</label><button type="button" disabled={busy || !confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot} onClick={() => void jobOperation("resume-move")}>确认继续移动及恢复清理</button></> : <button type="button" disabled={busy} onClick={() => void jobOperation("reconcile")}>核对已发布文件，不重试转移</button>)}
           {job.items.every((item) => item.state === "planned") && <button type="button" disabled={busy} onClick={() => void jobOperation("cancel")}>取消未执行任务</button>}
         </>}
       </section>}

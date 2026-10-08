@@ -18,7 +18,7 @@ func MoveHoldName(job string, index int) string {
 }
 
 // PrepareMoveTarget publishes an independent copy without touching the source.
-// This internal foundation is not yet reachable from the execution API.
+// The caller must obtain separate source-removal consent before later steps.
 func PrepareMoveTarget(ctx context.Context, d Definition, item Entry, temp string, prepared func(Proof) error) (Proof, error) {
 	if d.Mode != "move" {
 		return Proof{}, ErrMode
@@ -32,7 +32,11 @@ func verifyMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) er
 		return ErrMode
 	}
 	d.Mode = "copy"
-	return VerifyPublished(ctx, d, item, p)
+	err := VerifyPublished(ctx, d, item, p)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrState
+	}
+	return err
 }
 
 func verifyOriginal(ctx context.Context, parent *os.File, name string, item Entry, digest string) error {
@@ -362,4 +366,58 @@ func CleanupMovedSource(ctx context.Context, d Definition, item Entry, p Proof) 
 		return err
 	}
 	return parent.Sync()
+}
+
+// The source-cleaned receipt must be durable before removing the last private
+// target anchor. Recheck the published target while that anchor still exists;
+// empty/already removed stages can be retried without guessing file ownership.
+func CleanupMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if d.Mode != "move" {
+		return ErrMode
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	root, err := anchoredRoot(d.TargetRoot, d.TargetIdentity)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	parent, _, err := anchoredParent(root, item.Target, false)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	info, err := parent.Stat()
+	if err != nil || Identity(info) != p.ParentIdentity {
+		return ErrPath
+	}
+	if !strings.HasPrefix(p.Temp, ".nastool-copy-") || filepath.Base(p.Temp) != p.Temp || !validRelative(p.Temp) {
+		return ErrPath
+	}
+	fd, err := unix.Openat(int(parent.Fd()), p.Temp, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return Cleanup(d, item, p)
+	}
+	if err != nil {
+		return err
+	}
+	stage := os.NewFile(uintptr(fd), p.Temp)
+	defer stage.Close()
+	info, err = stage.Stat()
+	if err != nil || Identity(info) != p.StagingIdentity {
+		return ErrState
+	}
+	_, err = lstatAt(stage, "payload")
+	if err == nil {
+		if err = verifyMoveTarget(ctx, d, item, p); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	return Cleanup(d, item, p)
 }

@@ -26,3 +26,4 @@ func ContinueMove(context.Context, Definition, Entry, Proof, bool, func() error)
 }
 func VerifyQuarantined(context.Context, Definition, Entry, Proof) error  { return ErrMode }
 func CleanupMovedSource(context.Context, Definition, Entry, Proof) error { return ErrMode }
+func CleanupMoveTarget(context.Context, Definition, Entry, Proof) error  { return ErrMode }

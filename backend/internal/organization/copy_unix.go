@@ -113,7 +113,7 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 // is executed literally: unsupported links never silently turn into copies.
 func Transfer(ctx context.Context, d Definition, item Entry, tempName string, prepared func(Proof) error) (Proof, error) {
 	var proof Proof
-	if !SupportedMode(d.Mode) {
+	if !SupportedMode(d.Mode) || d.Mode == "move" {
 		return proof, ErrMode
 	}
 	if !strings.HasPrefix(tempName, ".nastool-copy-") || filepath.Base(tempName) != tempName || !validRelative(tempName) {

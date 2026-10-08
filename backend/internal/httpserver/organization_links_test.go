@@ -32,7 +32,7 @@ func TestOrganizationLinkModesExecuteExactlyAndRemainVisibleToLocalInventory(t *
 		t.Run(mode, func(t *testing.T) {
 			f, source, target, input, plan := organizationLinkFixture(t, mode)
 			roots := nativeJSONRequest(f.handler, "GET", "/api/v1/organization/roots", f.token, "")
-			if roots.Code != 200 || !strings.Contains(roots.Body.String(), `"executionModes":["copy","link","softlink"]`) {
+			if roots.Code != 200 || !strings.Contains(roots.Body.String(), `"executionModes":["copy","link","softlink","move"]`) {
 				t.Fatal(roots.Code, roots.Body.String())
 			}
 			job := organizationCreateJob(t, f, input, plan)

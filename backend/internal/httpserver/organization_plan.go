@@ -100,7 +100,7 @@ func (api organizationAPI) serveRoots(w http.ResponseWriter, r *http.Request) {
 func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error) {
 	result := organizationRoots{Sources: []organizationRoot{}, Targets: []organizationRoot{}, ExecutionModes: []string{}}
 	if api.pureGo && api.jobs != nil && organization.CopySupported {
-		result.ExecutionModes = []string{"copy", "link", "softlink"}
+		result.ExecutionModes = []string{"copy", "link", "softlink", "move"}
 	}
 	seen := map[string]bool{}
 	add := func(role, path, label, kind string) error {
