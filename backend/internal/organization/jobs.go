@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -19,6 +20,7 @@ var ErrClaimed = errors.New("organization target is already reserved")
 var ErrState = errors.New("organization item requires review")
 var ErrNotFound = errors.New("organization job not found")
 var ErrMode = errors.New("organization mode is unavailable on this filesystem")
+var ErrBusy = errors.New("organization operation is already active")
 
 func SupportedMode(mode string) bool {
 	return mode == "copy" || mode == "link" || mode == "softlink" || mode == "move"
@@ -93,7 +95,11 @@ type Job struct {
 	Definition  Definition `json:"-"`
 }
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db                *sql.DB
+	guardRoot         string
+	guardRootIdentity string
+}
 
 func Digest(value any) string {
 	raw, err := json.Marshal(value)
@@ -122,7 +128,23 @@ func OpenStore(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{db}, nil
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	canonical, err = filepath.Abs(canonical)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	parent := filepath.Dir(canonical)
+	info, err := os.Stat(parent)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db, guardRoot: parent, guardRootIdentity: Identity(info)}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
 

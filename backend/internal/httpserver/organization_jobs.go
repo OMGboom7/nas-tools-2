@@ -31,6 +31,9 @@ func writeOrganizationError(w http.ResponseWriter, err error) {
 	if errors.Is(err, organization.ErrMode) {
 		status, message = 422, "selected organization mode is unavailable on this filesystem or with current permissions; no mode fallback was performed"
 	}
+	if errors.Is(err, organization.ErrBusy) {
+		status, message = 409, "organization operation is already active; refresh its saved state instead of retrying execution"
+	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		status, message = 504, "organization operation was interrupted; inspect its saved state"
 	}
@@ -172,6 +175,19 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	}
 	if job.Definition.Mode == "move" && (action == "execute" || action == "resume-move" || action == "resume-publication") && !input.ConfirmSourceRemoval {
 		writeAPIError(w, 400, 400, "separate source-removal confirmation is required for moving files")
+		return
+	}
+	guard, err := api.jobs.AcquireJob(ctx, job.ID)
+	if err != nil {
+		writeOrganizationError(w, err)
+		return
+	}
+	defer guard.Close()
+	// The first read only established consent requirements. Reload under the
+	// guard so a competing completed/cancelled operation cannot leave stale state.
+	job, err = api.jobs.Get(ctx, job.ID)
+	if err != nil {
+		writeOrganizationError(w, err)
 		return
 	}
 	if action == "cancel" {
