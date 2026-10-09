@@ -14,13 +14,14 @@ import (
 )
 
 // A missing object is accepted only AFTER durable whole-job abandonment intent,
-// to finish a previously interrupted cleanup. Before intent the complete owned
-// payload must exist. No recursive removal, source unlink, or target unlink.
+// to finish a previously interrupted cleanup. Before intent the owned payload
+// and any saved witness must exist (full digest or exact source prefix). No
+// recursive removal, source unlink, or target unlink.
 func inspectUnpublished(ctx context.Context, d Definition, item Entry, p Proof, intent bool, beforeDelete func() error) error {
 	if !SupportedMode(d.Mode) {
 		return ErrMode
 	}
-	if p.Identity == "" || len(p.Digest) != 64 || p.ParentIdentity == "" || p.StagingIdentity == "" || filepath.Base(p.Temp) != p.Temp || !validRelative(p.Temp) || p.SourceHold != "" || p.SourceHoldIdentity != "" || p.SourceParentIdentity != "" {
+	if p.Incomplete && !p.Anchor || p.Identity == "" || len(p.Digest) != 64 || p.ParentIdentity == "" || p.StagingIdentity == "" || filepath.Base(p.Temp) != p.Temp || !validRelative(p.Temp) || p.SourceHold != "" || p.SourceHoldIdentity != "" || p.SourceParentIdentity != "" {
 		return ErrState
 	}
 	if beforeDelete != nil && !intent {
@@ -60,17 +61,26 @@ func inspectUnpublished(ctx context.Context, d Definition, item Entry, p Proof, 
 	if err = unpublishedStageBinding(parent, stage, p); err != nil {
 		return err
 	}
-	names, err := stage.ReadDir(2)
+	names, err := stage.ReadDir(3)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	if len(names) > 1 || len(names) == 1 && names[0].Name() != "payload" || len(names) == 0 && !intent {
+	present := map[string]bool{}
+	for _, entry := range names {
+		if entry.Name() != "payload" && (entry.Name() != "anchor" || !p.Anchor) {
+			return ErrState
+		}
+		present[entry.Name()] = true
+	}
+	if !intent && (!present["payload"] || p.Anchor && !present["anchor"]) || p.Anchor && present["payload"] && !present["anchor"] {
 		return ErrState
 	}
-	hasPayload := len(names) == 1
-	if hasPayload {
-		if err = verifyPreparedObject(ctx, d, item, p, stage); err != nil {
-			return err
+	refs := len(names)
+	for _, name := range []string{"payload", "anchor"} {
+		if present[name] {
+			if err = verifyDisposableObject(ctx, d, item, p, stage, name, refs); err != nil {
+				return err
+			}
 		}
 	}
 	if beforeDelete == nil {
@@ -85,15 +95,33 @@ func inspectUnpublished(ctx context.Context, d Definition, item Entry, p Proof, 
 	if err = unpublishedStageBinding(parent, stage, p); err != nil {
 		return err
 	}
-	// Revalidate after the ledger/configuration callback, not just before it.
-	if hasPayload {
-		if err = verifyPreparedObject(ctx, d, item, p, stage); err != nil {
+	// Delete the writable name first, while the saved witness pins its inode.
+	// On a crash, an anchor-only stage is still positive object evidence. Never
+	// adopt a payload-only replacement after the last witness has disappeared.
+	for _, name := range []string{"payload", "anchor"} {
+		if !present[name] {
+			continue
+		}
+		if err = beforeDelete(); err != nil {
+			return err
+		}
+		if err = unpublishedBoundary(ctx, d, item, p); err != nil {
+			return err
+		}
+		if err = unpublishedStageBinding(parent, stage, p); err != nil {
+			return err
+		}
+		if err = verifyDisposableObject(ctx, d, item, p, stage, name, refs); err != nil {
 			return err
 		}
 		if err = ctx.Err(); err != nil {
 			return err
 		}
-		if err = unix.Unlinkat(fd, "payload", 0); err != nil {
+		if err = unix.Unlinkat(fd, name, 0); err != nil {
+			return err
+		}
+		refs--
+		if err = stage.Sync(); err != nil {
 			return err
 		}
 	}

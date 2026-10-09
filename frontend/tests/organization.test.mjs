@@ -6,6 +6,18 @@ import ts from "typescript";
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext } });
+const { canAbandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
+
+test("partial staging is eligible for explicit disposal, not uncertain or published work", () => {
+  const job = (...states) => ({ state: "needs_review", items: states.map((state) => ({ state })) });
+  assert.equal(canAbandonOrganizationJob(job("staging", "planned")), true);
+  assert.equal(canAbandonOrganizationJob(job("staging", "prepared")), true);
+  for (const state of ["running", "completed", "moving", "quarantined", "unknown"]) assert.equal(canAbandonOrganizationJob(job("staging", state)), false);
+  assert.equal(canAbandonOrganizationJob(job("planned")), false);
+  assert.equal(canAbandonOrganizationJob({ state: "abandoned", items: [{ state: "abandoned" }] }), false);
+  assert.equal(canAbandonOrganizationJob({ state: "abandoning", items: [{ state: "discarding" }] }), true);
+});
 
 test("abandonment has independent explicit consents and never authorizes source removal", async (t) => {
   let calls = 0;

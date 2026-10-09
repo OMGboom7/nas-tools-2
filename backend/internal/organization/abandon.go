@@ -23,8 +23,11 @@ func (s *Store) AbandonUnpublished(ctx context.Context, job Job, validate func()
 			if resuming || item.Proof != (Proof{}) {
 				return ErrState
 			}
-		case "prepared":
+		case "prepared", "staging":
 			if resuming {
+				return ErrState
+			}
+			if (item.State == "staging") != item.Proof.Incomplete {
 				return ErrState
 			}
 			prepared = true
@@ -131,14 +134,14 @@ func (s *Store) beginAbandon(ctx context.Context, job Job) error {
 			return err
 		}
 		var proof Proof
-		if state != item.State || (state != "planned" && state != "prepared") || json.Unmarshal([]byte(raw), &proof) != nil || Digest(proof) != Digest(item.Proof) {
+		if state != item.State || (state != "planned" && state != "prepared" && state != "staging") || json.Unmarshal([]byte(raw), &proof) != nil || Digest(proof) != Digest(item.Proof) {
 			return ErrState
 		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_JOBS SET STATE='abandoning' WHERE ID=?`, job.ID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE=CASE STATE WHEN 'prepared' THEN 'discarding' ELSE 'abandoned' END,REASON='Explicit unpublished staging disposal requested; no successful transfer recorded' WHERE JOB_ID=?`, job.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE=CASE STATE WHEN 'planned' THEN 'abandoned' ELSE 'discarding' END,REASON='Explicit unpublished staging disposal requested; no successful transfer recorded' WHERE JOB_ID=?`, job.ID); err != nil {
 		return err
 	}
 	return tx.Commit()

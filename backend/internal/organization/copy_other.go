@@ -10,6 +10,12 @@ func Copy(context.Context, Definition, Entry, string, func(Proof) error) (Proof,
 func Transfer(context.Context, Definition, Entry, string, func(Proof) error) (Proof, error) {
 	return Proof{}, ErrMode
 }
+func TransferJournaled(context.Context, Definition, Entry, string, func(Proof) error, func(Proof) error) (Proof, error) {
+	return Proof{}, ErrMode
+}
+func PrepareMoveTargetJournaled(context.Context, Definition, Entry, string, func(Proof) error, func(Proof) error) (Proof, error) {
+	return Proof{}, ErrMode
+}
 func ValidateMode(context.Context, Definition, Entry) error           { return ErrMode }
 func VerifyPublished(context.Context, Definition, Entry, Proof) error { return ErrState }
 func Cleanup(Definition, Entry, Proof) error                          { return ErrState }

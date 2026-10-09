@@ -17,6 +17,9 @@ import (
 // removes sources, overwrites a target, or adopts an unjournaled stage. The
 // callback revalidates the prepared ledger immediately before publication.
 func PublishPrepared(ctx context.Context, d Definition, item Entry, p Proof, beforePublish func() error) error {
+	if p.Incomplete {
+		return ErrState
+	}
 	if !SupportedMode(d.Mode) {
 		return ErrMode
 	}
@@ -128,16 +131,28 @@ func PublishPrepared(ctx context.Context, d Definition, item Entry, p Proof, bef
 }
 
 func verifyPreparedObject(ctx context.Context, d Definition, item Entry, p Proof, stage *os.File) error {
+	if p.Anchor {
+		if err := verifyAnchorObject(stage, p); err != nil {
+			return err
+		}
+	}
+	return verifyPreparedNamedObject(ctx, d, item, p, stage, "payload")
+}
+
+func verifyPreparedNamedObject(ctx context.Context, d Definition, item Entry, p Proof, stage *os.File, name string) error {
+	if p.Incomplete {
+		return ErrState
+	}
 	if d.Mode == "softlink" {
 		if p.Kind != "symlink" || p.LinkTarget != filepath.Join(d.SourceRoot, item.Source) {
 			return ErrState
 		}
-		return verifyLinkObject(stage, "payload", p)
+		return verifyLinkObject(stage, name, p)
 	}
 	if p.Kind != "" && p.Kind != "regular" || p.LinkTarget != "" || d.Mode == "link" && p.Identity != item.Identity {
 		return ErrState
 	}
-	f, err := openRegular(stage, "payload")
+	f, err := openRegular(stage, name)
 	if err != nil {
 		return ErrState
 	}
@@ -160,7 +175,7 @@ func verifyPreparedObject(ctx context.Context, d Definition, item Entry, p Proof
 	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
 		return ErrState
 	}
-	current, err := openRegular(stage, "payload")
+	current, err := openRegular(stage, name)
 	if err != nil {
 		return ErrState
 	}
@@ -204,6 +219,9 @@ func validatePreparedBinding(d Definition, item Entry, p Proof) error {
 	stat, err := lstatAt(stage, "payload")
 	if err != nil || statIdentity(stat) != p.Identity {
 		return ErrState
+	}
+	if p.Anchor {
+		return verifyAnchorObject(stage, p)
 	}
 	return nil
 }

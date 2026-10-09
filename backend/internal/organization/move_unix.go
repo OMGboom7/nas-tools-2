@@ -27,6 +27,14 @@ func PrepareMoveTarget(ctx context.Context, d Definition, item Entry, temp strin
 	return Copy(ctx, d, item, temp, prepared)
 }
 
+func PrepareMoveTargetJournaled(ctx context.Context, d Definition, item Entry, temp string, staging, prepared func(Proof) error) (Proof, error) {
+	if d.Mode != "move" {
+		return Proof{}, ErrMode
+	}
+	d.Mode = "copy"
+	return TransferJournaled(ctx, d, item, temp, staging, prepared)
+}
+
 func verifyMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) error {
 	if d.Mode != "move" {
 		return ErrMode
@@ -408,13 +416,19 @@ func CleanupMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) e
 	if err != nil || Identity(info) != p.StagingIdentity {
 		return ErrState
 	}
-	_, err = lstatAt(stage, "payload")
-	if err == nil {
-		if err = verifyMoveTarget(ctx, d, item, p); err != nil {
+	for _, name := range []string{"payload", "anchor"} {
+		if name == "anchor" && !p.Anchor {
+			continue
+		}
+		_, err = lstatAt(stage, name)
+		if err == nil {
+			if err = verifyMoveTarget(ctx, d, item, p); err != nil {
+				return err
+			}
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
 	if err = ctx.Err(); err != nil {
 		return err

@@ -120,7 +120,7 @@ func hashSource(ctx context.Context, source *os.File, size int64) (string, error
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func preparePayload(ctx context.Context, d Definition, item Entry, source *os.File, sourceInfo os.FileInfo, sourceParent *os.File, sourceName string, stage *os.File) (Proof, error) {
+func preparePayload(ctx context.Context, d Definition, item Entry, source *os.File, sourceInfo os.FileInfo, sourceParent *os.File, sourceName string, stage *os.File, staging func(Proof) error) (Proof, error) {
 	proof := Proof{Kind: "regular"}
 	stageFD := int(stage.Fd())
 	switch d.Mode {
@@ -131,6 +131,19 @@ func preparePayload(ctx context.Context, d Definition, item Entry, source *os.Fi
 		}
 		temp := os.NewFile(uintptr(fd), "payload")
 		defer temp.Close()
+		initial, err := temp.Stat()
+		if err != nil {
+			return proof, err
+		}
+		proof.Identity = Identity(initial)
+		if staging != nil {
+			if err = temp.Sync(); err != nil {
+				return proof, err
+			}
+			if err = staging(proof); err != nil {
+				return proof, err
+			}
+		}
 		hash := sha256.New()
 		n, err := io.CopyBuffer(io.MultiWriter(temp, hash), contextReader{ctx, io.LimitReader(source, item.Size+1)}, make([]byte, 256<<10))
 		if err != nil {
@@ -169,6 +182,14 @@ func preparePayload(ctx context.Context, d Definition, item Entry, source *os.Fi
 			return proof, ErrPath
 		}
 		proof.Identity = Identity(info)
+		if staging != nil {
+			if err = anchor.Sync(); err != nil {
+				return proof, err
+			}
+			if err = staging(proof); err != nil {
+				return proof, err
+			}
+		}
 		proof.Digest, err = hashSource(ctx, source, item.Size)
 		if err != nil {
 			return proof, err
@@ -192,6 +213,11 @@ func preparePayload(ctx context.Context, d Definition, item Entry, source *os.Fi
 			return proof, ErrPath
 		}
 		proof.Kind, proof.LinkTarget, proof.Identity = "symlink", linkTarget, statIdentity(stat)
+		if staging != nil {
+			if err = staging(proof); err != nil {
+				return proof, err
+			}
+		}
 		proof.Digest, err = hashSource(ctx, source, item.Size)
 		if err != nil {
 			return proof, err
@@ -214,11 +240,11 @@ func verifyLinkObject(parent *os.File, name string, p Proof) error {
 	return nil
 }
 
-func verifySoftlink(ctx context.Context, d Definition, item Entry, p Proof, parent *os.File, name string, stage *os.File) error {
+func verifySoftlink(ctx context.Context, d Definition, item Entry, p Proof, parent *os.File, name string, stage *os.File, anchorName string) error {
 	if p.Kind != "symlink" || p.LinkTarget != filepath.Join(d.SourceRoot, item.Source) {
 		return ErrState
 	}
-	if err := verifyLinkObject(stage, "payload", p); err != nil {
+	if err := verifyLinkObject(stage, anchorName, p); err != nil {
 		return err
 	}
 	if err := verifyLinkObject(parent, name, p); err != nil {

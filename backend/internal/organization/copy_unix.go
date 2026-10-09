@@ -112,6 +112,20 @@ func Copy(ctx context.Context, d Definition, item Entry, tempName string, prepar
 // Transfer never removes the source or overwrites a target. The journal mode
 // is executed literally: unsupported links never silently turn into copies.
 func Transfer(ctx context.Context, d Definition, item Entry, tempName string, prepared func(Proof) error) (Proof, error) {
+	return transfer(ctx, d, item, tempName, nil, prepared)
+}
+
+// Production execution journals the private object before writing content.
+// Keep the original primitive for older complete-proof callers and fixtures;
+// an unjournaled object must never be adopted by recovery after a failure.
+func TransferJournaled(ctx context.Context, d Definition, item Entry, tempName string, staging, prepared func(Proof) error) (Proof, error) {
+	if staging == nil || prepared == nil {
+		return Proof{}, ErrState
+	}
+	return transfer(ctx, d, item, tempName, staging, prepared)
+}
+
+func transfer(ctx context.Context, d Definition, item Entry, tempName string, staging, prepared func(Proof) error) (Proof, error) {
 	var proof Proof
 	if !SupportedMode(d.Mode) || d.Mode == "move" {
 		return proof, ErrMode
@@ -154,6 +168,23 @@ func Transfer(ctx context.Context, d Definition, item Entry, tempName string, pr
 	if time.Since(info.ModTime()) < 30*time.Second {
 		return proof, ErrState
 	}
+	var originalDigest string
+	if staging != nil {
+		originalDigest, err = hashSource(ctx, source, item.Size)
+		if err != nil {
+			return proof, err
+		}
+		after, statErr := source.Stat()
+		if statErr != nil || !matches(after, item) {
+			return proof, ErrState
+		}
+		if err = validateSourceBinding(d, item); err != nil {
+			return proof, err
+		}
+		if _, err = source.Seek(0, io.SeekStart); err != nil {
+			return proof, err
+		}
+	}
 	targetParent, targetName, err := anchoredParent(targetRoot, item.Target, true)
 	if err != nil {
 		return proof, err
@@ -187,10 +218,50 @@ func Transfer(ctx context.Context, d Definition, item Entry, tempName string, pr
 	if err = unix.Fstat(stageFD, &stageStat); err != nil || stageStat.Uid != uint32(os.Geteuid()) || stageStat.Mode&0777 != 0700 {
 		return proof, ErrPath
 	}
-	proof, err = preparePayload(ctx, d, item, source, info, sourceParent, sourceName, stage)
+	var early Proof
+	var saveStage func(Proof) error
+	if staging != nil {
+		saveStage = func(p Proof) error {
+			parentInfo, err := targetParent.Stat()
+			if err != nil {
+				return err
+			}
+			stageInfo, err := stage.Stat()
+			if err != nil {
+				return err
+			}
+			p.Temp, p.ParentIdentity, p.StagingIdentity = tempName, Identity(parentInfo), Identity(stageInfo)
+			p.Digest, p.Incomplete = originalDigest, true
+			// Keep this inode alive independently of the writable payload name.
+			// Never adopt an existing anchor or follow a symlink object here.
+			if err = unix.Linkat(stageFD, "payload", stageFD, "anchor", 0); err != nil {
+				return modeOperationError(err)
+			}
+			p.Anchor = true
+			early = p
+			if err = validatePreparedBinding(d, item, p); err != nil {
+				return err
+			}
+			if err = stage.Sync(); err != nil {
+				return err
+			}
+			if err = targetParent.Sync(); err != nil {
+				return err
+			}
+			return staging(p)
+		}
+	}
+	proof, err = preparePayload(ctx, d, item, source, info, sourceParent, sourceName, stage, saveStage)
 	if err != nil {
+		if early.Incomplete {
+			return early, err
+		}
 		return proof, err
 	}
+	if staging != nil && proof.Digest != originalDigest {
+		return early, ErrState
+	}
+	proof.Anchor = early.Anchor
 	info, err = source.Stat()
 	if err != nil || !matches(info, item) {
 		return proof, ErrPath
@@ -242,6 +313,11 @@ func Transfer(ctx context.Context, d Definition, item Entry, tempName string, pr
 	if err := validateSourceBinding(d, item); err != nil {
 		return proof, err
 	}
+	if staging != nil {
+		if err := validatePreparedBinding(d, item, proof); err != nil {
+			return proof, err
+		}
+	}
 	// Reject a root or target directory replaced while the copy was prepared.
 	checkRoot, err := anchoredRoot(d.TargetRoot, d.TargetIdentity)
 	if err != nil {
@@ -277,6 +353,9 @@ func Transfer(ctx context.Context, d Definition, item Entry, tempName string, pr
 // VerifyPublished proves ownership, not mere existence/equal size. An unrelated
 // target or a partial staging file can never be reconciled into successful history.
 func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if p.Incomplete {
+		return ErrState
+	}
 	if p.Identity == "" || len(p.Digest) != 64 || p.ParentIdentity == "" || p.StagingIdentity == "" || !strings.HasPrefix(p.Temp, ".nastool-copy-") || filepath.Base(p.Temp) != p.Temp || !validRelative(p.Temp) {
 		return ErrState
 	}
@@ -304,8 +383,19 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 	if err != nil || Identity(stageInfo) != p.StagingIdentity {
 		return ErrState
 	}
+	anchorName := "payload"
+	if p.Anchor {
+		if err = verifyAnchorObject(stage, p); err != nil {
+			return err
+		}
+		if _, err = lstatAt(stage, "payload"); errors.Is(err, unix.ENOENT) {
+			anchorName = "anchor"
+		} else if err != nil {
+			return err
+		}
+	}
 	if d.Mode == "softlink" {
-		return verifySoftlink(ctx, d, item, p, parent, name, stage)
+		return verifySoftlink(ctx, d, item, p, parent, name, stage, anchorName)
 	}
 	if d.Mode != "copy" && d.Mode != "link" || p.Kind != "" && p.Kind != "regular" || p.LinkTarget != "" {
 		return ErrState
@@ -313,7 +403,7 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 	if d.Mode == "link" && p.Identity != item.Identity {
 		return ErrState
 	}
-	anchor, err := openRegular(stage, "payload")
+	anchor, err := openRegular(stage, anchorName)
 	if err != nil {
 		return ErrState
 	}
@@ -364,6 +454,9 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 // Cleanup is optional and only touches this job's verified private staging name.
 // It must run after successful state/history persistence, never as rollback.
 func Cleanup(d Definition, item Entry, p Proof) error {
+	if p.Incomplete {
+		return ErrState
+	}
 	if !strings.HasPrefix(p.Temp, ".nastool-copy-") || filepath.Base(p.Temp) != p.Temp || p.Identity == "" {
 		return ErrPath
 	}
@@ -394,6 +487,17 @@ func Cleanup(d Definition, item Entry, p Proof) error {
 	if err != nil || Identity(stageInfo) != p.StagingIdentity {
 		return ErrState
 	}
+	if p.Anchor {
+		for _, leaf := range []string{"payload", "anchor"} {
+			stat, err := lstatAt(stage, leaf)
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			if err != nil || statIdentity(stat) != p.Identity || (d.Mode == "softlink") != (stat.Mode&unix.S_IFMT == unix.S_IFLNK) || stat.Mode&unix.S_IFMT != unix.S_IFREG && stat.Mode&unix.S_IFMT != unix.S_IFLNK {
+				return ErrState
+			}
+		}
+	}
 	stat, err := lstatAt(stage, "payload")
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -406,6 +510,19 @@ func Cleanup(d Definition, item Entry, p Proof) error {
 			return ErrState
 		}
 		if err = unix.Unlinkat(stageFD, "payload", 0); err != nil {
+			return err
+		}
+	}
+	if p.Anchor {
+		stat, err = lstatAt(stage, "anchor")
+		if err == nil {
+			if statIdentity(stat) != p.Identity || (d.Mode == "softlink") != (stat.Mode&unix.S_IFMT == unix.S_IFLNK) || stat.Mode&unix.S_IFMT != unix.S_IFREG && stat.Mode&unix.S_IFMT != unix.S_IFLNK {
+				return ErrState
+			}
+			if err = unix.Unlinkat(stageFD, "anchor", 0); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, unix.ENOENT) {
 			return err
 		}
 	}

@@ -273,11 +273,17 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 			}
 			return api.jobs.Prepare(ctx, job.ID, item.Index, p)
 		}
-		transfer := organization.Transfer
-		if job.Definition.Mode == "move" {
-			transfer = organization.PrepareMoveTarget
+		staging := func(p organization.Proof) error {
+			if err := api.validateJob(ctx, job); err != nil {
+				return err
+			}
+			return api.jobs.Stage(ctx, job.ID, item.Index, p)
 		}
-		proof, err := transfer(ctx, job.Definition, item.Entry, organization.TempName(job.ID, item.Index), prepare)
+		transfer := organization.TransferJournaled
+		if job.Definition.Mode == "move" {
+			transfer = organization.PrepareMoveTargetJournaled
+		}
+		proof, err := transfer(ctx, job.Definition, item.Entry, organization.TempName(job.ID, item.Index), staging, prepare)
 		if err == nil {
 			item.Proof = proof
 			if job.Definition.Mode == "move" {

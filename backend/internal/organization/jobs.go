@@ -63,6 +63,8 @@ type Definition struct {
 }
 
 type Proof struct {
+	Incomplete           bool   `json:"incomplete,omitempty"`
+	Anchor               bool   `json:"anchor,omitempty"`
 	Temp                 string `json:"temp"`
 	Identity             string `json:"identity"`
 	ParentIdentity       string `json:"parentIdentity"`
@@ -300,11 +302,63 @@ func (s *Store) Claim(ctx context.Context, id string, index int) (bool, error) {
 }
 
 func (s *Store) Prepare(ctx context.Context, id string, index int, p Proof) error {
+	if p.Incomplete {
+		return ErrState
+	}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='prepared',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='running' AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active')`, string(raw), id, index, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var state, previous string
+	if err = tx.QueryRowContext(ctx, `SELECT I.STATE,I.PROOF FROM GO_ORGANIZATION_ITEMS I JOIN GO_ORGANIZATION_JOBS J ON J.ID=I.JOB_ID WHERE I.JOB_ID=? AND I.ORDINAL=? AND J.STATE='active'`, id, index).Scan(&state, &previous); err != nil {
+		return err
+	}
+	if state != "running" && state != "staging" {
+		return ErrState
+	}
+	if state == "staging" {
+		var saved Proof
+		if json.Unmarshal([]byte(previous), &saved) != nil || !saved.Incomplete {
+			return ErrState
+		}
+		saved.Incomplete = false
+		if Digest(saved) != Digest(p) {
+			return ErrState
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='prepared',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE=?`, string(raw), id, index, state)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n != 1 {
+		return ErrState
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Save the exact newly created object and FULL original-source digest before
+// copying any bytes. This is not complete/publication proof or a retry lease.
+func (s *Store) Stage(ctx context.Context, id string, index int, p Proof) error {
+	if !p.Incomplete || !p.Anchor || p.Temp != TempName(id, index) || p.Identity == "" || p.ParentIdentity == "" || p.StagingIdentity == "" || len(p.Digest) != 64 || p.SourceHold != "" || p.SourceHoldIdentity != "" || p.SourceParentIdentity != "" {
+		return ErrState
+	}
+	if _, err := hex.DecodeString(p.Digest); err != nil {
+		return ErrState
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='staging',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='running' AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active')`, string(raw), id, index, id)
 	if err != nil {
 		return err
 	}
@@ -318,6 +372,9 @@ func (s *Store) Prepare(ctx context.Context, id string, index int, p Proof) erro
 // Read-only publication permission; this is not a lease, timeout, or reset.
 // Concurrent publication is bounded by atomic no-overwrite filesystem linking.
 func (s *Store) VerifyPrepared(ctx context.Context, id string, index int, p Proof) error {
+	if p.Incomplete {
+		return ErrState
+	}
 	var state, raw string
 	if err := s.db.QueryRowContext(ctx, `SELECT I.STATE,I.PROOF FROM GO_ORGANIZATION_ITEMS I JOIN GO_ORGANIZATION_JOBS J ON J.ID=I.JOB_ID WHERE I.JOB_ID=? AND I.ORDINAL=? AND J.STATE='active'`, id, index).Scan(&state, &raw); err != nil {
 		return err
@@ -330,7 +387,7 @@ func (s *Store) VerifyPrepared(ctx context.Context, id string, index int, p Proo
 }
 
 func (s *Store) RecordError(ctx context.Context, id string, index int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','prepared','moving','quarantined')`, id, index)
+	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','staging','prepared','moving','quarantined')`, id, index)
 	return err
 }
 
@@ -370,6 +427,9 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 // Publication and the database cannot be one transaction. The prepared proof
 // remains reserved across crashes; Complete atomically writes state + history.
 func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
+	if item.Proof.Incomplete {
+		return ErrState
+	}
 	if !SupportedMode(job.Definition.Mode) {
 		return ErrMode
 	}
