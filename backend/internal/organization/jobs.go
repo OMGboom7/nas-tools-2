@@ -243,7 +243,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	if len(job.Items) != len(job.Definition.Entries) {
 		return job, ErrState
 	}
-	if job.State == "cancelled" {
+	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" {
 		return job, nil
 	}
 	job.State = "completed"
@@ -304,7 +304,7 @@ func (s *Store) Prepare(ctx context.Context, id string, index int, p Proof) erro
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='prepared',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='running'`, string(raw), id, index)
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='prepared',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='running' AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active')`, string(raw), id, index, id)
 	if err != nil {
 		return err
 	}
@@ -379,6 +379,13 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	}
 	defer tx.Rollback()
 	var state, rawProof string
+	var jobState string
+	if err = tx.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_JOBS WHERE ID=?`, job.ID).Scan(&jobState); err != nil {
+		return err
+	}
+	if jobState != "active" {
+		return ErrState
+	}
 	if err = tx.QueryRowContext(ctx, `SELECT STATE,PROOF FROM GO_ORGANIZATION_ITEMS WHERE JOB_ID=? AND ORDINAL=?`, job.ID, item.Index).Scan(&state, &rawProof); err != nil {
 		return err
 	}

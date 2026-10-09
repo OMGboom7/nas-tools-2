@@ -5,7 +5,31 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+
+test("abandonment has independent explicit consents and never authorizes source removal", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, "/api/v1/organization/jobs/job%2Fid/abandon-unpublished");
+    assert.equal(options.headers.Authorization, "token");
+    assert.deepEqual(JSON.parse(options.body), { confirm: true, confirmDiscardStaging: calls === 2, confirmOldExecutorsStopped: calls === 2 });
+    return new Response(JSON.stringify({ code: 0, success: true, data: { id: "job/id", state: "abandoned" } }));
+  });
+  await abandonOrganizationJob("token", "job/id");
+  await abandonOrganizationJob("token", "job/id", true, true);
+  assert.equal(calls, 2);
+});
+
+test("abandonment receipt failure is never automatically retried", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return new Response(JSON.stringify({ code: 503, success: false, message: "receipt unavailable" }), { status: 503 });
+  });
+  await assert.rejects(abandonOrganizationJob("token", "job", true, true));
+  assert.equal(calls, 1);
+});
 
 test("organization preview uses selected configured roots and has no execution retry", async (t) => {
   const input = { sourceId: "source", targetId: "target", path: "Movies", mode: "move" };

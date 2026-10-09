@@ -28,3 +28,7 @@ func VerifyQuarantined(context.Context, Definition, Entry, Proof) error         
 func CleanupMovedSource(context.Context, Definition, Entry, Proof) error            { return ErrMode }
 func CleanupMoveTarget(context.Context, Definition, Entry, Proof) error             { return ErrMode }
 func PublishPrepared(context.Context, Definition, Entry, Proof, func() error) error { return ErrMode }
+func inspectUnpublished(context.Context, Definition, Entry, Proof, bool, func() error) error {
+	return ErrMode
+}
+func inspectDiscarded(context.Context, Definition, Entry, Proof) error { return ErrMode }

@@ -145,21 +145,27 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
 	// Execution requires an explicit confirmation of stable, completed source
 	// files. This is a manual action, not proof from the downloader API.
 	var input struct {
-		Confirm              bool `json:"confirm"`
-		ConfirmSourceRemoval bool `json:"confirmSourceRemoval"`
+		Confirm                    bool `json:"confirm"`
+		ConfirmSourceRemoval       bool `json:"confirmSourceRemoval"`
+		ConfirmDiscardStaging      bool `json:"confirmDiscardStaging"`
+		ConfirmOldExecutorsStopped bool `json:"confirmOldExecutorsStopped"`
 	}
 	if !decodeServiceRequest(w, r, &input, "invalid organization confirmation") {
 		return
 	}
 	if !input.Confirm {
 		writeAPIError(w, 400, 400, "explicit confirmation is required")
+		return
+	}
+	if action == "abandon-unpublished" && (!input.ConfirmDiscardStaging || !input.ConfirmOldExecutorsStopped) {
+		writeAPIError(w, 400, 400, "separate staging-disposal consent and confirmation that old executors are stopped are required")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
@@ -195,7 +201,11 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	} else {
 		err = api.validateJob(ctx, job)
 		if err == nil {
-			if action == "resume-move" {
+			if action == "abandon-unpublished" {
+				err = api.jobs.AbandonUnpublished(ctx, job, func() error { return api.validateJob(ctx, job) })
+			} else if job.State == "abandoning" || job.State == "abandoned" {
+				err = organization.ErrState
+			} else if action == "resume-move" {
 				err = api.resumeMove(ctx, job)
 			} else if action == "resume-publication" {
 				err = api.resumePublication(ctx, job)

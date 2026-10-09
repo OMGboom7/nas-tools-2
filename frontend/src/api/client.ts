@@ -703,6 +703,12 @@ export async function controlOrganizationJob(token: string, id: string, action: 
   return result.data;
 }
 
+export async function abandonOrganizationJob(token: string, id: string, confirmDiscardStaging = false, confirmOldExecutorsStopped = false): Promise<OrganizationJob> {
+  const result = await readResponse<OrganizationJob>(await fetch(`/api/v1/organization/jobs/${encodeURIComponent(id)}/abandon-unpublished`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, confirmDiscardStaging, confirmOldExecutorsStopped }) }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "暂存处置未确认完成，请刷新查看保存状态", result.code);
+  return result.data;
+}
+
 export type SubscriptionSearchRunResult = {
   submitted: number;
   remaining: number[];

@@ -1,15 +1,19 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots } from "../api/client";
+import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 
 type Props = { session: AuthSession; currentPath: string; onNavigate: (path: string) => void; onLogout: () => Promise<void>; onSessionExpired: () => void };
 const statusLabels: Record<string, string> = { available: "可规划", conflict: "目标冲突", blocked: "已阻止", unmatched: "附件未匹配", unrecognized: "媒体未识别" };
 const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "转移凭证已保存，待核实", moving: "源移除意图已保存，需核验恢复对象", quarantined: "源文件已转入恢复目录，待提交" };
 const modeLabels: Record<string,string> = {copy:"复制",link:"硬链接",softlink:"软链接",move:"移动"};
+jobLabels.abandoning = "放弃意图已保存，暂存清理待核实";
+jobLabels.discarding = "暂存清理待回执";
+jobLabels.abandoned = "已明确放弃，未记录整理成功";
 const jobReasonLabels: Record<string, string> = {
   "Move source recovery cleanup pending; explicit source-removal confirmation required": "历史已提交，源恢复备份清理尚未确认完成；请检查后明确授权续办。",
   "Move target recovery cleanup pending": "源恢复备份已清理，目标暂存清理尚未确认完成；请核验续办。",
   "Execution interrupted or failed; verify the saved proof before any retry": "操作已中断或失败；必须核验保存凭证，不能盲目重试。",
+  "Explicit unpublished staging disposal requested; no successful transfer recorded": "管理员已明确放弃未发布暂存；不是整理成功记录。",
 };
 
 export function OrganizationPage({ session, currentPath, onNavigate, onLogout, onSessionExpired }: Props) {
@@ -26,8 +30,11 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [jobId, setJobId] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [sourceRemoval, setSourceRemoval] = useState(false);
+  const [discardStaging, setDiscardStaging] = useState(false);
+  const [oldExecutorsStopped, setOldExecutorsStopped] = useState(false);
   const job = jobs.find((item) => item.id === jobId);
   useEffect(() => { setConfirmed(false); setSourceRemoval(false); }, [jobId, session.token]);
+  useEffect(() => { setDiscardStaging(false); setOldExecutorsStopped(false); }, [jobId, session.token]);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -55,7 +62,8 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     } finally { setBusy(false); }
   }
   function invalidate() { setPlan(null); setError(""); }
-  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication") {
+  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication" | "abandon-unpublished") {
+    if (operation === "abandon-unpublished" && (!discardStaging || !oldExecutorsStopped || !job?.sourceRoot || !job.targetRoot)) return;
     if (operation === "resume-publication" && (!confirmed || !job?.sourceRoot || !job.targetRoot)) return;
     if ((operation === "execute" || operation === "resume-move" || operation === "resume-publication") && job?.mode === "move" && (!confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot)) return;
     setBusy(true); setError("");
@@ -63,6 +71,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       if (operation === "refresh") { setJobs(await getOrganizationJobs(session.token)); return; }
       const saved = operation === "create"
         ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, fingerprint: plan!.fingerprint })
+        : operation === "abandon-unpublished" ? await abandonOrganizationJob(session.token, jobId, discardStaging, oldExecutorsStopped)
         : await controlOrganizationJob(session.token, jobId, operation, job?.mode === "move" && (operation === "execute" || operation === "resume-move" || operation === "resume-publication") && sourceRemoval);
       setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
       setJobId(saved.id); setPlan(null);
@@ -74,7 +83,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         // but never automatically retry a mutation or reconciliation.
         try { setJobs(await getOrganizationJobs(session.token)); } catch { /* retain the original error */ }
       }
-    } finally { setConfirmed(false); setSourceRemoval(false); setBusy(false); }
+    } finally { setConfirmed(false); setSourceRemoval(false); setDiscardStaging(false); setOldExecutorsStopped(false); setBusy(false); }
   }
   return <WorkspaceLayout user={session.user} currentPath={currentPath} section="媒体整理" page="整理预览" onNavigate={onNavigate} onLogout={onLogout}>
     <section className="organization-preview">
@@ -105,6 +114,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
           {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意按{modeLabels[job.mode] || job.mode}方式整理以上待执行文件。</label><button type="button" disabled={busy || !confirmed || (job.mode === "move" && (!sourceRemoval || !job.sourceRoot || !job.targetRoot))} onClick={() => void jobOperation("execute")}>确认执行{modeLabels[job.mode] || job.mode}</button></>}
           {job.state === "needs_review" && (job.mode === "move" ? <><p>普通核对不会继续移动。只有保存凭证能证明原文件身份时才可继续；未知状态仍保留，未开始的文件不会由恢复操作执行。</p><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已检查上述任务路径和恢复记录，同意继续核验移动及清理。</label><button type="button" disabled={busy || !confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot} onClick={() => void jobOperation("resume-move")}>确认继续移动及恢复清理</button></> : <button type="button" disabled={busy} onClick={() => void jobOperation("reconcile")}>核对已发布文件，不重试转移</button>)}
           {job.state === "needs_review" && job.items.some((item) => item.state === "prepared") && <><p>“继续发布”只使用账本中已完整准备的原暂存对象，重新核验源、暂存和目标，不重新复制、不覆盖现有目标；证据不足时仍保留待核对。移动会在发布核验后按上述授权继续源移除。</p>{job.mode !== "move" && <label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已检查上述任务保存的路径，确认源文件已完成，同意继续发布完整暂存对象并提交整理记录。</label>}<button type="button" disabled={busy || !confirmed || !job.sourceRoot || !job.targetRoot || (job.mode === "move" && !sourceRemoval)} onClick={() => void jobOperation("resume-publication")}>确认继续发布已完整暂存文件{job.mode === "move" ? "并完成移动" : ""}</button></>}
+          {(job.state === "abandoning" || (job.state === "needs_review" && job.items.some((item) => item.state === "prepared") && job.items.every((item) => item.state === "planned" || item.state === "prepared"))) && <section aria-label="放弃未发布暂存"><p>这是停止整个任务的独立操作，不是继续发布或移动。只清理账本能够证明归属的未发布暂存；必须重新证明原源文件完整且目标不存在。已发布、已移动、执行中及未知半成品不会清理。所有清理回执保存后才释放目标预留，不写入整理成功历史。</p><label className="organization-confirm"><input type="checkbox" checked={oldExecutorsStopped} disabled={busy} onChange={(event) => setOldExecutorsStopped(event.target.checked)} />我已实际停止旧 Python、未升级的 Go 整理执行器及其他会操作这些路径的任务；勾选此项不会替我停止服务。</label><label className="organization-confirm"><input type="checkbox" checked={discardStaging} disabled={busy || !job.sourceRoot || !job.targetRoot} onChange={(event) => setDiscardStaging(event.target.checked)} />我同意放弃上述整个任务，并删除其已核验的未发布暂存；保留原源文件，不删除媒体库文件或未知对象。</label><button type="button" disabled={busy || !discardStaging || !oldExecutorsStopped || !job.sourceRoot || !job.targetRoot} onClick={() => void jobOperation("abandon-unpublished")}>{job.state === "abandoning" ? "确认续办暂存处置回执" : "确认放弃未发布暂存及整个任务"}</button></section>}
           {job.items.every((item) => item.state === "planned") && <button type="button" disabled={busy} onClick={() => void jobOperation("cancel")}>取消未执行任务</button>}
         </>}
       </section>}
