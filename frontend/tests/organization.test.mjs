@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
@@ -75,6 +75,29 @@ test("unknown detach failure does not retry or fall back to transfer", async (t)
   });
   await assert.rejects(detachOrganizationUnknown("token", "job", "f".repeat(64), "changed record", true));
   assert.equal(calls, 1);
+});
+
+test("history selection is readonly and its snapshot follows preview and creation", async (t) => {
+  let calls = 0;
+  const historyRecord = { id: 7, fingerprint: "a".repeat(64) };
+  const input = { sourceId: "s", targetId: "t", path: "Movie.mkv", mode: "copy", historyRecord };
+  const fingerprint = "b".repeat(64);
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.headers.Authorization, "token");
+    if (calls === 1) {
+      assert.equal(path, "/api/v1/organization/history?page=2&keyword=wrong+title");
+      assert.equal(options.method, undefined);
+      return new Response(JSON.stringify({ code: 0, success: true, data: { items: [{ ...historyRecord, title: "Wrong" }] } }));
+    }
+    assert.equal(path, calls === 2 ? "/api/v1/organization/plan" : "/api/v1/organization/jobs");
+    assert.deepEqual(JSON.parse(options.body), calls === 2 ? input : { ...input, fingerprint });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 2 ? { previewOnly: true, fingerprint } : { id: "new-job", historyRecordId: 7 } }));
+  });
+  await getOrganizationHistory("token", 2, "wrong title");
+  await previewOrganization("token", input);
+  await createOrganizationJob("token", { ...input, fingerprint });
+  assert.equal(calls, 3);
 });
 
 test("manual preview and creation carry the same assignments and never execute", async (t) => {

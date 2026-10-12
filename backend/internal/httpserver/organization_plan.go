@@ -36,6 +36,7 @@ type organizationRoots struct {
 	ExecutionModes []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
+	HistoryRecord *organizationHistorySelector  `json:"historyRecord,omitempty"`
 	UnknownRecord *organizationUnknownSelector  `json:"unknownRecord,omitempty"`
 	SourceID      string                        `json:"sourceId"`
 	TargetID      string                        `json:"targetId"`
@@ -265,6 +266,10 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if failure != nil {
 		return fail(failure.status, failure.message)
 	}
+	history, failure := api.bindHistory(ctx, input, roots)
+	if failure != nil {
+		return fail(failure.status, failure.message)
+	}
 	var source, target organizationRoot
 	for _, root := range roots.Sources {
 		if root.ID == input.SourceID {
@@ -332,6 +337,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.History = history
 	if result.definition.ConfigDigest == "" {
 		return fail(503, "organization configuration snapshot is unsupported")
 	}

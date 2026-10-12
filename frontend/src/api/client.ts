@@ -678,10 +678,18 @@ export type OrganizationRoots = { sources: OrganizationRoot[]; targets: Organiza
 export type OrganizationMediaAssignment = { source: string; identity: string; modified: string; size: number; kind: "movie" | "tv"; tmdbId: string; season?: number; episode?: number; endEpisode?: number };
 export type OrganizationUnknownItem = { id: number; path: string; dest: string; mode: string; state: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; jobId?: string; reason?: string };
 export type OrganizationUnknownData = { items: OrganizationUnknownItem[]; total: number; page: number; pageSize: number; totalPages: number };
+export type OrganizationHistoryItem = { id: number; mode: string; type: string; title: string; year: string; tmdbId: string; sourcePath: string; sourceFilename: string; dest: string; destPath: string; destFilename: string; date: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; reason?: string };
+export type OrganizationHistoryData = { items: OrganizationHistoryItem[]; total: number; page: number; totalPages: number };
 export type OrganizationUnknownReview = { jobId: string; state: string; original: { id: number; path: string; dest: string; mode: string; state: string }; current: { id: number; path: string; dest: string; mode: string; state: string } | null; fingerprint: string; eligible: boolean };
-export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[]; unknownRecord?: { id: number; fingerprint: string } };
+export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[]; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
 export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; assigned?: boolean }> };
-export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean }> };
+export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean }> };
+
+export async function getOrganizationHistory(token: string, page = 1, keyword = ""): Promise<OrganizationHistoryData> {
+  const result = await readResponse<OrganizationHistoryData>(await fetch(`/api/v1/organization/history?${new URLSearchParams({ page: String(page), keyword })}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理历史读取失败", result.code);
+  return result.data;
+}
 
 export async function reviewOrganizationUnknown(token: string, id: string): Promise<OrganizationUnknownReview> {
   const result = await readResponse<OrganizationUnknownReview>(await fetch(`/api/v1/organization/jobs/${encodeURIComponent(id)}/unknown-status`, { headers: { Authorization: token } }));

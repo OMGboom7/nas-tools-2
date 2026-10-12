@@ -52,6 +52,7 @@ type Entry struct {
 }
 
 type Definition struct {
+	History              *HistoryRecord `json:"history,omitempty"`
 	Unknown              *UnknownRecord `json:"unknown,omitempty"`
 	UnknownScope         string         `json:"unknownScope,omitempty"`
 	UnknownScopeIdentity string         `json:"unknownScopeIdentity,omitempty"`
@@ -91,6 +92,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	HistoryRecordID int64                 `json:"historyRecordId,omitempty"`
 	UnknownDetach   *UnknownDetachReceipt `json:"unknownDetach,omitempty"`
 	UnknownRecordID int64                 `json:"unknownRecordId,omitempty"`
 	UnknownState    string                `json:"unknownState,omitempty"`
@@ -214,6 +216,18 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 			return "", err
 		}
 	}
+	if d.History != nil {
+		if d.Unknown != nil {
+			return "", ErrState
+		}
+		current, err := readHistory(ctx, tx, d.History.ID)
+		if err != nil {
+			return "", err
+		}
+		if Digest(current) != Digest(*d.History) {
+			return "", ErrState
+		}
+	}
 	for index, entry := range d.Entries {
 		key := Digest(d.TargetIdentity + ":" + entry.Target)
 		result, err := tx.ExecContext(ctx, `INSERT INTO GO_ORGANIZATION_TARGETS VALUES (?,?) ON CONFLICT(TARGET_KEY) DO NOTHING`, key, id)
@@ -248,6 +262,9 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		return job, err
 	}
 	job.Mode = job.Definition.Mode
+	if job.Definition.History != nil {
+		job.HistoryRecordID = job.Definition.History.ID
+	}
 	job.SourceRoot, job.TargetRoot = job.Definition.SourceRoot, job.Definition.TargetRoot
 	rows, err := s.db.QueryContext(ctx, `SELECT ORDINAL,STATE,REASON,PROOF FROM GO_ORGANIZATION_ITEMS WHERE JOB_ID=? ORDER BY ORDINAL`, id)
 	if err != nil {
@@ -498,6 +515,15 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	}
 	if jobState != "active" {
 		return ErrState
+	}
+	if job.Definition.History != nil {
+		current, err := readHistory(ctx, tx, job.Definition.History.ID)
+		if err != nil {
+			return err
+		}
+		if Digest(current) != Digest(*job.Definition.History) {
+			return ErrState
+		}
 	}
 	if err = tx.QueryRowContext(ctx, `SELECT STATE,PROOF FROM GO_ORGANIZATION_ITEMS WHERE JOB_ID=? AND ORDINAL=?`, job.ID, item.Index).Scan(&state, &rawProof); err != nil {
 		return err

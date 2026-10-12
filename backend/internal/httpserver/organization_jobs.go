@@ -129,7 +129,10 @@ func (api organizationAPI) validateJob(ctx context.Context, job organization.Job
 	if err := api.validateJobConfiguration(ctx, job); err != nil {
 		return err
 	}
-	return api.jobs.VerifyUnknown(ctx, job)
+	if err := api.jobs.VerifyUnknown(ctx, job); err != nil {
+		return err
+	}
+	return api.jobs.VerifyHistory(ctx, job)
 }
 
 func (api organizationAPI) validateJobConfiguration(ctx context.Context, job organization.Job) error {
