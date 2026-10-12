@@ -164,17 +164,20 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" && action != "detach-unknown" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
 	// Execution requires an explicit confirmation of stable, completed source
 	// files. This is a manual action, not proof from the downloader API.
 	var input struct {
-		Confirm                    bool `json:"confirm"`
-		ConfirmSourceRemoval       bool `json:"confirmSourceRemoval"`
-		ConfirmDiscardStaging      bool `json:"confirmDiscardStaging"`
-		ConfirmOldExecutorsStopped bool `json:"confirmOldExecutorsStopped"`
+		Confirm                    bool   `json:"confirm"`
+		ConfirmSourceRemoval       bool   `json:"confirmSourceRemoval"`
+		ConfirmDiscardStaging      bool   `json:"confirmDiscardStaging"`
+		ConfirmOldExecutorsStopped bool   `json:"confirmOldExecutorsStopped"`
+		ConfirmDetachUnknown       bool   `json:"confirmDetachUnknown"`
+		ReviewFingerprint          string `json:"reviewFingerprint"`
+		Reason                     string `json:"reason"`
 	}
 	if !decodeOrganizationRequest(w, r, &input, "invalid organization confirmation") {
 		return
@@ -185,6 +188,10 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	}
 	if action == "abandon-unpublished" && (!input.ConfirmDiscardStaging || !input.ConfirmOldExecutorsStopped) {
 		writeAPIError(w, 400, 400, "separate staging-disposal consent and confirmation that old executors are stopped are required")
+		return
+	}
+	if action == "detach-unknown" && (!input.ConfirmDetachUnknown || len(input.ReviewFingerprint) != 64 || input.Reason == "" || len(input.Reason) > 512) {
+		writeAPIError(w, 400, 400, "explicit detach confirmation, reviewed snapshot and reason are required")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
@@ -219,6 +226,13 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		err = api.jobs.Cancel(ctx, job.ID)
 	} else if action == "reconcile-unknown" {
 		err = api.jobs.ResolveUnknown(ctx, job)
+	} else if action == "detach-unknown" {
+		claims, authErr := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
+		if authErr != nil {
+			writeAPIError(w, 401, 401, "authorization token is invalid or expired")
+			return
+		}
+		err = api.jobs.DetachUnknown(ctx, job, input.ReviewFingerprint, claims.Username, input.Reason)
 	} else if action == "abandon-unpublished" {
 		err = api.validateJobConfiguration(ctx, job)
 		if err == nil {
@@ -238,7 +252,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	if err == nil && action != "cancel" && action != "abandon-unpublished" {
+	if err == nil && action != "cancel" && action != "abandon-unpublished" && action != "detach-unknown" {
 		err = api.jobs.ResolveUnknown(ctx, job)
 	}
 	if err != nil {

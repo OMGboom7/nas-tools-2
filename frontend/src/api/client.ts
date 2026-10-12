@@ -678,9 +678,21 @@ export type OrganizationRoots = { sources: OrganizationRoot[]; targets: Organiza
 export type OrganizationMediaAssignment = { source: string; identity: string; modified: string; size: number; kind: "movie" | "tv"; tmdbId: string; season?: number; episode?: number; endEpisode?: number };
 export type OrganizationUnknownItem = { id: number; path: string; dest: string; mode: string; state: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; jobId?: string; reason?: string };
 export type OrganizationUnknownData = { items: OrganizationUnknownItem[]; total: number; page: number; pageSize: number; totalPages: number };
+export type OrganizationUnknownReview = { jobId: string; state: string; original: { id: number; path: string; dest: string; mode: string; state: string }; current: { id: number; path: string; dest: string; mode: string; state: string } | null; fingerprint: string; eligible: boolean };
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[]; unknownRecord?: { id: number; fingerprint: string } };
 export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; assigned?: boolean }> };
-export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; unknownRecordId?: number; unknownState?: string; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean }> };
+export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean }> };
+
+export async function reviewOrganizationUnknown(token: string, id: string): Promise<OrganizationUnknownReview> {
+  const result = await readResponse<OrganizationUnknownReview>(await fetch(`/api/v1/organization/jobs/${encodeURIComponent(id)}/unknown-status`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "关联快照核验失败", result.code);
+  return result.data;
+}
+export async function detachOrganizationUnknown(token: string, id: string, reviewFingerprint: string, reason: string, confirmed = false): Promise<OrganizationJob> {
+  const result = await readResponse<OrganizationJob>(await fetch(`/api/v1/organization/jobs/${encodeURIComponent(id)}/detach-unknown`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, confirmDetachUnknown: confirmed, reviewFingerprint, reason }) }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "解除关联回执未完成，请重新核对", result.code);
+  return result.data;
+}
 
 export async function getOrganizationUnknown(token: string, page = 1, keyword = ""): Promise<OrganizationUnknownData> {
   const result = await readResponse<OrganizationUnknownData>(await fetch(`/api/v1/organization/unknown?${new URLSearchParams({ page: String(page), keyword })}`, { headers: { Authorization: token } }));

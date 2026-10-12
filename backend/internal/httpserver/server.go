@@ -303,6 +303,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/organization/jobs", organizer.serveJobs)
 	mux.HandleFunc("POST /api/v1/organization/jobs", organizer.serveCreateJob)
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}", organizer.serveJob)
+	mux.HandleFunc("GET /api/v1/organization/jobs/{id}/unknown-status", organizer.serveUnknownReview)
 	mux.HandleFunc("POST /api/v1/organization/jobs/{id}/{action}", organizer.serveJobAction)
 	rssRunner := &rssRunAPI{pureGo: cfg.DisableLegacy, filters: nativeFilters,
 		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},

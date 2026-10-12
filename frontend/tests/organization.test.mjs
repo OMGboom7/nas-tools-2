@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationJob, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
@@ -43,6 +43,37 @@ test("unknown compatibility retry confirms only the saved receipt and never retr
     return new Response(JSON.stringify({ code: 503, success: false, message: "receipt pending" }), { status: 503 });
   });
   await assert.rejects(controlOrganizationJob("token", "job", "reconcile-unknown"));
+  assert.equal(calls, 1);
+});
+
+test("unknown detach requires a reviewed snapshot and independent confirmation without source removal", async (t) => {
+  let calls = 0;
+  const fingerprint = "e".repeat(64);
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.headers.Authorization, "token");
+    if (calls === 1) {
+      assert.equal(path, "/api/v1/organization/jobs/job%2Fid/unknown-status");
+      assert.equal(options.method, undefined);
+      return new Response(JSON.stringify({ code: 0, success: true, data: { fingerprint, eligible: true } }));
+    }
+    assert.equal(path, "/api/v1/organization/jobs/job%2Fid/detach-unknown");
+    assert.deepEqual(JSON.parse(options.body), { confirm: true, confirmDetachUnknown: calls === 3, reviewFingerprint: fingerprint, reason: "changed record" });
+    return new Response(JSON.stringify({ code: 0, success: true, data: { id: "job/id", unknownState: "detached" } }));
+  });
+  const review = await reviewOrganizationUnknown("token", "job/id");
+  await detachOrganizationUnknown("token", "job/id", review.fingerprint, "changed record");
+  await detachOrganizationUnknown("token", "job/id", review.fingerprint, "changed record", true);
+  assert.equal(calls, 3);
+});
+
+test("unknown detach failure does not retry or fall back to transfer", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return new Response(JSON.stringify({ code: 503, success: false, message: "audit pending" }), { status: 503 });
+  });
+  await assert.rejects(detachOrganizationUnknown("token", "job", "f".repeat(64), "changed record", true));
   assert.equal(calls, 1);
 });
 

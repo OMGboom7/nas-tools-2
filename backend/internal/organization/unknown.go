@@ -43,6 +43,9 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 	if currentJob.UnknownState == "resolved" {
 		return nil
 	}
+	if currentJob.UnknownState == "detached" {
+		return nil
+	}
 	for _, item := range currentJob.Items {
 		if item.State != "completed" || item.Reason != "" {
 			return nil

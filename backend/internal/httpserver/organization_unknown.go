@@ -18,6 +18,21 @@ type organizationUnknownSelector struct {
 	ID          int64  `json:"id"`
 	Fingerprint string `json:"fingerprint"`
 }
+
+func (api organizationAPI) serveUnknownReview(w http.ResponseWriter, r *http.Request) {
+	if !api.jobsAuthorized(w, r) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	review, err := api.jobs.ReviewUnknown(ctx, r.PathValue("id"))
+	if err != nil {
+		writeOrganizationError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": review})
+}
+
 type organizationUnknownItem struct {
 	organization.UnknownRecord
 	Fingerprint string `json:"fingerprint"`

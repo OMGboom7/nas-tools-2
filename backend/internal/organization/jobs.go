@@ -91,17 +91,18 @@ type JobItem struct {
 }
 
 type Job struct {
-	UnknownRecordID int64      `json:"unknownRecordId,omitempty"`
-	UnknownState    string     `json:"unknownState,omitempty"`
-	ID              string     `json:"id"`
-	Fingerprint     string     `json:"fingerprint"`
-	Created         string     `json:"created"`
-	State           string     `json:"state"`
-	Mode            string     `json:"mode"`
-	SourceRoot      string     `json:"sourceRoot"`
-	TargetRoot      string     `json:"targetRoot"`
-	Items           []JobItem  `json:"items"`
-	Definition      Definition `json:"-"`
+	UnknownDetach   *UnknownDetachReceipt `json:"unknownDetach,omitempty"`
+	UnknownRecordID int64                 `json:"unknownRecordId,omitempty"`
+	UnknownState    string                `json:"unknownState,omitempty"`
+	ID              string                `json:"id"`
+	Fingerprint     string                `json:"fingerprint"`
+	Created         string                `json:"created"`
+	State           string                `json:"state"`
+	Mode            string                `json:"mode"`
+	SourceRoot      string                `json:"sourceRoot"`
+	TargetRoot      string                `json:"targetRoot"`
+	Items           []JobItem             `json:"items"`
+	Definition      Definition            `json:"-"`
 }
 
 type Store struct {
@@ -133,6 +134,7 @@ func OpenStore(path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_TARGETS (TARGET_KEY TEXT PRIMARY KEY, JOB_ID TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_LINKS (JOB_ID TEXT PRIMARY KEY, RECORD_ID INTEGER NOT NULL, STATE TEXT NOT NULL)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_PENDING ON GO_ORGANIZATION_UNKNOWN_LINKS(RECORD_ID) WHERE STATE='pending'`,
+		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_DETACH (JOB_ID TEXT PRIMARY KEY, RECEIPT TEXT NOT NULL)`,
 	} {
 		if _, err = db.Exec(statement); err != nil {
 			db.Close()
@@ -278,6 +280,16 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		job.UnknownRecordID = job.Definition.Unknown.ID
 		if err = s.db.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, job.ID, job.UnknownRecordID).Scan(&job.UnknownState); err != nil {
 			return job, err
+		}
+		if job.UnknownState == "detached" {
+			var raw string
+			if err = s.db.QueryRowContext(ctx, `SELECT RECEIPT FROM GO_ORGANIZATION_UNKNOWN_DETACH WHERE JOB_ID=?`, job.ID).Scan(&raw); err != nil {
+				return job, err
+			}
+			job.UnknownDetach = &UnknownDetachReceipt{}
+			if err = json.Unmarshal([]byte(raw), job.UnknownDetach); err != nil {
+				return job, err
+			}
 		}
 	}
 	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationJob, getOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment, type OrganizationUnknownItem, type OrganizationUnknownData } from "../api/client";
+import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationJob, getOrganizationUnknown, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment, type OrganizationUnknownItem, type OrganizationUnknownData, type OrganizationUnknownReview } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { canAbandonOrganizationJob, buildOrganizationAssignment } from "./organizationState";
 
@@ -29,6 +29,9 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [unknown, setUnknown] = useState<OrganizationUnknownData>({ items: [], total: 0, page: 1, pageSize: 30, totalPages: 1 });
   const [unknownKeyword, setUnknownKeyword] = useState("");
   const [selectedUnknown, setSelectedUnknown] = useState<OrganizationUnknownItem | null>(null);
+  const [detachReview, setDetachReview] = useState<OrganizationUnknownReview | null>(null);
+  const [detachReason, setDetachReason] = useState("");
+  const [detachConfirmed, setDetachConfirmed] = useState(false);
   const [manualSource, setManualSource] = useState("");
   const [manualKind, setManualKind] = useState<"movie" | "tv">("movie");
   const [manualId, setManualId] = useState("");
@@ -37,6 +40,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [manualEndEpisode, setManualEndEpisode] = useState("");
   const previewGeneration = useRef(0);
   const unknownGeneration = useRef(0);
+  const detachGeneration = useRef(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -48,6 +52,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [oldExecutorsStopped, setOldExecutorsStopped] = useState(false);
   const job = jobs.find((item) => item.id === jobId);
   useEffect(() => { setConfirmed(false); setSourceRemoval(false); }, [jobId, session.token]);
+  useEffect(() => { detachGeneration.current++; setDetachReview(null); setDetachReason(""); setDetachConfirmed(false); }, [jobId, session.token]);
   useEffect(() => { setDiscardStaging(false); setOldExecutorsStopped(false); }, [jobId, session.token]);
   useEffect(() => { previewGeneration.current++; unknownGeneration.current++; setUnknown({ items: [], total: 0, page: 1, pageSize: 30, totalPages: 1 }); setAssignments([]); setSelectedUnknown(null); setPlan(null); setManualSource(""); setManualId(""); setBusy(false); }, [session.token]);
   useEffect(() => {
@@ -111,6 +116,28 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       setAssignments(updated); await generatePreview(updated);
     } catch (err) { setError(err instanceof Error ? err.message : "人工身份选择无效"); }
   }
+  async function unknownDetachOperation(apply: boolean) {
+    if (apply && (!detachConfirmed || !detachReview?.eligible || !detachReason.trim() || detachReview.jobId !== jobId)) return;
+    const generation = ++detachGeneration.current;
+    setBusy(true); setError(""); setDetachConfirmed(false);
+    try {
+      if (!apply) {
+        const review = await reviewOrganizationUnknown(session.token, jobId);
+        if (generation === detachGeneration.current) setDetachReview(review);
+      } else {
+        const saved = await detachOrganizationUnknown(session.token, jobId, detachReview!.fingerprint, detachReason.trim(), true);
+        if (generation !== detachGeneration.current) return;
+        setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]); setDetachReview(null); setDetachReason("");
+        const records = await getOrganizationUnknown(session.token, unknown.page, unknownKeyword);
+        if (generation === detachGeneration.current) setUnknown(records);
+      }
+    } catch (err) {
+      if (generation !== detachGeneration.current) return;
+      setDetachReview(null);
+      if (err instanceof ApiError && err.code === 401) onSessionExpired();
+      else { setError(err instanceof Error ? err.message : "关联处置失败"); try { const saved = await getOrganizationJobs(session.token); if (generation === detachGeneration.current) setJobs(saved); } catch { /* never retry a mutation */ } }
+    } finally { if (generation === detachGeneration.current) setBusy(false); }
+  }
   async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication" | "abandon-unpublished" | "reconcile-unknown") {
     if (operation === "reconcile-unknown" && !confirmed) return;
     if (operation === "abandon-unpublished" && (!discardStaging || !oldExecutorsStopped || !job?.sourceRoot || !job.targetRoot)) return;
@@ -164,7 +191,9 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); setSourceRemoval(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
         {job && <><p>转移方式：{modeLabels[job.mode] || job.mode}。{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新转移。</p>
           <p>任务保存的来源：<code>{job.sourceRoot || "未提供，请刷新后确认"}</code><br />任务保存的目标：<code>{job.targetRoot || "未提供，请刷新后确认"}</code></p>
-          {job.unknownRecordId && <p>关联旧记录 #{job.unknownRecordId}：{job.unknownState === "resolved" ? "已根据完整成功回执更新为已处理" : job.unknownState === "cancelled" ? "已取消关联，旧记录仍保留" : "仍待处理；全部项目与清理回执完成后才更新"}。</p>}
+          {job.unknownRecordId && <p>关联旧记录 #{job.unknownRecordId}：{job.unknownState === "resolved" ? "已根据完整成功回执更新为已处理" : job.unknownState === "cancelled" ? "已取消关联，旧记录仍保留" : job.unknownState === "detached" ? "管理员已明确解除关联，未标记旧记录成功" : "仍待处理；全部项目与清理回执完成后才更新"}。</p>}
+          {job.unknownDetach && <p>解除关联回执：{job.unknownDetach.actor} · {job.unknownDetach.created} · {job.unknownDetach.reason}。不代表旧记录已处理。</p>}
+          {job.unknownState === "pending" && job.items.every((item) => item.state === "completed" && !item.reason) && <section aria-label="明确解除旧记录关联"><p>记录变更、删除或新文件到来导致兼容回执不能完成时，可在所有原项目已成功且清理完成后另行解除关联。此动作不改变旧行、不标识已处理、不动文件或历史，也不释放媒体目标预留。</p><button type="button" disabled={busy} onClick={() => void unknownDetachOperation(false)}>读取原始及当前记录快照</button>{detachReview && <><p>原记录：{detachReview.original.path} → {detachReview.original.dest || "未指定"} · {detachReview.original.mode} · {detachReview.original.state}<br />当前记录：{detachReview.current ? `${detachReview.current.path} → ${detachReview.current.dest || "未指定"} · ${detachReview.current.mode} · ${detachReview.current.state}` : "此 ID 的记录已不存在"}</p><label>处置原因<input value={detachReason} disabled={busy} maxLength={128} onChange={(event) => { setDetachReason(event.target.value); setDetachConfirmed(false); }} /></label><label className="organization-confirm"><input type="checkbox" checked={detachConfirmed} disabled={busy || !detachReview.eligible || !detachReason.trim()} onChange={(event) => setDetachConfirmed(event.target.checked)} />我已核对这份快照和原任务完整成功回执，同意仅解除记录关联；旧记录保持原状并留待单独处理。</label><button type="button" disabled={busy || !detachConfirmed || !detachReview.eligible || !detachReason.trim()} onClick={() => void unknownDetachOperation(true)}>确认仅解除关联并保存审核回执</button></>}</section>}
           {job.unknownState === "pending" && job.items.every((item) => item.state === "completed" && !item.reason) && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我同意仅核验完整成功账本并补交原未识别记录状态，不重新操作文件。</label><button type="button" disabled={busy || !confirmed} onClick={() => void jobOperation("reconcile-unknown")}>确认核对未识别记录回执</button></>}
           <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>任务状态</th></tr></thead><tbody>{job.items.map((item) => <tr key={item.index}><td>{item.source}</td><td>{item.target}<small>TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small></td><td>{jobLabels[item.state] || item.state}{item.reason && <small>{jobReasonLabels[item.reason] || item.reason}</small>}</td></tr>)}</tbody></table></div>
           {job.mode === "move" && (job.state === "ready" || job.state === "needs_review") && <label className="organization-confirm"><input type="checkbox" checked={sourceRemoval} disabled={busy || !job.sourceRoot || !job.targetRoot} onChange={(event) => setSourceRemoval(event.target.checked)} />我同意从上述任务保存的来源路径移除原源文件名，并在目标核验及历史提交后清理本任务的源恢复备份；不删除新到的同名文件、其他文件或源目录。</label>}
