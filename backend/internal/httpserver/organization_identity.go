@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
@@ -30,15 +31,17 @@ func decodeOrganizationRequest(w http.ResponseWriter, r *http.Request, target an
 // Selection is bound to a specific file snapshot from the readonly preview,
 // never applied recursively to a folder or guessed onto another file.
 type organizationMediaAssignment struct {
-	Source     string `json:"source"`
-	Identity   string `json:"identity"`
-	Modified   string `json:"modified"`
-	Size       int64  `json:"size"`
-	Kind       string `json:"kind"`
-	TMDBID     string `json:"tmdbId"`
-	Season     *int   `json:"season,omitempty"`
-	Episode    *int   `json:"episode,omitempty"`
-	EndEpisode *int   `json:"endEpisode,omitempty"`
+	Source        string `json:"source"`
+	Identity      string `json:"identity"`
+	Modified      string `json:"modified"`
+	Size          int64  `json:"size"`
+	Kind          string `json:"kind"`
+	TMDBID        string `json:"tmdbId"`
+	Season        *int   `json:"season,omitempty"`
+	Episode       *int   `json:"episode,omitempty"`
+	EndEpisode    *int   `json:"endEpisode,omitempty"`
+	EpisodeFormat string `json:"episodeFormat,omitempty"`
+	EpisodeOffset int    `json:"episodeOffset,omitempty"`
 }
 
 func organizationAssignments(input []organizationMediaAssignment, files []organization.File) (map[string]organizationMediaAssignment, *recognitionFailure) {
@@ -55,15 +58,12 @@ func organizationAssignments(input []organizationMediaAssignment, files []organi
 			return nil, &recognitionFailure{422, "duplicate manual media selection"}
 		}
 		if selection.Kind == "movie" {
-			if selection.Season != nil || selection.Episode != nil || selection.EndEpisode != nil {
+			if selection.Season != nil || selection.Episode != nil || selection.EndEpisode != nil || selection.EpisodeFormat != "" || selection.EpisodeOffset != 0 {
 				return nil, &recognitionFailure{422, "movie identity must not include season or episode selection"}
 			}
 		} else {
-			if selection.Season == nil || selection.Episode == nil || *selection.Season < 0 || *selection.Season > 99 || *selection.Episode < 1 || *selection.Episode > 9999 {
+			if selection.Season == nil || *selection.Season < 0 || *selection.Season > 99 {
 				return nil, &recognitionFailure{422, "TV identity requires an explicit valid season and episode"}
-			}
-			if selection.EndEpisode != nil && (*selection.EndEpisode < *selection.Episode || *selection.EndEpisode > 9999) {
-				return nil, &recognitionFailure{422, "invalid TV episode range"}
 			}
 		}
 		found := false
@@ -82,6 +82,26 @@ func organizationAssignments(input []organizationMediaAssignment, files []organi
 		}
 		if !found {
 			return nil, &recognitionFailure{422, "manual selection is outside the scanned media set"}
+		}
+		if selection.Kind == "tv" {
+			var start int
+			var end *int
+			var err error
+			if selection.EpisodeFormat != "" {
+				if selection.Episode != nil || selection.EndEpisode != nil {
+					return nil, &recognitionFailure{422, "choose explicit episodes or a filename template, not both"}
+				}
+				start, end, err = mediameta.FormattedEpisodes(filepath.Base(selection.Source), selection.EpisodeFormat, selection.EpisodeOffset)
+			} else {
+				if selection.Episode == nil {
+					return nil, &recognitionFailure{422, "TV identity requires an explicit episode or filename template"}
+				}
+				start, end, err = mediameta.OffsetEpisodes(*selection.Episode, selection.EndEpisode, selection.EpisodeOffset)
+			}
+			if err != nil {
+				return nil, &recognitionFailure{422, err.Error()}
+			}
+			selection.Episode, selection.EndEpisode = &start, end
 		}
 		result[selection.Source] = selection
 	}

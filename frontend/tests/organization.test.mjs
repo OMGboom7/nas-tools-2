@@ -24,6 +24,38 @@ test("release parts survive readonly preview and persisted job loading", async (
   assert.equal(calls, 2);
 });
 
+test("filename episode rules and offsets stay explicit and do not override server bounds", () => {
+  const file = { source: "Show.11.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };
+  const selection = buildOrganizationAssignment(file, "tv", "200", "1", "", "", "Show.{ep}.mkv", "-10");
+  assert.equal(selection.episodeFormat, "Show.{ep}.mkv");
+  assert.equal(selection.episodeOffset, -10);
+  assert.equal(selection.episode, undefined);
+  assert.equal(selection.endEpisode, undefined);
+  assert.equal(buildOrganizationAssignment(file, "tv", "200", "1", "11", "13", "", "-10").episode, 11);
+  for (const offset of ["1.5", "100000", "EP-10", "NaN"]) assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "1", "", "", "Show.{ep}.mkv", offset));
+  assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "1", "", "", "Show.{a}.mkv", "0"));
+  const movie = buildOrganizationAssignment(file, "movie", "300", "", "", "", "Show.{ep}.mkv", "-10");
+  assert.equal(movie.episodeFormat, undefined);
+  assert.equal(movie.episodeOffset, undefined);
+});
+
+test("episode rules follow the same reviewed preview and creation without execution", async (t) => {
+  const selection = buildOrganizationAssignment({ source: "Show.11.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" }, "tv", "200", "1", "", "", "Show.{ep}.mkv", "-10");
+  const input = { sourceId: "s", targetId: "t", path: "Show.11.mkv", mode: "copy", assignments: [selection] };
+  const fingerprint = "b".repeat(64);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, calls === 1 ? "/api/v1/organization/plan" : "/api/v1/organization/jobs");
+    assert.deepEqual(JSON.parse(options.body), calls === 1 ? input : { ...input, fingerprint });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { previewOnly: true, fingerprint } : { id: "saved", items: [{ episodeFormat: selection.episodeFormat, episodeOffset: -10 }] } }));
+  });
+  await previewOrganization("token", input);
+  const saved = await createOrganizationJob("token", { ...input, fingerprint });
+  assert.equal(saved.items[0].episodeOffset, -10);
+  assert.equal(calls, 2);
+});
+
 test("manual identity preserves the exact source snapshot and requires explicit TV season/episode", () => {
   const file = { source: "unknown.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };
   assert.deepEqual(buildOrganizationAssignment(file, "movie", "300", "", "", ""), { source: file.source, identity: file.identity, size: file.size, modified: file.modified, kind: "movie", tmdbId: "300" });

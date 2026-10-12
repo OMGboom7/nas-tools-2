@@ -45,6 +45,8 @@ type organizationPlanInput struct {
 	Assignments   []organizationMediaAssignment `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
+	EpisodeFormat string `json:"episodeFormat,omitempty"`
+	EpisodeOffset int    `json:"episodeOffset,omitempty"`
 	Part          string `json:"part,omitempty"`
 	Assigned      bool   `json:"assigned,omitempty"`
 	Source        string `json:"source"`
@@ -392,6 +394,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		var failure *recognitionFailure
 		if assignment, exists := assignments[file.Path]; exists {
 			item.Assigned = true
+			item.EpisodeFormat, item.EpisodeOffset = assignment.EpisodeFormat, assignment.EpisodeOffset
 			recognition, failure = api.recognition.recognizeAssigned(ctx, filepath.Base(file.Path), assignment)
 		} else {
 			recognition, failure = api.recognition.recognize(ctx, filepath.Base(file.Path), "")
@@ -481,6 +484,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		item.TMDBID = video.TMDBID
 		item.Part = video.Part
 		item.Assigned = video.Assigned
+		item.EpisodeFormat, item.EpisodeOffset = video.EpisodeFormat, video.EpisodeOffset
 		item.Title, item.Year, item.MediaType, item.Category, item.SeasonEpisode = video.Title, video.Year, video.MediaType, video.Category, video.SeasonEpisode
 		item.Status, err = organization.TargetStatus(ctx, target.Path, item.Target)
 		if err != nil {
@@ -520,7 +524,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 }
 
 func (item organizationPlanItem) entry() organization.Entry {
-	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part}
+	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part, EpisodeFormat: item.EpisodeFormat, EpisodeOffset: item.EpisodeOffset}
 }
 
 func markOrganizationConflicts(items []organizationPlanItem) {
