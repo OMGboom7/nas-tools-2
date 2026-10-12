@@ -38,3 +38,4 @@ func inspectUnpublished(context.Context, Definition, Entry, Proof, bool, func() 
 	return ErrMode
 }
 func inspectDiscarded(context.Context, Definition, Entry, Proof) error { return ErrMode }
+func verifyUnknownScope(context.Context, Job) error                    { return ErrMode }

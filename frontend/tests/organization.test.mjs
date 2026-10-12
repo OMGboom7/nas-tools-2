@@ -5,7 +5,7 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationJob, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
@@ -17,6 +17,33 @@ test("manual identity preserves the exact source snapshot and requires explicit 
   assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "", "1", ""));
   assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "1", "3", "2"));
   assert.throws(() => buildOrganizationAssignment({ ...file, kind: "subtitle" }, "movie", "300", "", "", ""));
+});
+
+test("unknown listing and linked job loading are authenticated and readonly", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.method, undefined);
+    assert.equal(options.headers.Authorization, "token");
+    assert.equal(path, calls === 1 ? "/api/v1/organization/unknown?page=2&keyword=movie+name" : "/api/v1/organization/jobs/old%2Fjob");
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { items: [], total: 0, page: 2 } : { id: "old/job", unknownRecordId: 7, unknownState: "pending" } }));
+  });
+  await getOrganizationUnknown("token", 2, "movie name");
+  const job = await getOrganizationJob("token", "old/job");
+  assert.equal(job.unknownState, "pending");
+  assert.equal(calls, 2);
+});
+
+test("unknown compatibility retry confirms only the saved receipt and never retries files", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, "/api/v1/organization/jobs/job/reconcile-unknown");
+    assert.deepEqual(JSON.parse(options.body), { confirm: true });
+    return new Response(JSON.stringify({ code: 503, success: false, message: "receipt pending" }), { status: 503 });
+  });
+  await assert.rejects(controlOrganizationJob("token", "job", "reconcile-unknown"));
+  assert.equal(calls, 1);
 });
 
 test("manual preview and creation carry the same assignments and never execute", async (t) => {

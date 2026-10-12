@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment } from "../api/client";
+import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationJob, getOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment, type OrganizationUnknownItem, type OrganizationUnknownData } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { canAbandonOrganizationJob, buildOrganizationAssignment } from "./organizationState";
 
@@ -26,6 +26,9 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [mode, setMode] = useState("copy");
   const [plan, setPlan] = useState<OrganizationPlan | null>(null);
   const [assignments, setAssignments] = useState<OrganizationMediaAssignment[]>([]);
+  const [unknown, setUnknown] = useState<OrganizationUnknownData>({ items: [], total: 0, page: 1, pageSize: 30, totalPages: 1 });
+  const [unknownKeyword, setUnknownKeyword] = useState("");
+  const [selectedUnknown, setSelectedUnknown] = useState<OrganizationUnknownItem | null>(null);
   const [manualSource, setManualSource] = useState("");
   const [manualKind, setManualKind] = useState<"movie" | "tv">("movie");
   const [manualId, setManualId] = useState("");
@@ -33,6 +36,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [manualEpisode, setManualEpisode] = useState("");
   const [manualEndEpisode, setManualEndEpisode] = useState("");
   const previewGeneration = useRef(0);
+  const unknownGeneration = useRef(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -45,13 +49,15 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const job = jobs.find((item) => item.id === jobId);
   useEffect(() => { setConfirmed(false); setSourceRemoval(false); }, [jobId, session.token]);
   useEffect(() => { setDiscardStaging(false); setOldExecutorsStopped(false); }, [jobId, session.token]);
-  useEffect(() => { previewGeneration.current++; setAssignments([]); setPlan(null); setManualSource(""); setManualId(""); setBusy(false); }, [session.token]);
+  useEffect(() => { previewGeneration.current++; unknownGeneration.current++; setUnknown({ items: [], total: 0, page: 1, pageSize: 30, totalPages: 1 }); setAssignments([]); setSelectedUnknown(null); setPlan(null); setManualSource(""); setManualId(""); setBusy(false); }, [session.token]);
   useEffect(() => {
     let active = true;
     setLoading(true);
     void getOrganizationRoots(session.token).then(async (data) => {
       if (!active) return;
       setRoots(data); setSourceId(data.sources[0]?.id || ""); setTargetId(data.targets[0]?.id || ""); setError("");
+      const records = await getOrganizationUnknown(session.token);
+      if (active) setUnknown(records);
       if (data.executionModes?.length) {
         const saved = await getOrganizationJobs(session.token);
         if (active) { setJobs(saved); setJobId(saved[0]?.id || ""); }
@@ -71,7 +77,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     const generation = ++previewGeneration.current;
     setBusy(true); setError(""); setPlan(null); setManualSource("");
     try {
-      const result = await previewOrganization(session.token, { sourceId, targetId, path, mode, ...(selected.length ? { assignments: selected } : {}) });
+      const result = await previewOrganization(session.token, { sourceId, targetId, path, mode, ...(selected.length ? { assignments: selected } : {}), ...(selectedUnknown ? { unknownRecord: { id: selectedUnknown.id, fingerprint: selectedUnknown.fingerprint } } : {}) });
       if (generation === previewGeneration.current) setPlan(result);
     }
     catch (err) {
@@ -81,6 +87,20 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     } finally { if (generation === previewGeneration.current) setBusy(false); }
   }
   function invalidate() { previewGeneration.current++; setPlan(null); setAssignments([]); setManualSource(""); setManualId(""); setError(""); }
+  function selectUnknown(item: OrganizationUnknownItem) {
+    if (item.reason || !item.sourceId || !item.targetId || item.relative === undefined) return;
+    invalidate(); setSelectedUnknown(item); setSourceId(item.sourceId); setTargetId(item.targetId); setPath(item.relative);
+    if (item.nativeMode) setMode(item.nativeMode);
+  }
+  async function loadUnknown(page: number, job?: string) {
+    const generation = ++unknownGeneration.current;
+    setBusy(true); setError("");
+    try {
+      if (job) { const saved = await getOrganizationJob(session.token, job); if (generation === unknownGeneration.current) { setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]); setJobId(saved.id); } }
+      else { const saved = await getOrganizationUnknown(session.token, page, unknownKeyword); if (generation === unknownGeneration.current) setUnknown(saved); }
+    } catch (err) { if (generation !== unknownGeneration.current) return; if (err instanceof ApiError && err.code === 401) onSessionExpired(); else setError(err instanceof Error ? err.message : "未识别记录读取失败"); }
+    finally { if (generation === unknownGeneration.current) setBusy(false); }
+  }
   async function assignIdentity(event: FormEvent) {
     event.preventDefault();
     const file = plan?.items.find((item) => item.source === manualSource && item.kind === "media");
@@ -91,7 +111,8 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       setAssignments(updated); await generatePreview(updated);
     } catch (err) { setError(err instanceof Error ? err.message : "人工身份选择无效"); }
   }
-  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication" | "abandon-unpublished") {
+  async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication" | "abandon-unpublished" | "reconcile-unknown") {
+    if (operation === "reconcile-unknown" && !confirmed) return;
     if (operation === "abandon-unpublished" && (!discardStaging || !oldExecutorsStopped || !job?.sourceRoot || !job.targetRoot)) return;
     if (operation === "resume-publication" && (!confirmed || !job?.sourceRoot || !job.targetRoot)) return;
     if ((operation === "execute" || operation === "resume-move" || operation === "resume-publication") && job?.mode === "move" && (!confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot)) return;
@@ -99,11 +120,12 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     try {
       if (operation === "refresh") { setJobs(await getOrganizationJobs(session.token)); return; }
       const saved = operation === "create"
-        ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, fingerprint: plan!.fingerprint, ...(assignments.length ? { assignments } : {}) })
+        ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, fingerprint: plan!.fingerprint, ...(assignments.length ? { assignments } : {}), ...(selectedUnknown ? { unknownRecord: { id: selectedUnknown.id, fingerprint: selectedUnknown.fingerprint } } : {}) })
         : operation === "abandon-unpublished" ? await abandonOrganizationJob(session.token, jobId, discardStaging, oldExecutorsStopped)
         : await controlOrganizationJob(session.token, jobId, operation, job?.mode === "move" && (operation === "execute" || operation === "resume-move" || operation === "resume-publication") && sourceRemoval);
       setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
-      setJobId(saved.id); setPlan(null); setAssignments([]); setManualSource("");
+      setJobId(saved.id); setPlan(null); setAssignments([]); setSelectedUnknown(null); setManualSource("");
+      setUnknown(await getOrganizationUnknown(session.token, unknown.page, unknownKeyword));
     } catch (err) {
       if (err instanceof ApiError && err.code === 401) onSessionExpired();
       else {
@@ -119,11 +141,13 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       <h1>整理预览</h1>
       <p>此功能仅限管理员使用。各方式均需先保存任务，再单独确认执行，且不覆盖目标。复制和链接保留源名；移动会移除源名及核验后的恢复备份，需额外授权。硬链接共享文件内容，软链接依赖源文件长期存在。</p>
       {error && <p role="alert">{error}</p>}
+      {!loading && <section aria-label="存量未识别记录"><h2>存量未识别记录</h2><p>旧记录只读展示，不删除或自动重跑。选择后须重新预览、纠正身份并另行确认执行；不能只处理目录的一部分就标记成功。</p><label>路径关键词<input value={unknownKeyword} disabled={busy} onChange={(event) => setUnknownKeyword(event.target.value)} /></label><button type="button" disabled={busy} onClick={() => void loadUnknown(1)}>查询／刷新记录</button><p>共 {unknown.total} 条，第 {unknown.page}/{unknown.totalPages} 页</p><div className="organization-table"><table><thead><tr><th>原路径／目标</th><th>原方式／核验</th><th>操作</th></tr></thead><tbody>{unknown.items.map((item) => <tr key={item.id}><td>#{item.id} · {item.path}<small>{item.dest || "未指定目标，需明确选择配置目录"}</small></td><td>{item.mode || "未记录方式，请自行确认"}{item.reason && <small>{item.reason}</small>}</td><td>{item.jobId ? <button type="button" disabled={busy || !roots.executionModes?.length} onClick={() => void loadUnknown(unknown.page, item.jobId)}>查看关联任务</button> : <button type="button" disabled={busy || !!item.reason || !roots.executionModes?.length} onClick={() => selectUnknown(item)}>选择并核验记录</button>}</td></tr>)}</tbody></table></div><button type="button" disabled={busy || unknown.page <= 1} onClick={() => void loadUnknown(unknown.page - 1)}>上一页</button><button type="button" disabled={busy || unknown.page >= unknown.totalPages} onClick={() => void loadUnknown(unknown.page + 1)}>下一页</button></section>}
+      {selectedUnknown && <p>关联旧记录 #{selectedUnknown.id}：{selectedUnknown.path}。只有全范围成功才更新此条记录；原路径、方式和其他记录保留。<button type="button" disabled={busy} onClick={() => { invalidate(); setSelectedUnknown(null); }}>取消关联，返回普通规划</button></p>}
       {loading ? <p>正在读取配置目录…</p> : <form onSubmit={(event) => void preview(event)}>
-        <label>来源目录<select value={sourceId} disabled={busy} required onChange={(e) => { setSourceId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.sources.map((root) => <option key={root.id} value={root.id}>{root.label} · {root.path}</option>)}</select></label>
-        <label>源目录内的相对路径<input value={path} disabled={busy} required placeholder=". 或 Movies/某个目录" onChange={(e) => { setPath(e.target.value); invalidate(); }} /></label>
-        <label>目标目录<select value={targetId} disabled={busy} required onChange={(e) => { setTargetId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.targets.map((root) => <option key={root.id} value={root.id}>{root.label} · {root.path}</option>)}</select></label>
-        <label>计划转移方式<select value={mode} disabled={busy} onChange={(e) => { setMode(e.target.value); invalidate(); }}><option value="copy">复制</option><option value="move">移动</option><option value="link">硬链接</option><option value="softlink">软链接</option></select></label>
+        <label>来源目录<select value={sourceId} disabled={busy || !!selectedUnknown} required onChange={(e) => { setSourceId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.sources.map((root) => <option key={root.id} value={root.id}>{root.label} · {root.path}</option>)}</select></label>
+        <label>源目录内的相对路径<input value={path} disabled={busy || !!selectedUnknown} required placeholder=". 或 Movies/某个目录" onChange={(e) => { setPath(e.target.value); invalidate(); }} /></label>
+        <label>目标目录<select value={targetId} disabled={busy} required onChange={(e) => { setTargetId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.targets.map((root) => <option key={root.id} value={root.id} disabled={!!selectedUnknown?.dest && selectedUnknown.dest !== root.path}>{root.label} · {root.path}</option>)}</select></label>
+        <label>计划转移方式<select value={mode} disabled={busy || !!selectedUnknown?.nativeMode} onChange={(e) => { setMode(e.target.value); invalidate(); }}><option value="copy">复制</option><option value="move">移动</option><option value="link">硬链接</option><option value="softlink">软链接</option></select></label>
         <button disabled={busy || !sourceId || !targetId} type="submit">{busy ? "正在核验…" : "生成只读预览"}</button>
         {(!roots.sources.length || !roots.targets.length) && <p>请先在现有配置中设置下载/同步源目录和媒体库目标目录。</p>}
       </form>}
@@ -140,6 +164,8 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); setSourceRemoval(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
         {job && <><p>转移方式：{modeLabels[job.mode] || job.mode}。{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新转移。</p>
           <p>任务保存的来源：<code>{job.sourceRoot || "未提供，请刷新后确认"}</code><br />任务保存的目标：<code>{job.targetRoot || "未提供，请刷新后确认"}</code></p>
+          {job.unknownRecordId && <p>关联旧记录 #{job.unknownRecordId}：{job.unknownState === "resolved" ? "已根据完整成功回执更新为已处理" : job.unknownState === "cancelled" ? "已取消关联，旧记录仍保留" : "仍待处理；全部项目与清理回执完成后才更新"}。</p>}
+          {job.unknownState === "pending" && job.items.every((item) => item.state === "completed" && !item.reason) && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我同意仅核验完整成功账本并补交原未识别记录状态，不重新操作文件。</label><button type="button" disabled={busy || !confirmed} onClick={() => void jobOperation("reconcile-unknown")}>确认核对未识别记录回执</button></>}
           <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>任务状态</th></tr></thead><tbody>{job.items.map((item) => <tr key={item.index}><td>{item.source}</td><td>{item.target}<small>TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small></td><td>{jobLabels[item.state] || item.state}{item.reason && <small>{jobReasonLabels[item.reason] || item.reason}</small>}</td></tr>)}</tbody></table></div>
           {job.mode === "move" && (job.state === "ready" || job.state === "needs_review") && <label className="organization-confirm"><input type="checkbox" checked={sourceRemoval} disabled={busy || !job.sourceRoot || !job.targetRoot} onChange={(event) => setSourceRemoval(event.target.checked)} />我同意从上述任务保存的来源路径移除原源文件名，并在目标核验及历史提交后清理本任务的源恢复备份；不删除新到的同名文件、其他文件或源目录。</label>}
           {job.state === "ready" && <><label className="organization-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />我已确认源文件下载完成、至少 30 秒未修改，并同意按{modeLabels[job.mode] || job.mode}方式整理以上待执行文件。</label><button type="button" disabled={busy || !confirmed || (job.mode === "move" && (!sourceRemoval || !job.sourceRoot || !job.targetRoot))} onClick={() => void jobOperation("execute")}>确认执行{modeLabels[job.mode] || job.mode}</button></>}

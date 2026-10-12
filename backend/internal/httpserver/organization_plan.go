@@ -36,11 +36,12 @@ type organizationRoots struct {
 	ExecutionModes []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
-	SourceID    string                        `json:"sourceId"`
-	TargetID    string                        `json:"targetId"`
-	Path        string                        `json:"path"`
-	Mode        string                        `json:"mode"`
-	Assignments []organizationMediaAssignment `json:"assignments,omitempty"`
+	UnknownRecord *organizationUnknownSelector  `json:"unknownRecord,omitempty"`
+	SourceID      string                        `json:"sourceId"`
+	TargetID      string                        `json:"targetId"`
+	Path          string                        `json:"path"`
+	Mode          string                        `json:"mode"`
+	Assignments   []organizationMediaAssignment `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
 	Assigned      bool   `json:"assigned,omitempty"`
@@ -260,6 +261,10 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if err != nil {
 		return fail(503, "configured organization roots are unavailable")
 	}
+	unknown, failure := api.bindUnknown(ctx, input, roots)
+	if failure != nil {
+		return fail(failure.status, failure.message)
+	}
 	var source, target organizationRoot
 	for _, root := range roots.Sources {
 		if root.ID == input.SourceID {
@@ -326,6 +331,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		return fail(422, "organization roots changed")
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
+	result.definition.Unknown = unknown
 	if result.definition.ConfigDigest == "" {
 		return fail(503, "organization configuration snapshot is unsupported")
 	}
@@ -344,6 +350,11 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	selectionRoot.Close()
 	if err != nil {
 		return fail(422, "source selection changed")
+	}
+	if unknown != nil {
+		result.definition.UnknownScope = input.Path
+		result.definition.UnknownScopeIdentity = organization.Identity(selectedInfo)
+		result.definition.UnknownDirectory = selectedInfo.IsDir()
 	}
 	for _, file := range scan.Files {
 		if ctx.Err() != nil {

@@ -52,15 +52,19 @@ type Entry struct {
 }
 
 type Definition struct {
-	SourceRoot     string  `json:"sourceRoot"`
-	TargetRoot     string  `json:"targetRoot"`
-	SourceIdentity string  `json:"sourceIdentity"`
-	TargetIdentity string  `json:"targetIdentity"`
-	ConfigDigest   string  `json:"configDigest"`
-	SourceID       string  `json:"sourceId"`
-	TargetID       string  `json:"targetId"`
-	Mode           string  `json:"mode"`
-	Entries        []Entry `json:"entries"`
+	Unknown              *UnknownRecord `json:"unknown,omitempty"`
+	UnknownScope         string         `json:"unknownScope,omitempty"`
+	UnknownScopeIdentity string         `json:"unknownScopeIdentity,omitempty"`
+	UnknownDirectory     bool           `json:"unknownDirectory,omitempty"`
+	SourceRoot           string         `json:"sourceRoot"`
+	TargetRoot           string         `json:"targetRoot"`
+	SourceIdentity       string         `json:"sourceIdentity"`
+	TargetIdentity       string         `json:"targetIdentity"`
+	ConfigDigest         string         `json:"configDigest"`
+	SourceID             string         `json:"sourceId"`
+	TargetID             string         `json:"targetId"`
+	Mode                 string         `json:"mode"`
+	Entries              []Entry        `json:"entries"`
 }
 
 type Proof struct {
@@ -87,15 +91,17 @@ type JobItem struct {
 }
 
 type Job struct {
-	ID          string     `json:"id"`
-	Fingerprint string     `json:"fingerprint"`
-	Created     string     `json:"created"`
-	State       string     `json:"state"`
-	Mode        string     `json:"mode"`
-	SourceRoot  string     `json:"sourceRoot"`
-	TargetRoot  string     `json:"targetRoot"`
-	Items       []JobItem  `json:"items"`
-	Definition  Definition `json:"-"`
+	UnknownRecordID int64      `json:"unknownRecordId,omitempty"`
+	UnknownState    string     `json:"unknownState,omitempty"`
+	ID              string     `json:"id"`
+	Fingerprint     string     `json:"fingerprint"`
+	Created         string     `json:"created"`
+	State           string     `json:"state"`
+	Mode            string     `json:"mode"`
+	SourceRoot      string     `json:"sourceRoot"`
+	TargetRoot      string     `json:"targetRoot"`
+	Items           []JobItem  `json:"items"`
+	Definition      Definition `json:"-"`
 }
 
 type Store struct {
@@ -125,6 +131,8 @@ func OpenStore(path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_JOBS (ID TEXT PRIMARY KEY, FINGERPRINT TEXT NOT NULL, DEFINITION TEXT NOT NULL, CREATED TEXT NOT NULL, STATE TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_ITEMS (JOB_ID TEXT NOT NULL, ORDINAL INTEGER NOT NULL, STATE TEXT NOT NULL, REASON TEXT NOT NULL DEFAULT '', PROOF TEXT NOT NULL DEFAULT '{}', PRIMARY KEY(JOB_ID,ORDINAL))`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_TARGETS (TARGET_KEY TEXT PRIMARY KEY, JOB_ID TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_LINKS (JOB_ID TEXT PRIMARY KEY, RECORD_ID INTEGER NOT NULL, STATE TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_PENDING ON GO_ORGANIZATION_UNKNOWN_LINKS(RECORD_ID) WHERE STATE='pending'`,
 	} {
 		if _, err = db.Exec(statement); err != nil {
 			db.Close()
@@ -184,6 +192,25 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO GO_ORGANIZATION_JOBS VALUES (?,?,?,?,'active')`, id, fingerprint, string(raw), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return "", err
+	}
+	if d.Unknown != nil {
+		current, err := readUnknown(ctx, tx, d.Unknown.ID)
+		if err != nil {
+			return "", err
+		}
+		if current.State != "N" || Digest(current) != Digest(*d.Unknown) {
+			return "", ErrState
+		}
+		var claims int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE RECORD_ID=? AND STATE='pending'`, current.ID).Scan(&claims); err != nil {
+			return "", err
+		}
+		if claims != 0 {
+			return "", ErrClaimed
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO GO_ORGANIZATION_UNKNOWN_LINKS VALUES (?,?,'pending')`, id, current.ID); err != nil {
+			return "", err
+		}
 	}
 	for index, entry := range d.Entries {
 		key := Digest(d.TargetIdentity + ":" + entry.Target)
@@ -246,6 +273,13 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	if len(job.Items) != len(job.Definition.Entries) {
 		return job, ErrState
 	}
+	rows.Close()
+	if job.Definition.Unknown != nil {
+		job.UnknownRecordID = job.Definition.Unknown.ID
+		if err = s.db.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, job.ID, job.UnknownRecordID).Scan(&job.UnknownState); err != nil {
+			return job, err
+		}
+	}
 	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" {
 		return job, nil
 	}
@@ -259,6 +293,9 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		if item.State != "planned" && item.State != "completed" || item.State == "completed" && item.Reason != "" {
 			job.State = "needs_review"
 		}
+	}
+	if job.State == "completed" && job.UnknownState == "pending" {
+		job.State = "needs_review"
 	}
 	return job, nil
 }
@@ -420,6 +457,9 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM GO_ORGANIZATION_TARGETS WHERE JOB_ID=?`, id); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, id); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -98,6 +98,18 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, 422, 422, "preview contains no available files")
 		return
 	}
+	if plan.definition.Unknown != nil {
+		if plan.Skipped != 0 {
+			writeAPIError(w, 422, 422, "linked unknown scope contains skipped objects; do not mark a partially handled record complete")
+			return
+		}
+		for _, item := range plan.Items {
+			if item.Status != "available" {
+				writeAPIError(w, 422, 422, "every media and companion in the linked unknown scope must be available")
+				return
+			}
+		}
+	}
 	id, err := api.jobs.Create(ctx, plan.Fingerprint, plan.definition)
 	if err != nil {
 		writeOrganizationError(w, err)
@@ -114,6 +126,13 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 // Revalidate admin configuration before any write, not just the opaque root IDs
 // supplied by the browser. Stored destinations never come from client payloads.
 func (api organizationAPI) validateJob(ctx context.Context, job organization.Job) error {
+	if err := api.validateJobConfiguration(ctx, job); err != nil {
+		return err
+	}
+	return api.jobs.VerifyUnknown(ctx, job)
+}
+
+func (api organizationAPI) validateJobConfiguration(ctx context.Context, job organization.Job) error {
 	snapshot, err := api.service.configStore.Snapshot()
 	if err != nil {
 		return err
@@ -145,7 +164,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
@@ -198,12 +217,17 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	}
 	if action == "cancel" {
 		err = api.jobs.Cancel(ctx, job.ID)
+	} else if action == "reconcile-unknown" {
+		err = api.jobs.ResolveUnknown(ctx, job)
+	} else if action == "abandon-unpublished" {
+		err = api.validateJobConfiguration(ctx, job)
+		if err == nil {
+			err = api.jobs.AbandonUnpublished(ctx, job, func() error { return api.validateJobConfiguration(ctx, job) })
+		}
 	} else {
 		err = api.validateJob(ctx, job)
 		if err == nil {
-			if action == "abandon-unpublished" {
-				err = api.jobs.AbandonUnpublished(ctx, job, func() error { return api.validateJob(ctx, job) })
-			} else if job.State == "abandoning" || job.State == "abandoned" {
+			if job.State == "abandoning" || job.State == "abandoned" {
 				err = organization.ErrState
 			} else if action == "resume-move" {
 				err = api.resumeMove(ctx, job)
@@ -213,6 +237,9 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 				err = api.runJob(ctx, job, action == "reconcile")
 			}
 		}
+	}
+	if err == nil && action != "cancel" && action != "abandon-unpublished" {
+		err = api.jobs.ResolveUnknown(ctx, job)
 	}
 	if err != nil {
 		writeOrganizationError(w, err)
