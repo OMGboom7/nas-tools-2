@@ -10,6 +10,20 @@ import (
 // retains its film title. Token boundaries prevent CD123/discfan substring cuts.
 var releasePartToken = regexp.MustCompile(`(?i)(?:^|[ ._\[(-])((?:PART|CD|DVD|DISK|DISC)(?:[ ._\[(-]*(?:[0-9]{1,2}|III|II|I|[ABC]))?)`)
 
+var manualPartToken = regexp.MustCompile(`^(?:PART(?:[0-9ABI]{0,2}|C|III)|(?:CD|DVD|DISK|DISC)[0-9]{0,2})$`)
+
+// An empty explicit part clears automatic recognition; a nil selection retains it.
+func NormalizePart(value string) (string, error) {
+	if len(value) > 32 {
+		return "", errors.New("invalid manual release part")
+	}
+	value = strings.ToUpper(strings.TrimSpace(value))
+	if value != "" && !manualPartToken.MatchString(value) {
+		return "", errors.New("invalid manual release part")
+	}
+	return value, nil
+}
+
 func partReleaseContext(input string, before int) bool {
 	end := partContextEnd(input)
 	return end >= 0 && end <= before
@@ -33,6 +47,10 @@ func partContextEnd(input string) int {
 	return first
 }
 func releasePart(input string, inheritedContext bool) (string, string, error) {
+	return scanReleaseParts(input, inheritedContext, false)
+}
+
+func scanReleaseParts(input string, inheritedContext, explicitPart bool) (string, string, error) {
 	masked := []byte(input)
 	part := ""
 	contextEnd := partContextEnd(input)
@@ -48,7 +66,7 @@ func releasePart(input string, inheritedContext bool) (string, string, error) {
 		if value == "PART" {
 			continue
 		}
-		if part != "" && part != value {
+		if part != "" && part != value && !explicitPart {
 			return "", input, errors.New("ambiguous release part")
 		}
 		part = value

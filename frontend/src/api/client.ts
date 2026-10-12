@@ -675,14 +675,14 @@ export async function getSubscriptions(token: string): Promise<SubscriptionsData
 
 export type OrganizationRoot = { id: string; path: string; label: string; type: string };
 export type OrganizationRoots = { sources: OrganizationRoot[]; targets: OrganizationRoot[]; executionModes?: string[] };
-export type OrganizationMediaAssignment = { source: string; identity: string; modified: string; size: number; kind: "movie" | "tv"; tmdbId: string; season?: number; episode?: number; endEpisode?: number; episodeFormat?: string; episodeOffset?: number };
+export type OrganizationMediaAssignment = { source: string; identity: string; modified: string; size: number; kind: "movie" | "tv"; tmdbId: string; season?: number; episode?: number; endEpisode?: number; episodeFormat?: string; episodeOffset?: number; partOverride?: string };
 export type OrganizationUnknownItem = { id: number; path: string; dest: string; mode: string; state: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; jobId?: string; reason?: string };
 export type OrganizationUnknownData = { items: OrganizationUnknownItem[]; total: number; page: number; pageSize: number; totalPages: number };
 export type OrganizationHistoryItem = { id: number; mode: string; type: string; title: string; year: string; tmdbId: string; sourcePath: string; sourceFilename: string; dest: string; destPath: string; destFilename: string; date: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; reason?: string };
 export type OrganizationHistoryData = { items: OrganizationHistoryItem[]; total: number; page: number; totalPages: number };
 export type OrganizationUnknownReview = { jobId: string; state: string; original: { id: number; path: string; dest: string; mode: string; state: string }; current: { id: number; path: string; dest: string; mode: string; state: string } | null; fingerprint: string; eligible: boolean };
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[]; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
-export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number };
+export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number; partOverride?: string };
 export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 

@@ -36,20 +36,30 @@ func Parse(title, subtitle string) (Metadata, error) {
 }
 
 func ParseWithOptions(ctx context.Context, title, subtitle string, options LabelOptions) (Metadata, error) {
+	return ParseWithOptionsAndPart(ctx, title, subtitle, options, nil)
+}
+
+func ParseWithOptionsAndPart(ctx context.Context, title, subtitle string, options LabelOptions, selectedPart *string) (Metadata, error) {
 	if len(title) > 64<<10 || len(subtitle) > 64<<10 || !utf8.ValidString(title) || !utf8.ValidString(subtitle) {
 		return Metadata{}, errors.New("invalid release title")
 	}
-	part, _, err := releasePart(title, false)
+	part, _, err := scanReleaseParts(title, false, selectedPart != nil)
 	if err != nil {
 		return Metadata{}, err
 	}
 	if part == "" {
-		part, _, err = releasePart(subtitle, partReleaseContext(title, len(title)))
+		part, _, err = scanReleaseParts(subtitle, partReleaseContext(title, len(title)), selectedPart != nil)
 		if err != nil {
 			return Metadata{}, err
 		}
 	}
-	episodes, err := Episodes(title, subtitle)
+	if selectedPart != nil {
+		part, err = NormalizePart(*selectedPart)
+		if err != nil {
+			return Metadata{}, err
+		}
+	}
+	episodes, err := episodesWithPartPolicy(title, subtitle, selectedPart != nil)
 	if err != nil {
 		return Metadata{}, err
 	}

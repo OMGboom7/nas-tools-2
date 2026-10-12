@@ -103,10 +103,10 @@ func (api mediaNameAPI) recognize(ctx context.Context, title, subtitle string) (
 }
 
 func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forcedKind string) (*nativeRecognition, *recognitionFailure) {
-	return api.recognizeSelected(ctx, title, subtitle, forcedKind, "", nil)
+	return api.recognizeSelected(ctx, title, subtitle, forcedKind, "", nil, nil)
 }
 
-func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo) (*nativeRecognition, *recognitionFailure) {
+func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo, selectedPart *string) (*nativeRecognition, *recognitionFailure) {
 	if forcedKind != "" && forcedKind != "movie" && forcedKind != "tv" {
 		return nil, &recognitionFailure{422, "invalid media type"}
 	}
@@ -129,7 +129,7 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 	if err != nil {
 		return nil, &recognitionFailure{500, "media label configuration is unavailable"}
 	}
-	meta, err := mediameta.ParseWithOptions(ctx, processed.Title, processedSubtitle.Title, options)
+	meta, err := mediameta.ParseWithOptionsAndPart(ctx, processed.Title, processedSubtitle.Title, options, selectedPart)
 	if err != nil {
 		return nil, &recognitionFailure{400, "invalid media metadata"}
 	}

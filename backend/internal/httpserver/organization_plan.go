@@ -45,24 +45,25 @@ type organizationPlanInput struct {
 	Assignments   []organizationMediaAssignment `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
-	EpisodeFormat string `json:"episodeFormat,omitempty"`
-	EpisodeOffset int    `json:"episodeOffset,omitempty"`
-	Part          string `json:"part,omitempty"`
-	Assigned      bool   `json:"assigned,omitempty"`
-	Source        string `json:"source"`
-	Target        string `json:"target,omitempty"`
-	Kind          string `json:"kind"`
-	Size          int64  `json:"size"`
-	Modified      string `json:"modified"`
-	Status        string `json:"status"`
-	Reason        string `json:"reason,omitempty"`
-	TMDBID        string `json:"tmdbId,omitempty"`
-	Identity      string `json:"identity"`
-	Title         string `json:"title,omitempty"`
-	Year          string `json:"year,omitempty"`
-	MediaType     string `json:"mediaType,omitempty"`
-	Category      string `json:"category,omitempty"`
-	SeasonEpisode string `json:"seasonEpisode,omitempty"`
+	PartOverride  *string `json:"partOverride,omitempty"`
+	EpisodeFormat string  `json:"episodeFormat,omitempty"`
+	EpisodeOffset int     `json:"episodeOffset,omitempty"`
+	Part          string  `json:"part,omitempty"`
+	Assigned      bool    `json:"assigned,omitempty"`
+	Source        string  `json:"source"`
+	Target        string  `json:"target,omitempty"`
+	Kind          string  `json:"kind"`
+	Size          int64   `json:"size"`
+	Modified      string  `json:"modified"`
+	Status        string  `json:"status"`
+	Reason        string  `json:"reason,omitempty"`
+	TMDBID        string  `json:"tmdbId,omitempty"`
+	Identity      string  `json:"identity"`
+	Title         string  `json:"title,omitempty"`
+	Year          string  `json:"year,omitempty"`
+	MediaType     string  `json:"mediaType,omitempty"`
+	Category      string  `json:"category,omitempty"`
+	SeasonEpisode string  `json:"seasonEpisode,omitempty"`
 }
 type organizationPlan struct {
 	Items       []organizationPlanItem `json:"items"`
@@ -394,6 +395,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		var failure *recognitionFailure
 		if assignment, exists := assignments[file.Path]; exists {
 			item.Assigned = true
+			item.PartOverride = assignment.PartOverride
 			item.EpisodeFormat, item.EpisodeOffset = assignment.EpisodeFormat, assignment.EpisodeOffset
 			recognition, failure = api.recognition.recognizeAssigned(ctx, filepath.Base(file.Path), assignment)
 		} else {
@@ -484,6 +486,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		item.TMDBID = video.TMDBID
 		item.Part = video.Part
 		item.Assigned = video.Assigned
+		item.PartOverride = video.PartOverride
 		item.EpisodeFormat, item.EpisodeOffset = video.EpisodeFormat, video.EpisodeOffset
 		item.Title, item.Year, item.MediaType, item.Category, item.SeasonEpisode = video.Title, video.Year, video.MediaType, video.Category, video.SeasonEpisode
 		item.Status, err = organization.TargetStatus(ctx, target.Path, item.Target)
@@ -524,7 +527,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 }
 
 func (item organizationPlanItem) entry() organization.Entry {
-	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part, EpisodeFormat: item.EpisodeFormat, EpisodeOffset: item.EpisodeOffset}
+	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part, EpisodeFormat: item.EpisodeFormat, EpisodeOffset: item.EpisodeOffset, PartOverride: item.PartOverride}
 }
 
 func markOrganizationConflicts(items []organizationPlanItem) {

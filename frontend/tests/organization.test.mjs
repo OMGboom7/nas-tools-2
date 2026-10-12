@@ -9,6 +9,35 @@ const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrgan
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
+test("manual part auto, set and clear remain distinct for movie and TV", () => {
+  const file = { source: "Movie.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };
+  const make = (mode, value = "") => buildOrganizationAssignment(file, "movie", "300", "", "", "", "", "", mode, value);
+  assert.equal(Object.hasOwn(make("auto"), "partOverride"), false);
+  assert.equal(make("set", " cd01 ").partOverride, "CD01");
+  assert.equal(JSON.parse(JSON.stringify(make("clear"))).partOverride, "");
+  for (const part of ["PARTIII", "PARTC", "PARTAB", "DVD2", "DISK10", "DISC12"]) assert.equal(make("set", part).partOverride, part);
+  for (const part of ["", "../CD1", "CD1/CD2", "CD123", "CUSTOM", "PARTIIII", "CD1\0"]) assert.throws(() => make("set", part));
+  const tv = buildOrganizationAssignment(file, "tv", "200", "1", "2", "", "", "", "clear");
+  assert.equal(tv.episode, 2);
+  assert.equal(tv.partOverride, "");
+});
+
+test("manual part clearing follows reviewed preview and save without execution", async (t) => {
+  const assignment = buildOrganizationAssignment({ source: "Movie.CD1.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" }, "movie", "300", "", "", "", "", "", "clear");
+  const input = { sourceId: "s", targetId: "t", path: "Movie.CD1.mkv", mode: "copy", assignments: [assignment] };
+  const fingerprint = "c".repeat(64);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, calls === 1 ? "/api/v1/organization/plan" : "/api/v1/organization/jobs");
+    assert.deepEqual(JSON.parse(options.body), calls === 1 ? input : { ...input, fingerprint });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { previewOnly: true, fingerprint, items: [{ partOverride: "" }] } : { id: "saved", items: [{ partOverride: "" }] } }));
+  });
+  assert.equal((await previewOrganization("token", input)).items[0].partOverride, "");
+  assert.equal((await createOrganizationJob("token", { ...input, fingerprint })).items[0].partOverride, "");
+  assert.equal(calls, 2);
+});
+
 test("release parts survive readonly preview and persisted job loading", async (t) => {
   let calls = 0;
   const items = [{ source: "Movie.2026.CD1.mkv", part: "CD1" }, { source: "Movie.2026.CD2.en.srt", part: "CD2" }, { source: "old.mkv" }];

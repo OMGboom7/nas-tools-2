@@ -32,15 +32,19 @@ var (
 // Episodes distinguishes movie totals from TV per-episode sizes. A season pack
 // without an explicit episode count stays unknown rather than guessing a count.
 func Episodes(title, subtitle string) (EpisodeInfo, error) {
+	return episodesWithPartPolicy(title, subtitle, false)
+}
+
+func episodesWithPartPolicy(title, subtitle string, explicitPart bool) (EpisodeInfo, error) {
 	if len(title)+len(subtitle) > 128<<10 {
 		return EpisodeInfo{}, errors.New("release metadata too large")
 	}
 	info := EpisodeInfo{}
-	_, cleanTitle, err := releasePart(title, false)
+	_, cleanTitle, err := scanReleaseParts(title, false, explicitPart)
 	if err != nil {
 		return info, err
 	}
-	_, cleanSubtitle, err := releasePart(subtitle, partReleaseContext(title, len(title)))
+	_, cleanSubtitle, err := scanReleaseParts(subtitle, partReleaseContext(title, len(title)), explicitPart)
 	if err != nil {
 		return info, err
 	}

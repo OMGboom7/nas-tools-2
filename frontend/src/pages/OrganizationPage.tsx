@@ -43,6 +43,9 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [manualEndEpisode, setManualEndEpisode] = useState("");
   const [manualEpisodeFormat, setManualEpisodeFormat] = useState("");
   const [manualEpisodeOffset, setManualEpisodeOffset] = useState("");
+  const [manualPartMode, setManualPartMode] = useState<"auto" | "set" | "clear">("auto");
+  const [manualPart, setManualPart] = useState("");
+  useEffect(() => { setManualPartMode("auto"); setManualPart(""); }, [manualSource, sourceId, targetId, path, mode, session.token]);
   useEffect(() => { setManualEpisodeFormat(""); setManualEpisodeOffset(""); }, [sourceId, targetId, path, mode, session.token]);
   const previewGeneration = useRef(0);
   const unknownGeneration = useRef(0);
@@ -132,7 +135,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     const file = plan?.items.find((item) => item.source === manualSource && item.kind === "media");
     if (!file) { setError("请从当前预览选择要纠正身份的媒体文件。"); return; }
     try {
-      const selection = buildOrganizationAssignment(file, manualKind, manualId, manualSeason, manualEpisode, manualEndEpisode, manualEpisodeFormat, manualEpisodeOffset);
+      const selection = buildOrganizationAssignment(file, manualKind, manualId, manualSeason, manualEpisode, manualEndEpisode, manualEpisodeFormat, manualEpisodeOffset, manualPartMode, manualPart);
       const updated = [...assignments.filter((item) => item.source !== selection.source), selection];
       setAssignments(updated); await generatePreview(updated);
     } catch (err) { setError(err instanceof Error ? err.message : "人工身份选择无效"); }
@@ -202,12 +205,16 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         {(!roots.sources.length || !roots.targets.length) && <p>请先在现有配置中设置下载/同步源目录和媒体库目标目录。</p>}
       </form>}
       {plan && <div aria-live="polite"><p>共 {plan.items.length} 个媒体或附件；跳过 {plan.skipped} 个隐藏、非媒体或常见未完成后缀项。此预览不能直接执行，也不证明文件已下载完成。</p>
+        {plan.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.source}`}>分段覆盖：{item.source} → {item.partOverride || "明确清空"}（唯一附件继承）</p>)}
         <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>核验状态</th></tr></thead><tbody>{plan.items.map((item) => <tr key={item.source}><td>{item.source}<small>{item.size} 字节 · {item.kind}{item.part ? ` · 分段 ${item.part}` : ""}</small>{(item.episodeFormat || !!item.episodeOffset) && <small>集号规则：{item.episodeFormat || "明确编号"} · 偏移 {item.episodeOffset || 0}</small>}</td><td>{item.target || "未生成"}{item.tmdbId && <small>{item.title} {item.year} · TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small>}</td><td>{statusLabels[item.status] || item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
         <form onSubmit={(event) => void assignIdentity(event)} aria-label="逐文件指定媒体身份">
           <h2>纠正媒体身份</h2><p>只影响所选媒体文件，同名附件仍须唯一匹配；其他文件继续自动识别。TMDB 标题、年份、分类和偏移后的季集上限由服务器核验，不允许自填目标路径，也不能绕过大小、蓝光或冲突限制。应用只重新生成只读预览，不执行整理。</p>
           <label>当前预览中的媒体文件<select value={manualSource} disabled={busy} required onChange={(event) => setManualSource(event.target.value)}><option value="">请选择</option>{plan.items.filter((item) => item.kind === "media").map((item) => <option key={item.source} value={item.source}>{item.source}</option>)}</select></label>
           <label>媒体类型<select value={manualKind} disabled={busy} onChange={(event) => { setManualKind(event.target.value as "movie" | "tv"); setManualSeason(""); setManualEpisode(""); setManualEndEpisode(""); setManualEpisodeFormat(""); setManualEpisodeOffset(""); }}><option value="movie">电影</option><option value="tv">电视剧／动漫</option></select></label>
           <label>TMDB ID<input value={manualId} disabled={busy} required inputMode="numeric" pattern="[1-9][0-9]*" onChange={(event) => setManualId(event.target.value)} /></label>
+          <label>分段处理<select value={manualPartMode} disabled={busy} onChange={(event) => setManualPartMode(event.target.value as "auto" | "set" | "clear")}><option value="auto">自动识别</option><option value="set">指定分段</option><option value="clear">明确清空分段</option></select></label>
+          {manualPartMode === "set" && <label>分段值<input value={manualPart} maxLength={32} disabled={busy} required placeholder="如 PARTIII、CD01、DISC12" onChange={(event) => setManualPart(event.target.value)} /></label>}
+          {manualPartMode !== "auto" && <p>只覆盖所选文件和唯一附件的分段；明确清空可能导致目标重名，服务器仍会阻止冲突，不自动改名或覆盖。</p>}
           {manualKind === "tv" && <>
             <label>季号（0 为特别篇）<input type="number" min="0" max="99" value={manualSeason} disabled={busy} required onChange={(event) => setManualSeason(event.target.value)} /></label>
             <label>集号定位模板（留空则使用下面的明确集号）<input value={manualEpisodeFormat} maxLength={512} disabled={busy} placeholder="Show.第{ep}集.{a}.mkv" onChange={(event) => setManualEpisodeFormat(event.target.value)} /></label>
@@ -228,6 +235,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); setSourceRemoval(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
         {job && <><p>转移方式：{modeLabels[job.mode] || job.mode}。{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新转移。</p>
           <p>任务保存的来源：<code>{job.sourceRoot || "未提供，请刷新后确认"}</code><br />任务保存的目标：<code>{job.targetRoot || "未提供，请刷新后确认"}</code></p>
+          {job.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.index}`}>已保存分段覆盖：{item.source} → {item.partOverride || "明确清空"}</p>)}
           {job.historyRecordId && <p>由原历史 #{job.historyRecordId} 重新规划。原历史保留，只有新的核验转移成功才追加新历史；不是覆盖原媒体的授权。</p>}
           {job.unknownRecordId && <p>关联旧记录 #{job.unknownRecordId}：{job.unknownState === "resolved" ? "已根据完整成功回执更新为已处理" : job.unknownState === "cancelled" ? "已取消关联，旧记录仍保留" : job.unknownState === "detached" ? "管理员已明确解除关联，未标记旧记录成功" : "仍待处理；全部项目与清理回执完成后才更新"}。</p>}
           {job.unknownDetach && <p>解除关联回执：{job.unknownDetach.actor} · {job.unknownDetach.created} · {job.unknownDetach.reason}。不代表旧记录已处理。</p>}

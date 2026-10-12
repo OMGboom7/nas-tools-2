@@ -31,17 +31,18 @@ func decodeOrganizationRequest(w http.ResponseWriter, r *http.Request, target an
 // Selection is bound to a specific file snapshot from the readonly preview,
 // never applied recursively to a folder or guessed onto another file.
 type organizationMediaAssignment struct {
-	Source        string `json:"source"`
-	Identity      string `json:"identity"`
-	Modified      string `json:"modified"`
-	Size          int64  `json:"size"`
-	Kind          string `json:"kind"`
-	TMDBID        string `json:"tmdbId"`
-	Season        *int   `json:"season,omitempty"`
-	Episode       *int   `json:"episode,omitempty"`
-	EndEpisode    *int   `json:"endEpisode,omitempty"`
-	EpisodeFormat string `json:"episodeFormat,omitempty"`
-	EpisodeOffset int    `json:"episodeOffset,omitempty"`
+	Source        string  `json:"source"`
+	Identity      string  `json:"identity"`
+	Modified      string  `json:"modified"`
+	Size          int64   `json:"size"`
+	Kind          string  `json:"kind"`
+	TMDBID        string  `json:"tmdbId"`
+	Season        *int    `json:"season,omitempty"`
+	Episode       *int    `json:"episode,omitempty"`
+	EndEpisode    *int    `json:"endEpisode,omitempty"`
+	EpisodeFormat string  `json:"episodeFormat,omitempty"`
+	EpisodeOffset int     `json:"episodeOffset,omitempty"`
+	PartOverride  *string `json:"partOverride,omitempty"`
 }
 
 func organizationAssignments(input []organizationMediaAssignment, files []organization.File) (map[string]organizationMediaAssignment, *recognitionFailure) {
@@ -56,6 +57,13 @@ func organizationAssignments(input []organizationMediaAssignment, files []organi
 		}
 		if _, exists := result[selection.Source]; exists {
 			return nil, &recognitionFailure{422, "duplicate manual media selection"}
+		}
+		if selection.PartOverride != nil {
+			part, err := mediameta.NormalizePart(*selection.PartOverride)
+			if err != nil {
+				return nil, &recognitionFailure{422, err.Error()}
+			}
+			selection.PartOverride = &part
 		}
 		if selection.Kind == "movie" {
 			if selection.Season != nil || selection.Episode != nil || selection.EndEpisode != nil || selection.EpisodeFormat != "" || selection.EpisodeOffset != 0 {
@@ -116,5 +124,5 @@ func (api mediaNameAPI) recognizeAssigned(ctx context.Context, title string, sel
 			episodes.Count = *selection.EndEpisode - *selection.Episode + 1
 		}
 	}
-	return api.recognizeSelected(ctx, title, "", selection.Kind, selection.TMDBID, &episodes)
+	return api.recognizeSelected(ctx, title, "", selection.Kind, selection.TMDBID, &episodes, selection.PartOverride)
 }

@@ -36,22 +36,23 @@ func ModeLabel(mode string) string {
 }
 
 type Entry struct {
-	EpisodeFormat string `json:"episodeFormat,omitempty"`
-	EpisodeOffset int    `json:"episodeOffset,omitempty"`
-	Part          string `json:"part,omitempty"`
-	Assigned      bool   `json:"assigned,omitempty"`
-	Source        string `json:"source"`
-	Target        string `json:"target"`
-	Kind          string `json:"kind"`
-	Size          int64  `json:"size"`
-	Modified      string `json:"modified"`
-	Identity      string `json:"identity"`
-	TMDBID        string `json:"tmdbId"`
-	Title         string `json:"title"`
-	Year          string `json:"year"`
-	MediaType     string `json:"mediaType"`
-	Category      string `json:"category"`
-	SeasonEpisode string `json:"seasonEpisode"`
+	PartOverride  *string `json:"partOverride,omitempty"`
+	EpisodeFormat string  `json:"episodeFormat,omitempty"`
+	EpisodeOffset int     `json:"episodeOffset,omitempty"`
+	Part          string  `json:"part,omitempty"`
+	Assigned      bool    `json:"assigned,omitempty"`
+	Source        string  `json:"source"`
+	Target        string  `json:"target"`
+	Kind          string  `json:"kind"`
+	Size          int64   `json:"size"`
+	Modified      string  `json:"modified"`
+	Identity      string  `json:"identity"`
+	TMDBID        string  `json:"tmdbId"`
+	Title         string  `json:"title"`
+	Year          string  `json:"year"`
+	MediaType     string  `json:"mediaType"`
+	Category      string  `json:"category"`
+	SeasonEpisode string  `json:"seasonEpisode"`
 }
 
 type Definition struct {
