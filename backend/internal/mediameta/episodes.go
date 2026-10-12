@@ -36,7 +36,15 @@ func Episodes(title, subtitle string) (EpisodeInfo, error) {
 		return EpisodeInfo{}, errors.New("release metadata too large")
 	}
 	info := EpisodeInfo{}
-	for _, input := range []string{title, subtitle} {
+	_, cleanTitle, err := releasePart(title, false)
+	if err != nil {
+		return info, err
+	}
+	_, cleanSubtitle, err := releasePart(subtitle, partReleaseContext(title, len(title)))
+	if err != nil {
+		return info, err
+	}
+	for _, input := range []string{cleanTitle, cleanSubtitle} {
 		if info.Season == nil {
 			season := seasonPattern.FindStringSubmatch(input)
 			if season == nil {

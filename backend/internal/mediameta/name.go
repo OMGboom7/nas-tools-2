@@ -13,6 +13,7 @@ type Metadata struct {
 	Resolution, Source, VideoCodec, AudioCodec, Effect string
 	Episodes                                           EpisodeInfo
 	Team, Customization                                string
+	Part                                               string
 }
 
 var (
@@ -38,11 +39,21 @@ func ParseWithOptions(ctx context.Context, title, subtitle string, options Label
 	if len(title) > 64<<10 || len(subtitle) > 64<<10 || !utf8.ValidString(title) || !utf8.ValidString(subtitle) {
 		return Metadata{}, errors.New("invalid release title")
 	}
+	part, _, err := releasePart(title, false)
+	if err != nil {
+		return Metadata{}, err
+	}
+	if part == "" {
+		part, _, err = releasePart(subtitle, partReleaseContext(title, len(title)))
+		if err != nil {
+			return Metadata{}, err
+		}
+	}
 	episodes, err := Episodes(title, subtitle)
 	if err != nil {
 		return Metadata{}, err
 	}
-	metadata := Metadata{Episodes: episodes}
+	metadata := Metadata{Episodes: episodes, Part: part}
 	metadata.Team, metadata.Customization, err = MatchLabels(ctx, title, options)
 	if err != nil {
 		return Metadata{}, err

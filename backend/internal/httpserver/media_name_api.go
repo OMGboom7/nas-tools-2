@@ -218,7 +218,7 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 	}
 	return &nativeRecognition{meta: meta, detail: detail, kind: kind, subtitle: processedSubtitle.Title, data: map[string]any{
 		"type": typeName, "name": meta.Title, "title": verifiedTitle, "year": year,
-		"season_episode": seasonEpisode, "part": "", "tmdbid": detail.ID, "tmdblink": link, "tmdb_S_E_link": episodeLink,
+		"season_episode": seasonEpisode, "part": meta.Part, "tmdbid": detail.ID, "tmdblink": link, "tmdb_S_E_link": episodeLink,
 		"category": category, "restype": meta.Source, "effect": meta.Effect, "pix": meta.Resolution,
 		"team": meta.Team, "customization": meta.Customization, "video_codec": meta.VideoCodec, "audio_codec": meta.AudioCodec,
 		"org_string": title, "rev_string": processed.Title, "ignored_words": processed.Ignored, "replaced_words": processed.Replaced, "offset_words": processed.Offsets,

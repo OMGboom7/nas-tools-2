@@ -9,6 +9,21 @@ const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrgan
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
+test("release parts survive readonly preview and persisted job loading", async (t) => {
+  let calls = 0;
+  const items = [{ source: "Movie.2026.CD1.mkv", part: "CD1" }, { source: "Movie.2026.CD2.en.srt", part: "CD2" }, { source: "old.mkv" }];
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.headers.Authorization, "token");
+    assert.equal(path, calls === 1 ? "/api/v1/organization/plan" : "/api/v1/organization/jobs/job");
+    assert.equal(options.method, calls === 1 ? "POST" : undefined);
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { previewOnly: true, fingerprint: "a".repeat(64), items } : { id: "job", items } }));
+  });
+  assert.deepEqual((await previewOrganization("token", { sourceId: "s", targetId: "t", path: "", mode: "copy" })).items, items);
+  assert.deepEqual((await getOrganizationJob("token", "job")).items, items);
+  assert.equal(calls, 2);
+});
+
 test("manual identity preserves the exact source snapshot and requires explicit TV season/episode", () => {
   const file = { source: "unknown.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };
   assert.deepEqual(buildOrganizationAssignment(file, "movie", "300", "", "", ""), { source: file.source, identity: file.identity, size: file.size, modified: file.modified, kind: "movie", tmdbId: "300" });

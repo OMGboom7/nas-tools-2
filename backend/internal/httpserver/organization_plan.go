@@ -45,6 +45,7 @@ type organizationPlanInput struct {
 	Assignments   []organizationMediaAssignment `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
+	Part          string `json:"part,omitempty"`
 	Assigned      bool   `json:"assigned,omitempty"`
 	Source        string `json:"source"`
 	Target        string `json:"target,omitempty"`
@@ -409,6 +410,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			continue
 		}
 		item.TMDBID = text(recognition.data["tmdbid"])
+		item.Part = recognition.meta.Part
 		item.Title, item.Year, item.MediaType, item.SeasonEpisode = text(recognition.data["title"]), text(recognition.data["year"]), text(recognition.data["type"]), text(recognition.data["season_episode"])
 		if categories := stringsOf(recognition.data["category"]); len(categories) > 0 {
 			item.Category = categories[0]
@@ -477,6 +479,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		suffix := strings.TrimPrefix(filepath.Base(item.Source), stem)
 		item.Target = strings.TrimSuffix(video.Target, filepath.Ext(video.Target)) + suffix
 		item.TMDBID = video.TMDBID
+		item.Part = video.Part
 		item.Assigned = video.Assigned
 		item.Title, item.Year, item.MediaType, item.Category, item.SeasonEpisode = video.Title, video.Year, video.MediaType, video.Category, video.SeasonEpisode
 		item.Status, err = organization.TargetStatus(ctx, target.Path, item.Target)
@@ -517,7 +520,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 }
 
 func (item organizationPlanItem) entry() organization.Entry {
-	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned}
+	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part}
 }
 
 func markOrganizationConflicts(items []organizationPlanItem) {
@@ -536,7 +539,7 @@ func markOrganizationConflicts(items []organizationPlanItem) {
 
 func (api organizationAPI) targetName(ctx context.Context, media map[string]any, r *nativeRecognition, extension string) (string, error) {
 	format := localNamingTemplate(media, r.kind == "tv")
-	values := map[string]string{"title": localLibraryName(text(r.data["title"]), media), "name": localLibraryName(r.meta.Title, media), "year": text(r.data["year"]), "tmdbid": text(r.data["tmdbid"]), "original_title": localLibraryName(text(r.detail.Attributes["original_title"]), media), "part": "", "videoFormat": r.meta.Resolution, "videoCodec": r.meta.VideoCodec, "audioCodec": r.meta.AudioCodec, "resourceType": r.meta.Source, "resolution": r.meta.Resolution, "effect": r.meta.Effect, "season_episode": text(r.data["season_episode"]), "releaseGroup": localLibraryName(r.meta.Team, media), "customization": localLibraryName(r.meta.Customization, media)}
+	values := map[string]string{"title": localLibraryName(text(r.data["title"]), media), "name": localLibraryName(r.meta.Title, media), "year": text(r.data["year"]), "tmdbid": text(r.data["tmdbid"]), "original_title": localLibraryName(text(r.detail.Attributes["original_title"]), media), "part": r.meta.Part, "videoFormat": r.meta.Resolution, "videoCodec": r.meta.VideoCodec, "audioCodec": r.meta.AudioCodec, "resourceType": r.meta.Source, "resolution": r.meta.Resolution, "effect": r.meta.Effect, "season_episode": text(r.data["season_episode"]), "releaseGroup": localLibraryName(r.meta.Team, media), "customization": localLibraryName(r.meta.Customization, media)}
 	year, _ := strconv.Atoi(values["year"])
 	decade := year / 10 * 10
 	values["decade_short"] = strconv.Itoa(decade) + "s"

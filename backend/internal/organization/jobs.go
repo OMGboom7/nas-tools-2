@@ -36,6 +36,7 @@ func ModeLabel(mode string) string {
 }
 
 type Entry struct {
+	Part          string `json:"part,omitempty"`
 	Assigned      bool   `json:"assigned,omitempty"`
 	Source        string `json:"source"`
 	Target        string `json:"target"`
