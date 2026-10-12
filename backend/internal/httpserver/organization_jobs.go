@@ -73,7 +73,7 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 		organizationPlanInput
 		Fingerprint string `json:"fingerprint"`
 	}
-	if !decodeServiceRequest(w, r, &input, "invalid organization job request") {
+	if !decodeOrganizationRequest(w, r, &input, "invalid organization job request") {
 		return
 	}
 	if !organization.SupportedMode(input.Mode) || len(input.Fingerprint) != 64 {
@@ -157,7 +157,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		ConfirmDiscardStaging      bool `json:"confirmDiscardStaging"`
 		ConfirmOldExecutorsStopped bool `json:"confirmOldExecutorsStopped"`
 	}
-	if !decodeServiceRequest(w, r, &input, "invalid organization confirmation") {
+	if !decodeOrganizationRequest(w, r, &input, "invalid organization confirmation") {
 		return
 	}
 	if !input.Confirm {

@@ -6,8 +6,36 @@ import ts from "typescript";
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { getOrganizationRoots, previewOrganization, getOrganizationJobs, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext } });
-const { canAbandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
+const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
+
+test("manual identity preserves the exact source snapshot and requires explicit TV season/episode", () => {
+  const file = { source: "unknown.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };
+  assert.deepEqual(buildOrganizationAssignment(file, "movie", "300", "", "", ""), { source: file.source, identity: file.identity, size: file.size, modified: file.modified, kind: "movie", tmdbId: "300" });
+  assert.deepEqual(buildOrganizationAssignment(file, "tv", "200", "0", "1", "3"), { source: file.source, identity: file.identity, size: file.size, modified: file.modified, kind: "tv", tmdbId: "200", season: 0, episode: 1, endEpisode: 3 });
+  for (const id of ["", "0300", "../300", "9223372036854775808"]) assert.throws(() => buildOrganizationAssignment(file, "movie", id, "", "", ""));
+  assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "", "1", ""));
+  assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "1", "3", "2"));
+  assert.throws(() => buildOrganizationAssignment({ ...file, kind: "subtitle" }, "movie", "300", "", "", ""));
+});
+
+test("manual preview and creation carry the same assignments and never execute", async (t) => {
+  const assignments = [{ source: "unknown.mkv", identity: "1:2", size: 100, modified: "1791500000123456789", kind: "movie", tmdbId: "300" }];
+  const input = { sourceId: "s", targetId: "t", path: ".", mode: "copy", assignments };
+  const fingerprint = "d".repeat(64);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.Authorization, "token");
+    assert.equal(path, calls === 1 ? "/api/v1/organization/plan" : "/api/v1/organization/jobs");
+    assert.deepEqual(JSON.parse(options.body), calls === 1 ? input : { ...input, fingerprint });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { previewOnly: true, fingerprint } : { id: "saved", state: "ready" } }));
+  });
+  const preview = await previewOrganization("token", input);
+  await createOrganizationJob("token", { ...input, fingerprint: preview.fingerprint });
+  assert.equal(calls, 2);
+});
 
 test("partial staging is eligible for explicit disposal, not uncertain or published work", () => {
   const job = (...states) => ({ state: "needs_review", items: states.map((state) => ({ state })) });

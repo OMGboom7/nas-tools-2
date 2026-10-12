@@ -103,6 +103,10 @@ func (api mediaNameAPI) recognize(ctx context.Context, title, subtitle string) (
 }
 
 func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forcedKind string) (*nativeRecognition, *recognitionFailure) {
+	return api.recognizeSelected(ctx, title, subtitle, forcedKind, "", nil)
+}
+
+func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo) (*nativeRecognition, *recognitionFailure) {
 	if forcedKind != "" && forcedKind != "movie" && forcedKind != "tv" {
 		return nil, &recognitionFailure{422, "invalid media type"}
 	}
@@ -129,7 +133,7 @@ func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forc
 	if err != nil {
 		return nil, &recognitionFailure{400, "invalid media metadata"}
 	}
-	if meta.Title == "" {
+	if meta.Title == "" && selectedID == "" {
 		return nil, nil
 	}
 	kind, mediaType := "movie", "MOV"
@@ -137,8 +141,14 @@ func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forc
 		kind, mediaType = "tv", "TV"
 	}
 	meta.Episodes.TV = kind == "tv"
+	if selectedEpisodes != nil {
+		meta.Episodes = *selectedEpisodes
+	}
 	input := subscriptionUpsertRequest{Name: meta.Title, Year: meta.Year, Type: mediaType}
-	id, err := api.service.resolveNativeMediaID(ctx, input, true)
+	id := selectedID
+	if id == "" {
+		id, err = api.service.resolveNativeMediaID(ctx, input, true)
+	}
 	if err == nil && id == "" && !meta.Episodes.TV && forcedKind == "" {
 		input.Type, kind = "TV", "tv"
 		id, err = api.service.resolveNativeMediaID(ctx, input, true)
@@ -179,6 +189,10 @@ func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forc
 		return nil, &recognitionFailure{502, "media category configuration is unavailable"}
 	}
 	year := meta.Year
+	if selectedID != "" {
+		year = ""
+		meta.Title = verifiedTitle
+	}
 	if len(date) >= 4 {
 		if _, err := strconv.Atoi(date[:4]); err == nil {
 			year = date[:4]

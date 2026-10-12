@@ -675,14 +675,16 @@ export async function getSubscriptions(token: string): Promise<SubscriptionsData
 
 export type OrganizationRoot = { id: string; path: string; label: string; type: string };
 export type OrganizationRoots = { sources: OrganizationRoot[]; targets: OrganizationRoot[]; executionModes?: string[] };
-export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string }> };
-export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string }> };
+export type OrganizationMediaAssignment = { source: string; identity: string; modified: string; size: number; kind: "movie" | "tv"; tmdbId: string; season?: number; episode?: number; endEpisode?: number };
+export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[] };
+export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; assigned?: boolean }> };
+export type OrganizationJob = { id: string; fingerprint: string; created: string; state: string; mode: string; sourceRoot: string; targetRoot: string; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean }> };
 export async function getOrganizationRoots(token: string): Promise<OrganizationRoots> {
   const result = await readResponse<OrganizationRoots>(await fetch("/api/v1/organization/roots", { headers: { Authorization: token } }));
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理目录加载失败", result.code);
   return result.data;
 }
-export async function previewOrganization(token: string, input: { sourceId: string; targetId: string; path: string; mode: string }): Promise<OrganizationPlan> {
+export async function previewOrganization(token: string, input: OrganizationPlanInput): Promise<OrganizationPlan> {
   const result = await readResponse<OrganizationPlan>(await fetch("/api/v1/organization/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
   if (!result.success || result.code !== 0 || !result.data || result.data.previewOnly !== true || typeof result.data.fingerprint !== "string" || result.data.fingerprint.length !== 64) throw new ApiError(result.message || "整理预览失败", result.code);
   return result.data;
@@ -692,7 +694,7 @@ export async function getOrganizationJobs(token: string): Promise<OrganizationJo
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务加载失败", result.code);
   return result.data;
 }
-export async function createOrganizationJob(token: string, input: { sourceId: string; targetId: string; path: string; mode: string; fingerprint: string }): Promise<OrganizationJob> {
+export async function createOrganizationJob(token: string, input: OrganizationPlanInput & { fingerprint: string }): Promise<OrganizationJob> {
   const result = await readResponse<OrganizationJob>(await fetch("/api/v1/organization/jobs", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "整理任务创建失败", result.code);
   return result.data;

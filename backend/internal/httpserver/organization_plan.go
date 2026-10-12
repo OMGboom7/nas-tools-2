@@ -36,12 +36,14 @@ type organizationRoots struct {
 	ExecutionModes []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
-	SourceID string `json:"sourceId"`
-	TargetID string `json:"targetId"`
-	Path     string `json:"path"`
-	Mode     string `json:"mode"`
+	SourceID    string                        `json:"sourceId"`
+	TargetID    string                        `json:"targetId"`
+	Path        string                        `json:"path"`
+	Mode        string                        `json:"mode"`
+	Assignments []organizationMediaAssignment `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
+	Assigned      bool   `json:"assigned,omitempty"`
 	Source        string `json:"source"`
 	Target        string `json:"target,omitempty"`
 	Kind          string `json:"kind"`
@@ -223,7 +225,7 @@ func (api organizationAPI) servePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input organizationPlanInput
-	if !decodeServiceRequest(w, r, &input, "invalid organization preview request") {
+	if !decodeOrganizationRequest(w, r, &input, "invalid organization preview request") {
 		return
 	}
 	if input.Path == "" {
@@ -309,6 +311,10 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if mediaCount > 100 {
 		return fail(422, "preview is limited to 100 media files; select a smaller folder")
 	}
+	assignments, failure := organizationAssignments(input.Assignments, scan.Files)
+	if failure != nil {
+		return fail(failure.status, failure.message)
+	}
 	snapshot, err := api.service.configStore.Snapshot()
 	if err != nil {
 		return fail(503, "organization configuration is unavailable")
@@ -364,7 +370,14 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			result.Items = append(result.Items, item)
 			continue
 		}
-		recognition, failure := api.recognition.recognize(ctx, filepath.Base(file.Path), "")
+		var recognition *nativeRecognition
+		var failure *recognitionFailure
+		if assignment, exists := assignments[file.Path]; exists {
+			item.Assigned = true
+			recognition, failure = api.recognition.recognizeAssigned(ctx, filepath.Base(file.Path), assignment)
+		} else {
+			recognition, failure = api.recognition.recognize(ctx, filepath.Base(file.Path), "")
+		}
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
 		}
@@ -447,6 +460,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		suffix := strings.TrimPrefix(filepath.Base(item.Source), stem)
 		item.Target = strings.TrimSuffix(video.Target, filepath.Ext(video.Target)) + suffix
 		item.TMDBID = video.TMDBID
+		item.Assigned = video.Assigned
 		item.Title, item.Year, item.MediaType, item.Category, item.SeasonEpisode = video.Title, video.Year, video.MediaType, video.Category, video.SeasonEpisode
 		item.Status, err = organization.TargetStatus(ctx, target.Path, item.Target)
 		if err != nil {
@@ -486,7 +500,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 }
 
 func (item organizationPlanItem) entry() organization.Entry {
-	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode}
+	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned}
 }
 
 func markOrganizationConflicts(items []organizationPlanItem) {
