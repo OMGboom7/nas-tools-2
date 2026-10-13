@@ -326,11 +326,11 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if mediaCount > 100 {
 		return fail(422, "preview is limited to 100 media files; select a smaller folder")
 	}
-	assignments, failure := organizationAssignments(input.Assignments, scan.Files)
+	assignments, failure := organizationAssignments(ctx, input.Assignments, scan.Files)
 	if failure != nil {
 		return fail(failure.status, failure.message)
 	}
-	episodeSelection, batchAssignments, dispositions, failure := organizationEpisodeSelection(input.EpisodeSelection, scan.Files, input.Assignments)
+	episodeSelection, batchAssignments, dispositions, failure := organizationEpisodeSelection(ctx, input.EpisodeSelection, scan.Files, input.Assignments)
 	if failure != nil {
 		return fail(failure.status, failure.message)
 	}

@@ -45,12 +45,15 @@ type organizationMediaAssignment struct {
 	PartOverride  *string `json:"partOverride,omitempty"`
 }
 
-func organizationAssignments(input []organizationMediaAssignment, files []organization.File) (map[string]organizationMediaAssignment, *recognitionFailure) {
+func organizationAssignments(ctx context.Context, input []organizationMediaAssignment, files []organization.File) (map[string]organizationMediaAssignment, *recognitionFailure) {
 	result := map[string]organizationMediaAssignment{}
 	if len(input) > 100 {
 		return nil, &recognitionFailure{422, "manual media selection is limited to 100 files"}
 	}
 	for _, selection := range input {
+		if ctx.Err() != nil {
+			return nil, &recognitionFailure{504, "organization episode selection was cancelled or timed out"}
+		}
 		id, err := strconv.ParseInt(selection.TMDBID, 10, 64)
 		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != selection.TMDBID || selection.Kind != "movie" && selection.Kind != "tv" || selection.Source == "" || selection.Identity == "" || selection.Modified == "" || selection.Size < 0 {
 			return nil, &recognitionFailure{422, "invalid manual media selector or file snapshot"}
@@ -99,7 +102,11 @@ func organizationAssignments(input []organizationMediaAssignment, files []organi
 				if selection.Episode != nil || selection.EndEpisode != nil {
 					return nil, &recognitionFailure{422, "choose explicit episodes or a filename template, not both"}
 				}
-				start, end, err = mediameta.FormattedEpisodes(filepath.Base(selection.Source), selection.EpisodeFormat, selection.EpisodeOffset)
+				var compiled *mediameta.FilenameEpisodeFormat
+				compiled, err = mediameta.CompileEpisodeFormat(selection.EpisodeFormat)
+				if err == nil {
+					start, end, err = compiled.EpisodesContext(ctx, filepath.Base(selection.Source), selection.EpisodeOffset)
+				}
 			} else {
 				if selection.Episode == nil {
 					return nil, &recognitionFailure{422, "TV identity requires an explicit episode or filename template"}
@@ -107,6 +114,9 @@ func organizationAssignments(input []organizationMediaAssignment, files []organi
 				start, end, err = mediameta.OffsetEpisodes(*selection.Episode, selection.EndEpisode, selection.EpisodeOffset)
 			}
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil, &recognitionFailure{504, "organization episode selection was cancelled or timed out"}
+				}
 				return nil, &recognitionFailure{422, err.Error()}
 			}
 			selection.Episode, selection.EndEpisode = &start, end

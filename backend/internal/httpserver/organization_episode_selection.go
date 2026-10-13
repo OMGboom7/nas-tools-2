@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strconv"
@@ -11,7 +12,7 @@ import (
 
 type organizationEpisodeDisposition struct{ Status, Reason string }
 
-func organizationEpisodeSelection(input *organization.EpisodeSelection, files []organization.File, individual []organizationMediaAssignment) (*organization.EpisodeSelection, map[string]organizationMediaAssignment, map[string]organizationEpisodeDisposition, *recognitionFailure) {
+func organizationEpisodeSelection(ctx context.Context, input *organization.EpisodeSelection, files []organization.File, individual []organizationMediaAssignment) (*organization.EpisodeSelection, map[string]organizationMediaAssignment, map[string]organizationEpisodeDisposition, *recognitionFailure) {
 	selected := map[string]organizationMediaAssignment{}
 	excluded := map[string]organizationEpisodeDisposition{}
 	if input == nil {
@@ -46,10 +47,16 @@ func organizationEpisodeSelection(input *organization.EpisodeSelection, files []
 		return fail(err.Error())
 	}
 	for _, file := range files {
+		if ctx.Err() != nil {
+			return nil, nil, nil, &recognitionFailure{504, "organization episode selection was cancelled or timed out"}
+		}
 		if file.Kind != "media" {
 			continue
 		}
-		start, end, err := compiled.Episodes(filepath.Base(file.Path), 0)
+		start, end, err := compiled.EpisodesContext(ctx, filepath.Base(file.Path), 0)
+		if ctx.Err() != nil {
+			return nil, nil, nil, &recognitionFailure{504, "organization episode selection was cancelled or timed out"}
+		}
 		if err != nil {
 			status := "blocked"
 			if errors.Is(err, mediameta.ErrEpisodeTemplateNoMatch) {

@@ -1,5 +1,16 @@
 // Client-side input checks only; the server matches the actual scan, filters
 // before offset, and verifies identity and real season bounds before planning.
+function hasEpisodeTemplateField(format: string): boolean {
+  for (let i = 0; i < format.length; i++) {
+    if ((format[i] === "{" && format[i+1] === "{") || (format[i] === "}" && format[i+1] === "}")) { i++; continue; }
+    if (format[i] !== "{") continue;
+    const end = format.indexOf("}", i+1);
+    if (end < 0) return false;
+    if (format.slice(i+1, end).split(":", 1)[0] === "ep") return true;
+    i = end;
+  }
+  return false;
+}
 export function buildOrganizationEpisodeSelection(id: string, season: string, format: string, start: string, end: string, offset: string): import("../api/client").OrganizationEpisodeSelection {
   const tmdbId = id.trim();
   if (!/^[1-9]\d{0,18}$/.test(tmdbId) || BigInt(tmdbId) > 9223372036854775807n) throw new Error("请输入有效的 TV TMDB ID。");
@@ -9,7 +20,7 @@ export function buildOrganizationEpisodeSelection(id: string, season: string, fo
     if (!Number.isSafeInteger(n) || n < low || n > high) throw new Error("批量季集选择超出范围。");
     return n;
   };
-  if (!format.includes("{ep}") || new TextEncoder().encode(format).length > 512) throw new Error("文件名模板须包含 {ep}，且不超过 512 字节。");
+  if (!hasEpisodeTemplateField(format) || new TextEncoder().encode(format).length > 512) throw new Error("文件名模板须包含文字型 ep 字段，且不超过 512 字节。");
   const rule: import("../api/client").OrganizationEpisodeSelection = { tmdbId, season: integer(season, 0, 99), episodeFormat: format };
   if (start.trim() || end.trim()) {
     rule.startEpisode = integer(start, 1, 9999);
@@ -50,7 +61,7 @@ export function buildOrganizationAssignment(file: { source: string; kind: string
     };
     assignment.season = parse(season, 0, 99);
     if (episodeFormat) {
-      if (episodeFormat.length > 512 || !episodeFormat.includes("{ep}")) throw new Error("文件名模板须包含 {ep}，且不超过 512 字符。");
+      if (new TextEncoder().encode(episodeFormat).length > 512 || !hasEpisodeTemplateField(episodeFormat)) throw new Error("文件名模板须包含文字型 ep 字段，且不超过 512 字节。");
       assignment.episodeFormat = episodeFormat;
     } else {
       assignment.episode = parse(episode, 1, 9999);
