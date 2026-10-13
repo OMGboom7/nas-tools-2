@@ -101,7 +101,11 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 		return err
 	}
 	actualState := current.State
-	current.State = "N"
+	if job.Definition.Unknown.State == "N" {
+		current.State = "N"
+	} else if !job.Definition.UnknownAllowProcessed || job.Definition.Unknown.State != "Y" || actualState != "Y" {
+		return ErrState
+	}
 	if (actualState != "N" && actualState != "Y") || Digest(current) != Digest(*job.Definition.Unknown) {
 		return ErrState
 	}
@@ -142,7 +146,7 @@ func (s *Store) VerifyUnknown(ctx context.Context, job Job) error {
 	if err != nil {
 		return err
 	}
-	if current.State != "N" || Digest(current) != Digest(*job.Definition.Unknown) {
+	if current.State != "N" && !(job.Definition.UnknownAllowProcessed && current.State == "Y") || Digest(current) != Digest(*job.Definition.Unknown) {
 		return ErrState
 	}
 	return nil

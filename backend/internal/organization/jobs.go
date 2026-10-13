@@ -65,22 +65,31 @@ type EpisodeSelection struct {
 	PartOverride  *string `json:"partOverride,omitempty"`
 }
 
+type LegacyOrganizationOrigin struct {
+	Action   string `json:"action"`
+	Kind     string `json:"kind"`
+	RecordID string `json:"recordId"`
+	Actor    string `json:"actor"`
+}
+
 type Definition struct {
-	EpisodeSelection     *EpisodeSelection `json:"episodeSelection,omitempty"`
-	History              *HistoryRecord    `json:"history,omitempty"`
-	Unknown              *UnknownRecord    `json:"unknown,omitempty"`
-	UnknownScope         string            `json:"unknownScope,omitempty"`
-	UnknownScopeIdentity string            `json:"unknownScopeIdentity,omitempty"`
-	UnknownDirectory     bool              `json:"unknownDirectory,omitempty"`
-	SourceRoot           string            `json:"sourceRoot"`
-	TargetRoot           string            `json:"targetRoot"`
-	SourceIdentity       string            `json:"sourceIdentity"`
-	TargetIdentity       string            `json:"targetIdentity"`
-	ConfigDigest         string            `json:"configDigest"`
-	SourceID             string            `json:"sourceId"`
-	TargetID             string            `json:"targetId"`
-	Mode                 string            `json:"mode"`
-	Entries              []Entry           `json:"entries"`
+	LegacyOrigin          *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
+	UnknownAllowProcessed bool                      `json:"unknownAllowProcessed,omitempty"`
+	EpisodeSelection      *EpisodeSelection         `json:"episodeSelection,omitempty"`
+	History               *HistoryRecord            `json:"history,omitempty"`
+	Unknown               *UnknownRecord            `json:"unknown,omitempty"`
+	UnknownScope          string                    `json:"unknownScope,omitempty"`
+	UnknownScopeIdentity  string                    `json:"unknownScopeIdentity,omitempty"`
+	UnknownDirectory      bool                      `json:"unknownDirectory,omitempty"`
+	SourceRoot            string                    `json:"sourceRoot"`
+	TargetRoot            string                    `json:"targetRoot"`
+	SourceIdentity        string                    `json:"sourceIdentity"`
+	TargetIdentity        string                    `json:"targetIdentity"`
+	ConfigDigest          string                    `json:"configDigest"`
+	SourceID              string                    `json:"sourceId"`
+	TargetID              string                    `json:"targetId"`
+	Mode                  string                    `json:"mode"`
+	Entries               []Entry                   `json:"entries"`
 }
 
 type Proof struct {
@@ -107,20 +116,21 @@ type JobItem struct {
 }
 
 type Job struct {
-	EpisodeSelection *EpisodeSelection     `json:"episodeSelection,omitempty"`
-	HistoryRecordID  int64                 `json:"historyRecordId,omitempty"`
-	UnknownDetach    *UnknownDetachReceipt `json:"unknownDetach,omitempty"`
-	UnknownRecordID  int64                 `json:"unknownRecordId,omitempty"`
-	UnknownState     string                `json:"unknownState,omitempty"`
-	ID               string                `json:"id"`
-	Fingerprint      string                `json:"fingerprint"`
-	Created          string                `json:"created"`
-	State            string                `json:"state"`
-	Mode             string                `json:"mode"`
-	SourceRoot       string                `json:"sourceRoot"`
-	TargetRoot       string                `json:"targetRoot"`
-	Items            []JobItem             `json:"items"`
-	Definition       Definition            `json:"-"`
+	LegacyOrigin     *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
+	EpisodeSelection *EpisodeSelection         `json:"episodeSelection,omitempty"`
+	HistoryRecordID  int64                     `json:"historyRecordId,omitempty"`
+	UnknownDetach    *UnknownDetachReceipt     `json:"unknownDetach,omitempty"`
+	UnknownRecordID  int64                     `json:"unknownRecordId,omitempty"`
+	UnknownState     string                    `json:"unknownState,omitempty"`
+	ID               string                    `json:"id"`
+	Fingerprint      string                    `json:"fingerprint"`
+	Created          string                    `json:"created"`
+	State            string                    `json:"state"`
+	Mode             string                    `json:"mode"`
+	SourceRoot       string                    `json:"sourceRoot"`
+	TargetRoot       string                    `json:"targetRoot"`
+	Items            []JobItem                 `json:"items"`
+	Definition       Definition                `json:"-"`
 }
 
 type Store struct {
@@ -219,7 +229,7 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 		if err != nil {
 			return "", err
 		}
-		if current.State != "N" || Digest(current) != Digest(*d.Unknown) {
+		if current.State != "N" && !(d.UnknownAllowProcessed && current.State == "Y") || Digest(current) != Digest(*d.Unknown) {
 			return "", ErrState
 		}
 		var claims int
@@ -280,6 +290,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	}
 	job.EpisodeSelection = job.Definition.EpisodeSelection
 	job.Mode = job.Definition.Mode
+	job.LegacyOrigin = job.Definition.LegacyOrigin
 	if job.Definition.History != nil {
 		job.HistoryRecordID = job.Definition.History.ID
 	}

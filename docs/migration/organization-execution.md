@@ -57,6 +57,14 @@ React 提供基于当前预览文件列表的选择、TMDB ID 和明确季集输
 
 ## 写入、去重与恢复
 
+2026-10-13 旧重识别实际执行补充：Go-only 管理员的旧 `POST /api/v1/organization/unknown/redo` 支持 JSON 或表单明确 `flag=unidentification|history`、最多 100 个规范 ID；旧帮助中的 unknow 按未识别语义处理，未知 flag、空/重复 ID、多余字段拒绝，不返回假成功。该 POST 是旧调用者明确请求当前记录原来源转移的操作，不是预览。读取存量记录原路径/目标/方式及快照，在当前启用配置根中生成实际原生计划，预留前再次扫描/核验同一计划指纹，再保存并执行真实任务。缺方式时使用有效的 pt.rmt_mode（缺省 copy），非本地方式不退化为 copy；缺目标仅尝试匹配的已配置媒体库，不改到任意同步目录。
+
+移动另须 `confirmSourceRemoval=true`，已规划移动而缺确认时在建任何任务前拒绝。执行沿用同任务跨进程锁、配置/根/文件快照、稳定源、写入前凭证、正向发布、历史及移动清理回执；不会自动续办 running/staging/prepared/移动中等不确定状态。旧请求可重识别 N 或 Y 记录：Y 的原状态保留并作为快照核验，不先重置 N，也不以 Y 当作文件成功证明；只在明确兼容调用中设置私有允许参数，普通原生计划 JSON 不能注入该权限。存量未知目录须全范围可规划/无跳过项，最终兼容回执按精确 ID 和源范围结算，不批量标同路径其他记录。
+
+历史重识别只操作原 SOURCE_PATH/SOURCE_FILENAME，不把缺失原源替换为已发布目标；原历史、旧目标媒体保持原状，新正向成功才追加历史。任务保存并公开 legacyOrigin（请求类型、原记录 ID 字符串及核验操作者），React 保存任务显示该来源；失败可读取账本，但不因为接口报错或丢失响应就自动重发执行。旧响应信封保留，data.results 提供逐 ID 的 jobId、真实状态和失败码；只有全部已完成及兼容回执提交才 code=0/success=true。部分失败明确 code=2/success=false，不把保存或预览当转移完成。
+
+临时文件/SQLite/模拟 TMDB 覆盖两类记录四模式、N/Y 状态、方式缺省、逐记录部分结果、独立移动授权、变更记录/原源丢失/目标已有及不确定状态拒绝、原历史/旧媒体保留和私有权限不可注入；前端来源加载仅只读。当前执行仍限已配置且可完整映射为一个目标的本地范围：多默认目标的混合媒体范围、蓝光/远程、原地覆盖式修复及旧 rename/renameudf 尚未完成，不以失败响应替代这些最终保留能力。真实 NAS/浏览器及生产切换未验收，Python 不删除。
+
 2026-10-13 未识别记录管理与旧接口接管：保留旧“删除未识别记录”的数据库行操作，而不是媒体删除。管理员 `POST /api/v1/organization/unknown/list` 原生只读返回旧 `code/success/message/data.items`，包含 `id/path/to/name/sync_mode/rmt_mode`；按旧展示规则规范斜杠、跳过空 PATH 和非 N 状态，未知非空方式的 rmt_mode 为 null，不改原行、不验证文件存在。全量结果以流式 JSON 输出，不偷偷截断到原生分页的 30 条；读/写流失败不完成 JSON，不返回一个貌似完整的部分成功列表。缺原表返回空数据，不创建空表，不调用 Python。
 
 Go-only 管理员可 `GET /unknown/{id}/delete-review` 读取原始五字段（保留 NULL）、pending 关联及审核摘要，再明确 `POST /unknown/{id}/delete`（`confirm:true,confirmRecordDeletion:true,reviewFingerprint`）。事务重新核对完整原行及关联；任何 pending 关联，包括文件已成功但尚未结算的任务，均禁止删除。不取消/解除关联、不标 Y、不释放目标预留、不改历史、不接触源/目标/暂存。原行删除与 `GO_ORGANIZATION_UNKNOWN_DELETE` 不可覆盖的原始行/操作者/UTC 时间回执同事务提交；失败全部回滚。恢复前还校验回执原行摘要及 ID，一致性不足不接管。

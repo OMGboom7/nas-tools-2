@@ -178,7 +178,7 @@ func (api organizationAPI) bindUnknown(ctx context.Context, input organizationPl
 	if err != nil {
 		return nil, &recognitionFailure{409, "unknown record unavailable; refresh its saved state"}
 	}
-	if record.State != "N" || organization.Digest(record) != selector.Fingerprint {
+	if record.State != "N" && !(input.AllowProcessedUnknown && record.State == "Y") || organization.Digest(record) != selector.Fingerprint {
 		return nil, &recognitionFailure{409, "unknown record changed; refresh before planning"}
 	}
 	projection := projectUnknown(record, roots)

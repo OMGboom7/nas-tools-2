@@ -350,6 +350,20 @@ test("copy execution failure is never automatically retried or replaced by recon
   assert.equal(calls, 1);
 });
 
+test("legacy re-identification provenance loads as a readonly saved job", async (t) => {
+  const legacyOrigin = { action: "redo", kind: "unidentification", recordId: "9223372036854775807", actor: "admin" };
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, "/api/v1/organization/jobs/legacy-job");
+    assert.equal(options.method, undefined);
+    assert.equal(options.headers.Authorization, "token");
+    return new Response(JSON.stringify({ code: 0, success: true, data: { id: "legacy-job", legacyOrigin, state: "needs_review" } }));
+  });
+  assert.deepEqual((await getOrganizationJob("token", "legacy-job")).legacyOrigin, legacyOrigin);
+  assert.equal(calls, 1);
+});
+
 test("saved copy jobs reload without triggering execution", async (t) => {
   t.mock.method(globalThis, "fetch", async (path, options) => {
     assert.equal(path, "/api/v1/organization/jobs");

@@ -38,14 +38,15 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
-	EpisodeSelection *organization.EpisodeSelection `json:"episodeSelection,omitempty"`
-	HistoryRecord    *organizationHistorySelector   `json:"historyRecord,omitempty"`
-	UnknownRecord    *organizationUnknownSelector   `json:"unknownRecord,omitempty"`
-	SourceID         string                         `json:"sourceId"`
-	TargetID         string                         `json:"targetId"`
-	Path             string                         `json:"path"`
-	Mode             string                         `json:"mode"`
-	Assignments      []organizationMediaAssignment  `json:"assignments,omitempty"`
+	AllowProcessedUnknown bool                           `json:"-"`
+	EpisodeSelection      *organization.EpisodeSelection `json:"episodeSelection,omitempty"`
+	HistoryRecord         *organizationHistorySelector   `json:"historyRecord,omitempty"`
+	UnknownRecord         *organizationUnknownSelector   `json:"unknownRecord,omitempty"`
+	SourceID              string                         `json:"sourceId"`
+	TargetID              string                         `json:"targetId"`
+	Path                  string                         `json:"path"`
+	Mode                  string                         `json:"mode"`
+	Assignments           []organizationMediaAssignment  `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
 	PartOverride  *string `json:"partOverride,omitempty"`
@@ -352,6 +353,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.UnknownAllowProcessed = input.AllowProcessedUnknown && unknown != nil && unknown.State == "Y"
 	result.definition.EpisodeSelection = episodeSelection
 	result.definition.History = history
 	if result.definition.ConfigDigest == "" {
