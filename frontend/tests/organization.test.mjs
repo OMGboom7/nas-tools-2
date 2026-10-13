@@ -10,6 +10,7 @@ const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organi
 const { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
 test("batch episode selection requires explicit TV identity, season, template and paired filter", () => {
+  assert.equal(buildOrganizationEpisodeSelection("200", "1", "Show.{date:ti}.{ep}.mkv", "", "", "").episodeFormat, "Show.{date:ti}.{ep}.mkv");
   assert.equal(buildOrganizationEpisodeSelection("200", "1", "{{Show}}.{ep:4}.mkv", "", "", "").episodeFormat, "{{Show}}.{ep:4}.mkv");
   assert.throws(() => buildOrganizationEpisodeSelection("200", "1", "{{ep}}.mkv", "", "", ""));
   assert.deepEqual(buildOrganizationEpisodeSelection("200", "1", "Wrong.{ep}.mkv", "11", "11", "-10"), { tmdbId: "200", season: 1, episodeFormat: "Wrong.{ep}.mkv", startEpisode: 11, endEpisode: 11, episodeOffset: -10 });
@@ -88,6 +89,7 @@ test("release parts survive readonly preview and persisted job loading", async (
 test("filename episode rules and offsets stay explicit and do not override server bounds", () => {
   const file = { source: "Show.11.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };
   const selection = buildOrganizationAssignment(file, "tv", "200", "1", "", "", "Show.{ep}.mkv", "-10");
+  assert.equal(buildOrganizationAssignment(file, "tv", "200", "1", "", "", "Show.{date:ti}.{ep}.mkv", "-10").episodeFormat, "Show.{date:ti}.{ep}.mkv");
   assert.equal(buildOrganizationAssignment(file, "tv", "200", "1", "", "", "{{Show}}.{ep:4}.mkv", "-10").episodeFormat, "{{Show}}.{ep:4}.mkv");
   assert.throws(() => buildOrganizationAssignment(file, "tv", "200", "1", "", "", "{{ep}}.mkv", "0"));
   assert.equal(selection.episodeFormat, "Show.{ep}.mkv");

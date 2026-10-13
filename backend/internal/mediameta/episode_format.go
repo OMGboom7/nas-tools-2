@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -24,6 +25,7 @@ var ErrEpisodeTemplateNoMatch = errors.New("episode template does not match sele
 type FilenameEpisodeFormat struct {
 	pattern  *regexp.Regexp
 	repeated *regexp2.Regexp
+	calendar []episodeCalendarBinding
 }
 
 func FormattedEpisodes(filename, format string, offset int) (int, *int, error) {
@@ -44,6 +46,7 @@ func CompileEpisodeFormat(format string) (*FilenameEpisodeFormat, error) {
 	fields := map[string]binding{}
 	occurrences := 0
 	repeats := false
+	calendars := []episodeCalendarBinding{}
 	for i := 0; i < len(format); {
 		if i+1 < len(format) && ((format[i] == '{' && format[i+1] == '{') || (format[i] == '}' && format[i+1] == '}')) {
 			pattern.WriteString(regexp.QuoteMeta(format[i : i+1]))
@@ -81,6 +84,9 @@ func CompileEpisodeFormat(format string) (*FilenameEpisodeFormat, error) {
 					group = "episode"
 				}
 				pattern.WriteString(before + "(?P<" + group + ">" + core + ")" + after)
+				if kind := episodeCalendarKind(spec); kind != "" {
+					calendars = append(calendars, episodeCalendarBinding{group, kind})
+				}
 				if named {
 					fields[name] = binding{group, spec}
 				}
@@ -101,7 +107,7 @@ func CompileEpisodeFormat(format string) (*FilenameEpisodeFormat, error) {
 		return nil, errors.New("episode template requires a text {ep} field")
 	}
 	pattern.WriteString(`\z`)
-	result := &FilenameEpisodeFormat{}
+	result := &FilenameEpisodeFormat{calendar: calendars}
 	var err error
 	if repeats {
 		result.repeated, err = regexcompat.Compile(pattern.String(), regexp2.IgnoreCase|regexp2.Singleline)
@@ -126,6 +132,7 @@ func (f *FilenameEpisodeFormat) EpisodesContext(ctx context.Context, filename st
 		return 0, nil, errors.New("invalid episode filename")
 	}
 	value := ""
+	referenceYear := time.Now().Year()
 	if f.repeated != nil {
 		match, err := f.repeated.FindStringMatch(filename)
 		if err != nil {
@@ -138,12 +145,22 @@ func (f *FilenameEpisodeFormat) EpisodesContext(ctx context.Context, filename st
 			return 0, nil, ErrEpisodeTemplateNoMatch
 		}
 		value = match.GroupByName("episode").String()
+		for _, calendar := range f.calendar {
+			if err := validateEpisodeCalendar(calendar.kind, match.GroupByName(calendar.group).String(), referenceYear); err != nil {
+				return 0, nil, err
+			}
+		}
 	} else {
 		match := f.pattern.FindStringSubmatch(filename)
 		if match == nil {
 			return 0, nil, ErrEpisodeTemplateNoMatch
 		}
 		value = match[f.pattern.SubexpIndex("episode")]
+		for _, calendar := range f.calendar {
+			if err := validateEpisodeCalendar(calendar.kind, match[f.pattern.SubexpIndex(calendar.group)], referenceYear); err != nil {
+				return 0, nil, err
+			}
+		}
 	}
 	numbers := formattedEpisode.FindStringSubmatch(value)
 	if numbers == nil {

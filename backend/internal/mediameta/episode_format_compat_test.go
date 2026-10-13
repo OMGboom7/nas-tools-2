@@ -57,7 +57,7 @@ func TestEpisodeTemplateLegacyTextAndTypedFields(t *testing.T) {
 }
 
 func TestEpisodeTemplateRejectsInconsistentBindingsAndUnsupportedConversions(t *testing.T) {
-	for _, format := range []string{"{a}.Show.{ep}.{a:w}.mkv", "Show.{ep:d}.mkv", "Show.{ep:F}.mkv", "{a:ti}.Show.{ep}.mkv", "{a:__import__}.Show.{ep}.mkv", "Show.{ep:999999999}.mkv", "Show.{ep:5.4}.mkv", "{{ep}}.mkv", "{a:}.Show.{ep}.mkv"} {
+	for _, format := range []string{"{a}.Show.{ep}.{a:w}.mkv", "Show.{ep:d}.mkv", "Show.{ep:F}.mkv", "Show.{ep:ti}.mkv", "{a:__import__}.Show.{ep}.mkv", "Show.{ep:999999999}.mkv", "Show.{ep:5.4}.mkv", "{{ep}}.mkv", "{a:}.Show.{ep}.mkv"} {
 		if _, err := CompileEpisodeFormat(format); err == nil {
 			t.Fatal("accepted unsupported format", format)
 		}

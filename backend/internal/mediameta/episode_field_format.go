@@ -58,7 +58,7 @@ func episodeFieldPattern(spec string, episode bool) (string, string, string, err
 	}
 	kind := spec
 	numeric := strings.Contains("nbox%fegd", kind) && len(kind) == 1
-	if episode && (numeric || kind == "F") {
+	if episode && (numeric || kind == "F" || episodeCalendarKind(spec) != "") {
 		return "", "", "", errors.New("episode capture must remain text, not a numeric conversion")
 	}
 	core := ""
@@ -112,6 +112,8 @@ func episodeFieldPattern(spec string, episode bool) (string, string, string, err
 		core = `(?:[0-9]*\.[0-9]+e[-+]?[0-9]+|nan|inf)`
 	case "g":
 		core = `(?:[0-9]+(?:\.[0-9]+)?(?:e[-+]?[0-9]+)?|nan|inf)`
+	case "ti", "tg", "ta", "te", "th", "tc", "tt", "ts":
+		core = episodeCalendarFormats[kind].lexical
 	default:
 		return "", "", "", errors.New("unsupported episode template field type")
 	}

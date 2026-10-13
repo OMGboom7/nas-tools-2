@@ -238,7 +238,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
           {manualKind === "tv" && <>
             <label>季号（0 为特别篇）<input type="number" min="0" max="99" value={manualSeason} disabled={busy} required onChange={(event) => setManualSeason(event.target.value)} /></label>
             <label>集号定位模板（留空则使用下面的明确集号）<input value={manualEpisodeFormat} maxLength={512} disabled={busy} placeholder="Show.第{ep}集.{a}.mkv" onChange={(event) => setManualEpisodeFormat(event.target.value)} /></label>
-            <p>模板完整匹配所选文件名（含扩展名），字面忽略大小写。用 {'{ep}'} 标定数字或 EP11-EP13 范围；支持匿名字段、转义花括号、同值重复字段和文字宽度／对齐格式，如 {'{ep:4}'}。非集号字段支持常见字符及数值类型，集号必须保留文字；日期和自定义类型暂不支持。不会应用到目录中的其他文件。</p>
+            <p>模板完整匹配所选文件名（含扩展名），字面忽略大小写。用 {'{ep}'} 标定数字或 EP11-EP13 范围；支持匿名字段、转义花括号、同值重复字段和文字宽度／对齐格式，如 {'{ep:4}'}。非集号字段支持常见字符、数值和日期／时间类型（如 {'{date:ti}'}）；日期和时间须有效。集号必须保留文字，自定义类型暂不支持。不会应用到目录中的其他文件。</p>
             <label>起始集号<input type="number" min="1" max="9999" value={manualEpisode} disabled={busy || !!manualEpisodeFormat} required={!manualEpisodeFormat} onChange={(event) => setManualEpisode(event.target.value)} /></label>
             <label>结束集号（单集留空）<input type="number" min="1" max="9999" value={manualEndEpisode} disabled={busy || !!manualEpisodeFormat} onChange={(event) => setManualEndEpisode(event.target.value)} /></label>
             <label>集号偏移（留空为 0，如 -10）<input type="number" min="-99999" max="99999" step="1" value={manualEpisodeOffset} disabled={busy} onChange={(event) => setManualEpisodeOffset(event.target.value)} /></label>
