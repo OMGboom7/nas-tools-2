@@ -290,15 +290,25 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("GET /api/v1/subscriptions", subscriptions.serveList)
 	var organizationJobs *organization.Store
-	if cfg.DisableLegacy && nativeUserDatabasePath != "" && organization.CopySupported {
+	if cfg.DisableLegacy && nativeUserDatabasePath != "" {
 		organizationJobs, err = organization.OpenStore(nativeUserDatabasePath)
 		if err != nil {
 			return nil, fmt.Errorf("open native organization journal: %w", err)
 		}
 	}
-	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
+	organizationRecords := organizationJobs
+	if !organization.CopySupported {
+		organizationJobs = nil
+	}
+	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, records: organizationRecords, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("GET /api/v1/organization/unknown", organizer.serveUnknown)
+	mux.HandleFunc("POST /api/v1/organization/unknown/list", organizer.serveCompatUnknownList)
+	mux.HandleFunc("POST /api/v1/organization/unknown/delete", organizer.serveCompatUnknownDelete)
+	mux.HandleFunc("GET /api/v1/organization/unknown/{id}/delete-review", organizer.serveUnknownDeleteReview)
+	mux.HandleFunc("POST /api/v1/organization/unknown/{id}/delete", organizer.serveUnknownDelete)
+	mux.HandleFunc("GET /api/v1/organization/unknown/deletions", organizer.serveUnknownDeletes)
+	mux.HandleFunc("POST /api/v1/organization/unknown/deletions/{receipt}/restore", organizer.serveUnknownRestore)
 	mux.HandleFunc("GET /api/v1/organization/history", organizer.serveHistoryRecords)
 	mux.HandleFunc("POST /api/v1/organization/plan", organizer.servePlan)
 	mux.HandleFunc("GET /api/v1/organization/jobs", organizer.serveJobs)

@@ -22,6 +22,7 @@ type organizationAPI struct {
 	auth        *nativeAuthentication
 	recognition mediaNameAPI
 	jobs        *organization.Store
+	records     *organization.Store
 	pureGo      bool
 }
 type organizationRoot struct {
@@ -31,9 +32,10 @@ type organizationRoot struct {
 	Type  string `json:"type"`
 }
 type organizationRoots struct {
-	Sources        []organizationRoot `json:"sources"`
-	Targets        []organizationRoot `json:"targets"`
-	ExecutionModes []string           `json:"executionModes"`
+	RecordManagement bool               `json:"recordManagement"`
+	Sources          []organizationRoot `json:"sources"`
+	Targets          []organizationRoot `json:"targets"`
+	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
 	EpisodeSelection *organization.EpisodeSelection `json:"episodeSelection,omitempty"`
@@ -108,6 +110,7 @@ func (api organizationAPI) serveRoots(w http.ResponseWriter, r *http.Request) {
 
 func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error) {
 	result := organizationRoots{Sources: []organizationRoot{}, Targets: []organizationRoot{}, ExecutionModes: []string{}}
+	result.RecordManagement = api.pureGo && api.records != nil
 	if api.pureGo && api.jobs != nil && organization.CopySupported {
 		result.ExecutionModes = []string{"copy", "link", "softlink", "move"}
 	}

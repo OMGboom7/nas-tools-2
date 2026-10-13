@@ -5,7 +5,50 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+
+test("unknown deletion review and audit listing are readonly and preserve exact large IDs and NULL", async (t) => {
+  const id = "9223372036854775807";
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.method, undefined);
+    assert.equal(options.headers.Authorization, "token");
+    assert.equal(path, calls === 1 ? `/api/v1/organization/unknown/${id}/delete-review` : "/api/v1/organization/unknown/deletions");
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { record: { id, path: null, dest: null, mode: null, state: null }, eligible: true, fingerprint: "a".repeat(64) } : [] }));
+  });
+  const review = await reviewUnknownDelete("token", id);
+  assert.equal(review.record.id, id);
+  assert.equal(review.record.path, null);
+  assert.deepEqual(await getUnknownDeletions("token"), []);
+  assert.equal(calls, 2);
+});
+
+test("record deletion and restore carry independent explicit consent without source removal or transfer", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(options.method, "POST");
+    assert.equal(options.headers.Authorization, "token");
+    assert.equal(path, calls <= 2 ? "/api/v1/organization/unknown/7/delete" : "/api/v1/organization/unknown/deletions/a%2Fb/restore");
+    const body = JSON.parse(options.body);
+    assert.deepEqual(body, calls <= 2 ? { confirm: true, confirmRecordDeletion: calls === 2, reviewFingerprint: "b".repeat(64) } : { confirm: true, confirmRecordRestore: calls === 4 });
+    return new Response(JSON.stringify({ code: 0, success: true, data: { id: "a/b" } }));
+  });
+  await deleteUnknownRecord("token", "7", "b".repeat(64));
+  await deleteUnknownRecord("token", "7", "b".repeat(64), true);
+  await restoreUnknownRecord("token", "a/b");
+  await restoreUnknownRecord("token", "a/b", true);
+  assert.equal(calls, 4);
+});
+
+test("record mutation errors never retry, restore automatically or fall back to file execution", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls++; return new Response(JSON.stringify({ code: 503, success: false, message: "pending receipt" }), { status: 503 }); });
+  await assert.rejects(deleteUnknownRecord("token", "7", "c".repeat(64), true));
+  await assert.rejects(restoreUnknownRecord("token", "receipt", true));
+  assert.equal(calls, 2);
+});
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 

@@ -35,6 +35,7 @@ func (api organizationAPI) serveUnknownReview(w http.ResponseWriter, r *http.Req
 
 type organizationUnknownItem struct {
 	organization.UnknownRecord
+	IDText      string `json:"idText"`
 	Fingerprint string `json:"fingerprint"`
 	SourceID    string `json:"sourceId,omitempty"`
 	TargetID    string `json:"targetId,omitempty"`
@@ -45,7 +46,7 @@ type organizationUnknownItem struct {
 }
 
 func projectUnknown(record organization.UnknownRecord, roots organizationRoots) organizationUnknownItem {
-	item := organizationUnknownItem{UnknownRecord: record, Fingerprint: organization.Digest(record), NativeMode: transferModes[record.Mode]}
+	item := organizationUnknownItem{UnknownRecord: record, IDText: strconv.FormatInt(record.ID, 10), Fingerprint: organization.Digest(record), NativeMode: transferModes[record.Mode]}
 	if record.Mode != "" && !organization.SupportedMode(item.NativeMode) {
 		item.Reason = "旧转移方式尚未迁移，不能自动改为本地方式"
 		return item

@@ -674,10 +674,22 @@ export async function getSubscriptions(token: string): Promise<SubscriptionsData
 }
 
 export type OrganizationRoot = { id: string; path: string; label: string; type: string };
-export type OrganizationRoots = { sources: OrganizationRoot[]; targets: OrganizationRoot[]; executionModes?: string[] };
+export type OrganizationRoots = { sources: OrganizationRoot[]; targets: OrganizationRoot[]; executionModes?: string[]; recordManagement?: boolean };
 export type OrganizationMediaAssignment = { source: string; identity: string; modified: string; size: number; kind: "movie" | "tv"; tmdbId: string; season?: number; episode?: number; endEpisode?: number; episodeFormat?: string; episodeOffset?: number; partOverride?: string };
+export type UnknownDeleteReview = { record: { id: string; path: string | null; dest: string | null; mode: string | null; state: string | null }; fingerprint: string; pendingJobId?: string; eligible: boolean };
+export type UnknownDeleteReceipt = { id: string; review: UnknownDeleteReview; actor: string; created: string; restore?: { actor: string; created: string } };
+
+async function unknownRecordRequest<T>(token: string, path: string, body?: object): Promise<T> {
+  const result = await readResponse<T>(await fetch(path, { ...(body ? { method: "POST", body: JSON.stringify(body) } : {}), headers: { Authorization: token, ...(body ? { "Content-Type": "application/json" } : {}) } }));
+  if (!result.success || result.code !== 0 || result.data === undefined) throw new ApiError(result.message || "记录操作未确认，请刷新回执，不要自动重试", result.code);
+  return result.data;
+}
+export function reviewUnknownDelete(token: string, id: string) { return unknownRecordRequest<UnknownDeleteReview>(token, `/api/v1/organization/unknown/${encodeURIComponent(id)}/delete-review`); }
+export function deleteUnknownRecord(token: string, id: string, reviewFingerprint: string, confirmRecordDeletion = false) { return unknownRecordRequest<UnknownDeleteReceipt>(token, `/api/v1/organization/unknown/${encodeURIComponent(id)}/delete`, { confirm: true, confirmRecordDeletion, reviewFingerprint }); }
+export function getUnknownDeletions(token: string) { return unknownRecordRequest<UnknownDeleteReceipt[]>(token, "/api/v1/organization/unknown/deletions"); }
+export function restoreUnknownRecord(token: string, receipt: string, confirmRecordRestore = false) { return unknownRecordRequest<UnknownDeleteReceipt>(token, `/api/v1/organization/unknown/deletions/${encodeURIComponent(receipt)}/restore`, { confirm: true, confirmRecordRestore }); }
 export type OrganizationEpisodeSelection = { tmdbId: string; season: number; episodeFormat: string; startEpisode?: number; endEpisode?: number; episodeOffset?: number; partOverride?: string };
-export type OrganizationUnknownItem = { id: number; path: string; dest: string; mode: string; state: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; jobId?: string; reason?: string };
+export type OrganizationUnknownItem = { id: number; idText?: string; path: string; dest: string; mode: string; state: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; jobId?: string; reason?: string };
 export type OrganizationUnknownData = { items: OrganizationUnknownItem[]; total: number; page: number; pageSize: number; totalPages: number };
 export type OrganizationHistoryItem = { id: number; mode: string; type: string; title: string; year: string; tmdbId: string; sourcePath: string; sourceFilename: string; dest: string; destPath: string; destFilename: string; date: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; reason?: string };
 export type OrganizationHistoryData = { items: OrganizationHistoryItem[]; total: number; page: number; totalPages: number };
