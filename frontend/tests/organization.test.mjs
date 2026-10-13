@@ -7,7 +7,37 @@ const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "u
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { canAbandonOrganizationJob, buildOrganizationAssignment } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
+const { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
+
+test("batch episode selection requires explicit TV identity, season, template and paired filter", () => {
+  assert.deepEqual(buildOrganizationEpisodeSelection("200", "1", "Wrong.{ep}.mkv", "11", "11", "-10"), { tmdbId: "200", season: 1, episodeFormat: "Wrong.{ep}.mkv", startEpisode: 11, endEpisode: 11, episodeOffset: -10 });
+  assert.deepEqual(buildOrganizationEpisodeSelection("200", "0", "Wrong.{ep}.mkv", "", "", ""), { tmdbId: "200", season: 0, episodeFormat: "Wrong.{ep}.mkv" });
+  for (const args of [
+    ["0200", "1", "Wrong.{ep}.mkv", "", "", ""],
+    ["200", "", "Wrong.{ep}.mkv", "", "", ""],
+    ["200", "1", "Wrong.{a}.mkv", "", "", ""],
+    ["200", "1", "Wrong.{ep}.mkv", "11", "", ""],
+    ["200", "1", "Wrong.{ep}.mkv", "11", "10", ""],
+    ["200", "1", "Wrong.{ep}.mkv", "", "", "-1.5"],
+    ["200", "1", "字".repeat(200)+"{ep}", "", "", ""]
+  ]) assert.throws(() => buildOrganizationEpisodeSelection(...args));
+});
+
+test("batch episode rule follows reviewed preview and save, never runs or broadens requests", async (t) => {
+  const episodeSelection = buildOrganizationEpisodeSelection("200", "1", "Wrong.{ep}.mkv", "11", "11", "-10");
+  const input = { sourceId: "s", targetId: "t", path: "Season", mode: "move", episodeSelection };
+  const fingerprint = "d".repeat(64);
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    assert.equal(path, calls === 1 ? "/api/v1/organization/plan" : "/api/v1/organization/jobs");
+    assert.deepEqual(JSON.parse(options.body), calls === 1 ? input : { ...input, fingerprint });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { previewOnly: true, fingerprint, items: [{ source: "Wrong.10.mkv", status: "filtered" }] } : { id: "saved", episodeSelection } }));
+  });
+  assert.equal((await previewOrganization("token", input)).items[0].status, "filtered");
+  assert.deepEqual((await createOrganizationJob("token", { ...input, fingerprint })).episodeSelection, episodeSelection);
+  assert.equal(calls, 2);
+});
 
 test("manual part auto, set and clear remain distinct for movie and TV", () => {
   const file = { source: "Movie.mkv", kind: "media", identity: "1:2", size: 100, modified: "1791500000123456789" };

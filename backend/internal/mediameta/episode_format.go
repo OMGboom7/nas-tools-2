@@ -14,9 +14,21 @@ var formattedEpisode = regexp.MustCompile(`(?i)^(?:EP)?([0-9]{1,4})(?:-(?:EP)?([
 // FormattedEpisodes treats the template as literal text and named placeholders,
 // never as a user-supplied regexp or executable expression. Matching is against
 // the whole filename, including its extension, with exactly one {ep} field.
+var ErrEpisodeTemplateNoMatch = errors.New("episode template does not match selected filename")
+
+type FilenameEpisodeFormat struct{ pattern *regexp.Regexp }
+
 func FormattedEpisodes(filename, format string, offset int) (int, *int, error) {
-	if len(format) == 0 || len(format) > 512 || len(filename) > 64<<10 || !utf8.ValidString(format) || !utf8.ValidString(filename) {
-		return 0, nil, errors.New("invalid episode filename template")
+	compiled, err := CompileEpisodeFormat(format)
+	if err != nil {
+		return 0, nil, err
+	}
+	return compiled.Episodes(filename, offset)
+}
+
+func CompileEpisodeFormat(format string) (*FilenameEpisodeFormat, error) {
+	if len(format) == 0 || len(format) > 512 || !utf8.ValidString(format) {
+		return nil, errors.New("invalid episode filename template")
 	}
 	var pattern strings.Builder
 	pattern.WriteString(`\A`)
@@ -27,12 +39,12 @@ func FormattedEpisodes(filename, format string, offset int) (int, *int, error) {
 		case '{':
 			end := strings.IndexByte(format[i+1:], '}')
 			if end < 0 {
-				return 0, nil, errors.New("unclosed episode template field")
+				return nil, errors.New("unclosed episode template field")
 			}
 			end += i + 1
 			name := format[i+1 : end]
 			if !episodeFormatField.MatchString(name) || fields[name] || len(fields) >= 16 || previousField {
-				return 0, nil, errors.New("invalid, repeated or adjacent episode template fields")
+				return nil, errors.New("invalid, repeated or adjacent episode template fields")
 			}
 			fields[name] = true
 			if name == "ep" {
@@ -43,7 +55,7 @@ func FormattedEpisodes(filename, format string, offset int) (int, *int, error) {
 			previousField = true
 			i = end + 1
 		case '}':
-			return 0, nil, errors.New("unmatched episode template brace")
+			return nil, errors.New("unmatched episode template brace")
 		default:
 			end := i + 1
 			for end < len(format) && format[end] != '{' && format[end] != '}' {
@@ -55,18 +67,25 @@ func FormattedEpisodes(filename, format string, offset int) (int, *int, error) {
 		}
 	}
 	if !fields["ep"] {
-		return 0, nil, errors.New("episode template requires {ep}")
+		return nil, errors.New("episode template requires {ep}")
 	}
 	pattern.WriteString(`\z`)
 	re, err := regexp.Compile(pattern.String())
 	if err != nil {
-		return 0, nil, errors.New("invalid episode filename template")
+		return nil, errors.New("invalid episode filename template")
 	}
-	match := re.FindStringSubmatch(filename)
+	return &FilenameEpisodeFormat{pattern: re}, nil
+}
+
+func (f *FilenameEpisodeFormat) Episodes(filename string, offset int) (int, *int, error) {
+	if f == nil || f.pattern == nil || len(filename) > 64<<10 || !utf8.ValidString(filename) {
+		return 0, nil, errors.New("invalid episode filename")
+	}
+	match := f.pattern.FindStringSubmatch(filename)
 	if match == nil {
-		return 0, nil, errors.New("episode template does not match selected filename")
+		return 0, nil, ErrEpisodeTemplateNoMatch
 	}
-	numbers := formattedEpisode.FindStringSubmatch(match[re.SubexpIndex("episode")])
+	numbers := formattedEpisode.FindStringSubmatch(match[f.pattern.SubexpIndex("episode")])
 	start, _ := strconv.Atoi(numbers[1])
 	var end *int
 	if numbers[2] != "" {

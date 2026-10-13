@@ -36,13 +36,14 @@ type organizationRoots struct {
 	ExecutionModes []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
-	HistoryRecord *organizationHistorySelector  `json:"historyRecord,omitempty"`
-	UnknownRecord *organizationUnknownSelector  `json:"unknownRecord,omitempty"`
-	SourceID      string                        `json:"sourceId"`
-	TargetID      string                        `json:"targetId"`
-	Path          string                        `json:"path"`
-	Mode          string                        `json:"mode"`
-	Assignments   []organizationMediaAssignment `json:"assignments,omitempty"`
+	EpisodeSelection *organization.EpisodeSelection `json:"episodeSelection,omitempty"`
+	HistoryRecord    *organizationHistorySelector   `json:"historyRecord,omitempty"`
+	UnknownRecord    *organizationUnknownSelector   `json:"unknownRecord,omitempty"`
+	SourceID         string                         `json:"sourceId"`
+	TargetID         string                         `json:"targetId"`
+	Path             string                         `json:"path"`
+	Mode             string                         `json:"mode"`
+	Assignments      []organizationMediaAssignment  `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
 	PartOverride  *string `json:"partOverride,omitempty"`
@@ -329,6 +330,13 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if failure != nil {
 		return fail(failure.status, failure.message)
 	}
+	episodeSelection, batchAssignments, dispositions, failure := organizationEpisodeSelection(input.EpisodeSelection, scan.Files, input.Assignments)
+	if failure != nil {
+		return fail(failure.status, failure.message)
+	}
+	for source, assignment := range batchAssignments {
+		assignments[source] = assignment
+	}
 	snapshot, err := api.service.configStore.Snapshot()
 	if err != nil {
 		return fail(503, "organization configuration is unavailable")
@@ -341,6 +349,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.EpisodeSelection = episodeSelection
 	result.definition.History = history
 	if result.definition.ConfigDigest == "" {
 		return fail(503, "organization configuration snapshot is unsupported")
@@ -372,6 +381,11 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		}
 		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Identity: file.Identity, Status: "unmatched"}
 		if file.Kind != "media" {
+			result.Items = append(result.Items, item)
+			continue
+		}
+		if disposition, excluded := dispositions[file.Path]; excluded {
+			item.Status, item.Reason = disposition.Status, disposition.Reason
 			result.Items = append(result.Items, item)
 			continue
 		}
@@ -474,6 +488,10 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			if name == stem+filepath.Ext(item.Source) || strings.HasPrefix(name, stem+".") {
 				matches = append(matches, video)
 			}
+		}
+		if len(matches) == 1 && matches[0].Status == "filtered" {
+			item.Status, item.Reason = "filtered", "companion belongs to an explicitly filtered media file"
+			continue
 		}
 		if len(matches) != 1 || matches[0].Status != "available" {
 			item.Reason = "companion has no unique available media target"

@@ -1,3 +1,27 @@
+// Client-side input checks only; the server matches the actual scan, filters
+// before offset, and verifies identity and real season bounds before planning.
+export function buildOrganizationEpisodeSelection(id: string, season: string, format: string, start: string, end: string, offset: string): import("../api/client").OrganizationEpisodeSelection {
+  const tmdbId = id.trim();
+  if (!/^[1-9]\d{0,18}$/.test(tmdbId) || BigInt(tmdbId) > 9223372036854775807n) throw new Error("请输入有效的 TV TMDB ID。");
+  const integer = (value: string, low: number, high: number) => {
+    if (!/^\d+$/.test(value.trim())) throw new Error("请明确填写整数季号和成对筛选范围。");
+    const n = Number(value);
+    if (!Number.isSafeInteger(n) || n < low || n > high) throw new Error("批量季集选择超出范围。");
+    return n;
+  };
+  if (!format.includes("{ep}") || new TextEncoder().encode(format).length > 512) throw new Error("文件名模板须包含 {ep}，且不超过 512 字节。");
+  const rule: import("../api/client").OrganizationEpisodeSelection = { tmdbId, season: integer(season, 0, 99), episodeFormat: format };
+  if (start.trim() || end.trim()) {
+    rule.startEpisode = integer(start, 1, 9999);
+    rule.endEpisode = integer(end, rule.startEpisode, 9999);
+  }
+  if (offset.trim()) {
+    if (!/^-?\d{1,5}$/.test(offset.trim())) throw new Error("偏移须为 -99999 至 99999 的整数。");
+    rule.episodeOffset = Number(offset);
+  }
+  return rule;
+}
+
 // Eligibility only; the server still verifies saved proof, physical objects,
 // original-source preservation, target absence and executor isolation.
 export function canAbandonOrganizationJob(job: { state: string; items: Array<{ state: string }> }): boolean {

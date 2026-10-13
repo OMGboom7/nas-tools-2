@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationJob, getOrganizationUnknown, getOrganizationHistory, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment, type OrganizationUnknownItem, type OrganizationUnknownData, type OrganizationUnknownReview, type OrganizationHistoryItem, type OrganizationHistoryData } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
-import { canAbandonOrganizationJob, buildOrganizationAssignment } from "./organizationState";
+import { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } from "./organizationState";
 
 type Props = { session: AuthSession; currentPath: string; onNavigate: (path: string) => void; onLogout: () => Promise<void>; onSessionExpired: () => void };
-const statusLabels: Record<string, string> = { available: "可规划", conflict: "目标冲突", blocked: "已阻止", unmatched: "附件未匹配", unrecognized: "媒体未识别" };
+const statusLabels: Record<string, string> = { available: "可规划", conflict: "目标冲突", blocked: "已阻止", unmatched: "附件未匹配", unrecognized: "媒体未识别", filtered: "明确筛除，不执行" };
 const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "转移凭证已保存，待核实", moving: "源移除意图已保存，需核验恢复对象", quarantined: "源文件已转入恢复目录，待提交" };
 const modeLabels: Record<string,string> = {copy:"复制",link:"硬链接",softlink:"软链接",move:"移动"};
 jobLabels.abandoning = "放弃意图已保存，暂存清理待核实";
@@ -45,6 +45,14 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [manualEpisodeOffset, setManualEpisodeOffset] = useState("");
   const [manualPartMode, setManualPartMode] = useState<"auto" | "set" | "clear">("auto");
   const [manualPart, setManualPart] = useState("");
+  const [batchEnabled, setBatchEnabled] = useState(false);
+  const [batchId, setBatchId] = useState("");
+  const [batchSeason, setBatchSeason] = useState("");
+  const [batchFormat, setBatchFormat] = useState("");
+  const [batchStart, setBatchStart] = useState("");
+  const [batchEnd, setBatchEnd] = useState("");
+  const [batchOffset, setBatchOffset] = useState("");
+  useEffect(() => { setBatchEnabled(false); setBatchId(""); setBatchSeason(""); setBatchFormat(""); setBatchStart(""); setBatchEnd(""); setBatchOffset(""); }, [session.token]);
   useEffect(() => { setManualPartMode("auto"); setManualPart(""); }, [manualSource, sourceId, targetId, path, mode, session.token]);
   useEffect(() => { setManualEpisodeFormat(""); setManualEpisodeOffset(""); }, [sourceId, targetId, path, mode, session.token]);
   const previewGeneration = useRef(0);
@@ -90,11 +98,12 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   async function preview(event: FormEvent) {
     event.preventDefault(); await generatePreview(assignments);
   }
+  function batchInput() { return batchEnabled ? { episodeSelection: buildOrganizationEpisodeSelection(batchId, batchSeason, batchFormat, batchStart, batchEnd, batchOffset) } : {}; }
   async function generatePreview(selected: OrganizationMediaAssignment[]) {
     const generation = ++previewGeneration.current;
     setBusy(true); setError(""); setPlan(null); setManualSource("");
     try {
-      const result = await previewOrganization(session.token, { sourceId, targetId, path, mode, ...(selected.length ? { assignments: selected } : {}), ...(selectedUnknown ? { unknownRecord: { id: selectedUnknown.id, fingerprint: selectedUnknown.fingerprint } } : {}), ...(selectedHistory ? { historyRecord: { id: selectedHistory.id, fingerprint: selectedHistory.fingerprint } } : {}) });
+      const result = await previewOrganization(session.token, { sourceId, targetId, path, mode, ...batchInput(), ...(selected.length ? { assignments: selected } : {}), ...(selectedUnknown ? { unknownRecord: { id: selectedUnknown.id, fingerprint: selectedUnknown.fingerprint } } : {}), ...(selectedHistory ? { historyRecord: { id: selectedHistory.id, fingerprint: selectedHistory.fingerprint } } : {}) });
       if (generation === previewGeneration.current) setPlan(result);
     }
     catch (err) {
@@ -171,7 +180,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
     try {
       if (operation === "refresh") { setJobs(await getOrganizationJobs(session.token)); return; }
       const saved = operation === "create"
-        ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, fingerprint: plan!.fingerprint, ...(assignments.length ? { assignments } : {}), ...(selectedUnknown ? { unknownRecord: { id: selectedUnknown.id, fingerprint: selectedUnknown.fingerprint } } : {}), ...(selectedHistory ? { historyRecord: { id: selectedHistory.id, fingerprint: selectedHistory.fingerprint } } : {}) })
+        ? await createOrganizationJob(session.token, { sourceId, targetId, path, mode, ...batchInput(), fingerprint: plan!.fingerprint, ...(assignments.length ? { assignments } : {}), ...(selectedUnknown ? { unknownRecord: { id: selectedUnknown.id, fingerprint: selectedUnknown.fingerprint } } : {}), ...(selectedHistory ? { historyRecord: { id: selectedHistory.id, fingerprint: selectedHistory.fingerprint } } : {}) })
         : operation === "abandon-unpublished" ? await abandonOrganizationJob(session.token, jobId, discardStaging, oldExecutorsStopped)
         : await controlOrganizationJob(session.token, jobId, operation, job?.mode === "move" && (operation === "execute" || operation === "resume-move" || operation === "resume-publication") && sourceRemoval);
       setJobs((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
@@ -201,13 +210,24 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         <label>源目录内的相对路径<input value={path} disabled={busy || !!selectedUnknown || !!selectedHistory} required placeholder=". 或 Movies/某个目录" onChange={(e) => { setPath(e.target.value); invalidate(); }} /></label>
         <label>目标目录<select value={targetId} disabled={busy} required onChange={(e) => { setTargetId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.targets.map((root) => <option key={root.id} value={root.id} disabled={!!selectedDest && selectedDest !== root.path}>{root.label} · {root.path}</option>)}</select></label>
         <label>计划转移方式<select value={mode} disabled={busy || !!selectedUnknown?.nativeMode || !!selectedHistory?.nativeMode} onChange={(e) => { setMode(e.target.value); invalidate(); }}><option value="copy">复制</option><option value="move">移动</option><option value="link">硬链接</option><option value="softlink">软链接</option></select></label>
+        <label><input type="checkbox" checked={batchEnabled} disabled={busy} onChange={(event) => { setBatchEnabled(event.target.checked); invalidate(); }} />启用当前范围的批量 TV 集号选择</label>
+        {batchEnabled && <fieldset disabled={busy}><legend>批量集号规则</legend>
+          <p>只处理当前源范围中完整匹配模板的媒体。筛选依据偏移前的起始集号；多集文件不可拆分，保留完整范围。其他媒体及唯一附件显示为明确筛除，不执行。不能与逐文件身份指定混用。</p>
+          <label>TV TMDB ID<input value={batchId} required pattern="[1-9][0-9]*" onChange={(event) => { setBatchId(event.target.value); invalidate(); }} /></label>
+          <label>季号<input type="number" min="0" max="99" value={batchSeason} required onChange={(event) => { setBatchSeason(event.target.value); invalidate(); }} /></label>
+          <label>完整文件名模板<input value={batchFormat} required maxLength={512} placeholder="Show.第{ep}集.mkv" onChange={(event) => { setBatchFormat(event.target.value); invalidate(); }} /></label>
+          <label>筛选起始集号（两项均留空为不筛选）<input type="number" min="1" max="9999" value={batchStart} onChange={(event) => { setBatchStart(event.target.value); invalidate(); }} /></label>
+          <label>筛选结束集号<input type="number" min="1" max="9999" value={batchEnd} onChange={(event) => { setBatchEnd(event.target.value); invalidate(); }} /></label>
+          <label>集号偏移（留空为 0）<input type="number" min="-99999" max="99999" value={batchOffset} onChange={(event) => { setBatchOffset(event.target.value); invalidate(); }} /></label>
+          <p>模板含 {'{ep}'}，其他命名占位符如 {'{a}'} 表示非空可变内容。重新预览仍不执行文件；部分筛选不能将整条未识别记录标记成功。</p>
+        </fieldset>}
         <button disabled={busy || !sourceId || !targetId} type="submit">{busy ? "正在核验…" : "生成只读预览"}</button>
         {(!roots.sources.length || !roots.targets.length) && <p>请先在现有配置中设置下载/同步源目录和媒体库目标目录。</p>}
       </form>}
       {plan && <div aria-live="polite"><p>共 {plan.items.length} 个媒体或附件；跳过 {plan.skipped} 个隐藏、非媒体或常见未完成后缀项。此预览不能直接执行，也不证明文件已下载完成。</p>
         {plan.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.source}`}>分段覆盖：{item.source} → {item.partOverride || "明确清空"}（唯一附件继承）</p>)}
         <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>核验状态</th></tr></thead><tbody>{plan.items.map((item) => <tr key={item.source}><td>{item.source}<small>{item.size} 字节 · {item.kind}{item.part ? ` · 分段 ${item.part}` : ""}</small>{(item.episodeFormat || !!item.episodeOffset) && <small>集号规则：{item.episodeFormat || "明确编号"} · 偏移 {item.episodeOffset || 0}</small>}</td><td>{item.target || "未生成"}{item.tmdbId && <small>{item.title} {item.year} · TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small>}</td><td>{statusLabels[item.status] || item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
-        <form onSubmit={(event) => void assignIdentity(event)} aria-label="逐文件指定媒体身份">
+        {!batchEnabled && <form onSubmit={(event) => void assignIdentity(event)} aria-label="逐文件指定媒体身份">
           <h2>纠正媒体身份</h2><p>只影响所选媒体文件，同名附件仍须唯一匹配；其他文件继续自动识别。TMDB 标题、年份、分类和偏移后的季集上限由服务器核验，不允许自填目标路径，也不能绕过大小、蓝光或冲突限制。应用只重新生成只读预览，不执行整理。</p>
           <label>当前预览中的媒体文件<select value={manualSource} disabled={busy} required onChange={(event) => setManualSource(event.target.value)}><option value="">请选择</option>{plan.items.filter((item) => item.kind === "media").map((item) => <option key={item.source} value={item.source}>{item.source}</option>)}</select></label>
           <label>媒体类型<select value={manualKind} disabled={busy} onChange={(event) => { setManualKind(event.target.value as "movie" | "tv"); setManualSeason(""); setManualEpisode(""); setManualEndEpisode(""); setManualEpisodeFormat(""); setManualEpisodeOffset(""); }}><option value="movie">电影</option><option value="tv">电视剧／动漫</option></select></label>
@@ -224,7 +244,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
             <label>集号偏移（留空为 0，如 -10）<input type="number" min="-99999" max="99999" step="1" value={manualEpisodeOffset} disabled={busy} onChange={(event) => setManualEpisodeOffset(event.target.value)} /></label>
           </>}
           <button type="submit" disabled={busy || !manualSource}>应用所选身份并重新预览</button>
-        </form>
+        </form>}
         {roots.executionModes?.includes(mode) && <><p>仅将“可规划”的文件保存为待确认{modeLabels[mode] || mode}任务；冲突、未识别和已阻止的文件不会执行。正在编辑的人工身份必须先应用并重新预览。</p><button type="button" disabled={busy || !!manualSource || !plan.items.some((item) => item.status === "available")} onClick={() => void jobOperation("create")}>保存待确认{modeLabels[mode] || mode}任务</button></>}
       </div>}
       {!!assignments.length && <button type="button" disabled={busy} onClick={() => { setAssignments([]); void generatePreview([]); }}>清除所有人工指定并重新预览</button>}
@@ -235,6 +255,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         <label>最近 30 个任务<select value={jobId} disabled={busy} onChange={(event) => { setJobId(event.target.value); setConfirmed(false); setSourceRemoval(false); }}><option value="">请选择</option>{jobs.map((item) => <option key={item.id} value={item.id}>{item.created} · {modeLabels[item.mode] || item.mode} · {item.id.slice(0, 8)} · {jobLabels[item.state] || item.state}</option>)}</select></label>
         {job && <><p>转移方式：{modeLabels[job.mode] || job.mode}。{jobLabels[job.state] || job.state}。中断记录不会自动重跑；“核对已发布文件”只根据保存的凭证确认结果，不会重新转移。</p>
           <p>任务保存的来源：<code>{job.sourceRoot || "未提供，请刷新后确认"}</code><br />任务保存的目标：<code>{job.targetRoot || "未提供，请刷新后确认"}</code></p>
+          {job.episodeSelection && <p>已保存批量 TV 规则：TMDB {job.episodeSelection.tmdbId} · 季 {job.episodeSelection.season} · {job.episodeSelection.episodeFormat} · 偏移 {job.episodeSelection.episodeOffset || 0} · 偏移前起始集筛选 {job.episodeSelection.startEpisode === undefined ? "不限制" : `${job.episodeSelection.startEpisode}–${job.episodeSelection.endEpisode}`}。只执行已保存项目，不重扫或扩大目录范围。</p>}
           {job.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.index}`}>已保存分段覆盖：{item.source} → {item.partOverride || "明确清空"}</p>)}
           {job.historyRecordId && <p>由原历史 #{job.historyRecordId} 重新规划。原历史保留，只有新的核验转移成功才追加新历史；不是覆盖原媒体的授权。</p>}
           {job.unknownRecordId && <p>关联旧记录 #{job.unknownRecordId}：{job.unknownState === "resolved" ? "已根据完整成功回执更新为已处理" : job.unknownState === "cancelled" ? "已取消关联，旧记录仍保留" : job.unknownState === "detached" ? "管理员已明确解除关联，未标记旧记录成功" : "仍待处理；全部项目与清理回执完成后才更新"}。</p>}
