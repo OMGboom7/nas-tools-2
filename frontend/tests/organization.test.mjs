@@ -5,7 +5,47 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord, previewRecordRename, executeRecordRename, OrganizationRenameError } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+
+test("record rename preview preserves exact IDs and parent consent without execution", async (t) => {
+  const input = { unknown_id: "9223372036854775807", syncmod: "move", type: "TV", tmdb: "200", episode_format: "Show.{ep}.mkv", episode_details: "11,11", episode_offset: "-10", confirmParentScope: true };
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(path, "/api/v1/organization/unknown/rename/plan"); assert.equal(options.method, "POST"); assert.equal(options.headers.Authorization, "token"); assert.deepEqual(JSON.parse(options.body), input);
+    return new Response(JSON.stringify({ code: 0, success: true, data: { plan: { fingerprint: "a".repeat(64), items: [] }, options: { expandedScope: true, preserveUnknown: true } } }));
+  });
+  assert.equal((await previewRecordRename("token", input)).options.preserveUnknown, true);
+  assert.equal(calls, 1);
+});
+
+test("record rename execution requires reviewed fingerprint and independent source-removal consent", async (t) => {
+  let calls = 0; const input = { logid: "7", syncmod: "move" }; const fingerprint = "b".repeat(64);
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(path, "/api/v1/organization/unknown/rename"); assert.deepEqual(JSON.parse(options.body), { ...input, reviewFingerprint: fingerprint, confirmSourceRemoval: true });
+    return new Response(JSON.stringify({ code: 0, success: true, data: { jobId: "saved", state: "completed" } }));
+  });
+  await assert.rejects(executeRecordRename("token", input, fingerprint));
+  await assert.rejects(executeRecordRename("token", input, fingerprint, true));
+  await assert.rejects(executeRecordRename("token", input, "invalid", true, true));
+  assert.equal(calls, 0);
+  assert.equal((await executeRecordRename("token", input, fingerprint, true, true)).state, "completed");
+  assert.equal(calls, 1);
+});
+
+test("record rename failure exposes saved job ID and never retries or falls back", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => { calls++; return new Response(JSON.stringify({ code: 409, success: false, message: "receipt changed", data: { jobId: "needs-review", state: "needs_review" } }), { status: 409 }); });
+  await assert.rejects(executeRecordRename("token", { unknown_id: "7", syncmod: "copy" }, "c".repeat(64), true), (err) => err instanceof OrganizationRenameError && err.jobId === "needs-review");
+  assert.equal(calls, 1);
+});
+
+test("expanded rename provenance and preserved record state load without a mutation", async (t) => {
+  const data = { id: "job", legacyRename: { expandedScope: true, preserveUnknown: true }, unknownState: "preserved", legacySelection: { tmdbId: "200", episodeOffset: -10 } };
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (_path, options) => { calls++; assert.equal(options.method, undefined); return new Response(JSON.stringify({ code: 0, success: true, data })); });
+  assert.deepEqual(await getOrganizationJob("token", "job"), data);
+  assert.equal(calls, 1);
+});
 
 test("unknown deletion review and audit listing are readonly and preserve exact large IDs and NULL", async (t) => {
   const id = "9223372036854775807";

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -82,7 +83,16 @@ type LegacyMediaSelection struct {
 	MinimumMB      *int64  `json:"minimumMB,omitempty"`
 }
 
+// Legacy rename can explicitly select a new mode and, with separate consent,
+// expand a recorded single file to its parent. A partial/expanded unknown scope
+// must leave the legacy record unchanged rather than claim full resolution.
+type LegacyRenameOptions struct {
+	ExpandedScope   bool `json:"expandedScope,omitempty"`
+	PreserveUnknown bool `json:"preserveUnknown,omitempty"`
+}
+
 type Definition struct {
+	LegacyRename          *LegacyRenameOptions      `json:"legacyRename,omitempty"`
 	LegacySelection       *LegacyMediaSelection     `json:"legacySelection,omitempty"`
 	LegacyOrigin          *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
 	UnknownAllowProcessed bool                      `json:"unknownAllowProcessed,omitempty"`
@@ -127,6 +137,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	LegacyRename     *LegacyRenameOptions      `json:"legacyRename,omitempty"`
 	LegacySelection  *LegacyMediaSelection     `json:"legacySelection,omitempty"`
 	LegacyOrigin     *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
 	EpisodeSelection *EpisodeSelection         `json:"episodeSelection,omitempty"`
@@ -203,6 +214,17 @@ func OpenStore(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (string, error) {
+	if d.LegacyRename != nil && (d.LegacyOrigin == nil || d.LegacyOrigin.Action != "rename" || d.LegacySelection == nil || d.Unknown == nil && d.History == nil || d.LegacyRename.PreserveUnknown && d.Unknown == nil) {
+		return "", ErrState
+	}
+	if d.LegacyRename != nil {
+		if d.LegacyOrigin.Actor == "" || d.LegacyRename.ExpandedScope && (d.LegacySelection.EpisodeFormat == "" || d.Unknown != nil && !d.LegacyRename.PreserveUnknown) {
+			return "", ErrState
+		}
+		if d.Unknown != nil && (d.LegacyOrigin.Kind != "unidentification" || d.LegacyOrigin.RecordID != strconv.FormatInt(d.Unknown.ID, 10)) || d.History != nil && (d.LegacyOrigin.Kind != "history" || d.LegacyOrigin.RecordID != strconv.FormatInt(d.History.ID, 10)) {
+			return "", ErrState
+		}
+	}
 	if len(fingerprint) != 64 || !SupportedMode(d.Mode) || len(d.Entries) == 0 || len(d.Entries) > 1000 || d.SourceIdentity == "" || d.TargetIdentity == "" || !filepath.IsAbs(d.SourceRoot) || !filepath.IsAbs(d.TargetRoot) {
 		return "", ErrPath
 	}
@@ -304,6 +326,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	job.Mode = job.Definition.Mode
 	job.LegacyOrigin = job.Definition.LegacyOrigin
 	job.LegacySelection = job.Definition.LegacySelection
+	job.LegacyRename = job.Definition.LegacyRename
 	if job.Definition.History != nil {
 		job.HistoryRecordID = job.Definition.History.ID
 	}

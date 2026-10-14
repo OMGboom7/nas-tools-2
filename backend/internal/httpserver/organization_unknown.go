@@ -57,9 +57,15 @@ func projectUnknown(record organization.UnknownRecord, roots organizationRoots) 
 	}
 	longest := -1
 	for _, source := range roots.Sources {
-		rel, err := filepath.Rel(source.Path, record.Path)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && len(source.Path) > longest {
-			item.SourceID, item.Relative, longest = source.ID, rel, len(source.Path)
+		aliases := []string{source.Path}
+		if physical, err := filepath.EvalSymlinks(source.Path); err == nil {
+			aliases = append(aliases, physical)
+		}
+		for _, alias := range aliases {
+			rel, err := filepath.Rel(alias, record.Path)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && len(alias) > longest {
+				item.SourceID, item.Relative, longest = source.ID, rel, len(alias)
+			}
 		}
 	}
 	if item.SourceID == "" {
@@ -67,7 +73,7 @@ func projectUnknown(record organization.UnknownRecord, roots organizationRoots) 
 		return item
 	}
 	for _, target := range roots.Targets {
-		if record.Dest == "" || record.Dest == target.Path {
+		if record.Dest == "" || historyPathMatches(target.Path, ".", record.Dest) {
 			item.TargetID = target.ID
 			break
 		}
@@ -181,13 +187,21 @@ func (api organizationAPI) bindUnknown(ctx context.Context, input organizationPl
 	if record.State != "N" && !(input.AllowProcessedUnknown && record.State == "Y") || organization.Digest(record) != selector.Fingerprint {
 		return nil, &recognitionFailure{409, "unknown record changed; refresh before planning"}
 	}
-	projection := projectUnknown(record, roots)
+	projected := record
+	if input.LegacyRename != nil {
+		projected.Mode = ""
+	} // Explicit new mode, old row still fingerprinted unchanged.
+	projection := projectUnknown(projected, roots)
 	if projection.Reason != "" {
 		return nil, &recognitionFailure{422, "unknown record cannot be mapped to supported configured directories or mode"}
 	}
 	matched := false
 	for _, source := range roots.Sources {
-		if source.ID == input.SourceID && filepath.Join(source.Path, input.Path) == record.Path {
+		relative := input.Path
+		if input.LegacyRename != nil && input.LegacyRename.ExpandedScope {
+			relative = filepath.Join(relative, filepath.Base(record.Path))
+		}
+		if source.ID == input.SourceID && historyPathMatches(source.Path, relative, record.Path) {
 			matched = true
 		}
 	}
@@ -196,11 +210,11 @@ func (api organizationAPI) bindUnknown(ctx context.Context, input organizationPl
 	}
 	matched = false
 	for _, target := range roots.Targets {
-		if target.ID == input.TargetID && (record.Dest == "" || record.Dest == target.Path) {
+		if target.ID == input.TargetID && (record.Dest == "" || historyPathMatches(target.Path, ".", record.Dest)) {
 			matched = true
 		}
 	}
-	if !matched || record.Mode != "" && projection.NativeMode != input.Mode {
+	if !matched || input.LegacyRename == nil && record.Mode != "" && projection.NativeMode != input.Mode {
 		return nil, &recognitionFailure{422, "unknown record destination or literal transfer mode does not match"}
 	}
 	return &record, nil

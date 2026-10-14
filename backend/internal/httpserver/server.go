@@ -307,6 +307,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/organization/unknown/delete", organizer.serveCompatUnknownDelete)
 	mux.HandleFunc("POST /api/v1/organization/unknown/redo", organizer.serveLegacyRedo)
 	mux.HandleFunc("POST /api/v1/organization/unknown/renameudf", organizer.serveLegacyCustomRename)
+	mux.HandleFunc("POST /api/v1/organization/unknown/rename", organizer.serveLegacyRename)
+	mux.HandleFunc("POST /api/v1/organization/unknown/rename/plan", organizer.serveLegacyRenamePreview)
 	mux.HandleFunc("GET /api/v1/organization/unknown/{id}/delete-review", organizer.serveUnknownDeleteReview)
 	mux.HandleFunc("POST /api/v1/organization/unknown/{id}/delete", organizer.serveUnknownDelete)
 	mux.HandleFunc("GET /api/v1/organization/unknown/deletions", organizer.serveUnknownDeletes)

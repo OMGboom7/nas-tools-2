@@ -38,6 +38,7 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
+	LegacyRename          *organization.LegacyRenameOptions  `json:"-"`
 	LegacySelection       *organization.LegacyMediaSelection `json:"-"`
 	AllowProcessedUnknown bool                               `json:"-"`
 	EpisodeSelection      *organization.EpisodeSelection     `json:"episodeSelection,omitempty"`
@@ -268,6 +269,9 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if input.LegacySelection != nil && (len(input.Assignments) != 0 || input.EpisodeSelection != nil) {
 		return fail(422, "legacy and native identity selections must not be mixed")
 	}
+	if input.LegacyRename != nil && (input.LegacySelection == nil || input.UnknownRecord == nil && input.HistoryRecord == nil) {
+		return fail(422, "legacy rename requires a selected record and identity rules")
+	}
 	if ctx.Err() != nil {
 		return fail(504, "organization preview was cancelled or timed out")
 	}
@@ -360,6 +364,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.LegacyRename = input.LegacyRename
 	result.definition.LegacySelection = input.LegacySelection
 	result.definition.UnknownAllowProcessed = input.AllowProcessedUnknown && unknown != nil && unknown.State == "Y"
 	result.definition.EpisodeSelection = episodeSelection

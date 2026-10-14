@@ -19,6 +19,7 @@ type organizationHistorySelector struct {
 }
 type organizationHistoryItem struct {
 	organization.HistoryRecord
+	IDText      string `json:"idText"`
 	Fingerprint string `json:"fingerprint"`
 	SourceID    string `json:"sourceId,omitempty"`
 	TargetID    string `json:"targetId,omitempty"`
@@ -28,7 +29,7 @@ type organizationHistoryItem struct {
 }
 
 func projectHistory(record organization.HistoryRecord, roots organizationRoots) organizationHistoryItem {
-	item := organizationHistoryItem{HistoryRecord: record, Fingerprint: organization.Digest(record)}
+	item := organizationHistoryItem{HistoryRecord: record, IDText: strconv.FormatInt(record.ID, 10), Fingerprint: organization.Digest(record)}
 	if record.SourceFilename == "" || filepath.Base(record.SourceFilename) != record.SourceFilename || record.SourceFilename == "." || record.SourceFilename == ".." || strings.ContainsAny(record.SourceFilename, "\\\x00\r\n") {
 		item.Reason = "旧记录没有可核验的源文件名，保留原历史"
 		return item
@@ -153,13 +154,21 @@ func (api organizationAPI) bindHistory(ctx context.Context, input organizationPl
 	if err != nil || organization.Digest(record) != selector.Fingerprint {
 		return nil, &recognitionFailure{409, "history changed; review a fresh record before planning"}
 	}
-	projection := projectHistory(record, roots)
+	projected := record
+	if input.LegacyRename != nil {
+		projected.Mode = ""
+	}
+	projection := projectHistory(projected, roots)
 	if projection.Reason != "" {
 		return nil, &recognitionFailure{422, "historical source, destination or mode is not supported"}
 	}
 	matched := false
 	for _, source := range roots.Sources {
-		if source.ID == input.SourceID && historyPathMatches(source.Path, input.Path, filepath.Join(record.SourcePath, record.SourceFilename)) {
+		relative := input.Path
+		if input.LegacyRename != nil && input.LegacyRename.ExpandedScope {
+			relative = filepath.Join(relative, record.SourceFilename)
+		}
+		if source.ID == input.SourceID && historyPathMatches(source.Path, relative, filepath.Join(record.SourcePath, record.SourceFilename)) {
 			matched = true
 		}
 	}
@@ -172,7 +181,7 @@ func (api organizationAPI) bindHistory(ctx context.Context, input organizationPl
 			matched = true
 		}
 	}
-	if !matched || record.Mode != "" && projection.NativeMode != input.Mode {
+	if !matched || input.LegacyRename == nil && record.Mode != "" && projection.NativeMode != input.Mode {
 		return nil, &recognitionFailure{422, "historical destination or literal mode does not match"}
 	}
 	return &record, nil

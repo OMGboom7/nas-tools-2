@@ -16,13 +16,17 @@ import (
 
 type legacyCustomInput struct {
 	Source, Target, Mode string
+	RecordKind           string
+	RecordID             int64
+	ConfirmParentScope   bool
+	ReviewFingerprint    string
 	Selection            organization.LegacyMediaSelection
 	ConfirmSourceRemoval bool
 }
 
 // The old form and JSON clients use both strings and integers. Keep numbers
 // exact; never route a database/TMDB ID through a floating-point decoder.
-func decodeLegacyCustom(w http.ResponseWriter, r *http.Request) (legacyCustomInput, bool) {
+func decodeLegacyIdentification(w http.ResponseWriter, r *http.Request, linked bool) (legacyCustomInput, bool) {
 	input := legacyCustomInput{}
 	bad := func(message string) (legacyCustomInput, bool) {
 		writeAPIError(w, 400, 400, message)
@@ -60,8 +64,13 @@ func decodeLegacyCustom(w http.ResponseWriter, r *http.Request) (legacyCustomInp
 		return bad("unsupported custom identification content type")
 	}
 	allowed := map[string]bool{}
-	for _, key := range []string{"inpath", "outpath", "syncmod", "tmdb", "type", "season", "episode_format", "episode_details", "episode_offset", "episode_part", "min_filesize", "confirmSourceRemoval", "title", "year"} {
+	for _, key := range []string{"syncmod", "tmdb", "type", "season", "episode_format", "episode_details", "episode_offset", "episode_part", "min_filesize", "confirmSourceRemoval", "title", "year"} {
 		allowed[key] = true
+	}
+	if linked {
+		allowed["logid"], allowed["unknown_id"], allowed["confirmParentScope"], allowed["reviewFingerprint"] = true, true, true, true
+	} else {
+		allowed["inpath"], allowed["outpath"] = true, true
 	}
 	for key := range fields {
 		if !allowed[key] {
@@ -69,6 +78,32 @@ func decodeLegacyCustom(w http.ResponseWriter, r *http.Request) (legacyCustomInp
 		}
 	}
 	input.Source, input.Target = fields["inpath"], fields["outpath"]
+	if linked {
+		id := fields["logid"]
+		input.RecordKind = "history"
+		if fields["unknown_id"] != "" {
+			if id != "" {
+				return bad("select exactly one historical or unknown record")
+			}
+			id = fields["unknown_id"]
+			input.RecordKind = "unidentification"
+		}
+		n, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || n < 1 || strconv.FormatInt(n, 10) != id {
+			return bad("select a canonical positive record ID")
+		}
+		input.RecordID = n
+		if value, exists := fields["confirmParentScope"]; exists {
+			if value != "true" && value != "false" {
+				return bad("invalid parent-scope consent")
+			}
+			input.ConfirmParentScope = value == "true"
+		}
+		input.ReviewFingerprint = fields["reviewFingerprint"]
+		if input.ReviewFingerprint != "" && len(input.ReviewFingerprint) != 64 {
+			return bad("invalid reviewed rename fingerprint")
+		}
+	}
 	input.Mode = transferModes[fields["syncmod"]]
 	if input.Mode == "" && organization.SupportedMode(fields["syncmod"]) {
 		input.Mode = fields["syncmod"]
@@ -77,7 +112,11 @@ func decodeLegacyCustom(w http.ResponseWriter, r *http.Request) (legacyCustomInp
 		writeAPIError(w, 501, 501, "transfer mode is not migrated; no fallback")
 		return input, false
 	}
-	for _, path := range []string{input.Source, input.Target} {
+	paths := []string{}
+	if !linked {
+		paths = []string{input.Source, input.Target}
+	}
+	for _, path := range paths {
 		if len(path) > 4096 || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\\\x00\r\n") {
 			return bad("select canonical absolute configured paths")
 		}
@@ -167,12 +206,16 @@ func (api organizationAPI) legacyCustomPlan(ctx context.Context, request legacyC
 	if input.SourceID == "" {
 		return fail(422, "custom identification must select enabled configured source and destination roots")
 	}
+	return api.legacyIdentificationTargets(ctx, roots, input, request.Target, &organization.LegacyOrganizationOrigin{Action: "renameudf", Kind: "custom", Actor: actor})
+}
+
+func (api organizationAPI) legacyIdentificationTargets(ctx context.Context, roots organizationRoots, input organizationPlanInput, dest string, origin *organization.LegacyOrganizationOrigin) (organizationPlan, *recognitionFailure) {
 	var last *recognitionFailure
 	for _, root := range roots.Targets {
-		if !historyPathMatches(root.Path, ".", request.Target) {
+		if dest != "" && !historyPathMatches(root.Path, ".", dest) || dest == "" && root.Type == "" {
 			continue
 		}
-		if root.Type != "" && (request.Selection.Kind == "tv" && root.Type != "TV" || request.Selection.Kind == "movie" && root.Type != "MOV") {
+		if root.Type != "" && (input.LegacySelection.Kind == "tv" && root.Type != "TV" || input.LegacySelection.Kind == "movie" && root.Type != "MOV") {
 			continue
 		}
 		input.TargetID = root.ID
@@ -194,7 +237,18 @@ func (api organizationAPI) legacyCustomPlan(ctx context.Context, request legacyC
 			last = &recognitionFailure{422, "custom selection contains skipped, blocked, ambiguous, conflicting or no available files"}
 			continue
 		}
-		plan.definition.LegacyOrigin = &organization.LegacyOrganizationOrigin{Action: "renameudf", Kind: "custom", Actor: actor}
+		if input.LegacyRename != nil {
+			options := *input.LegacyRename
+			if plan.definition.Unknown != nil {
+				for _, item := range plan.Items {
+					if item.Status == "filtered" {
+						options.PreserveUnknown = true
+					}
+				}
+			}
+			plan.definition.LegacyRename = &options
+		}
+		plan.definition.LegacyOrigin = origin
 		plan.Fingerprint = organization.Digest(struct {
 			Definition organization.Definition
 			Items      []organizationPlanItem
@@ -204,14 +258,22 @@ func (api organizationAPI) legacyCustomPlan(ctx context.Context, request legacyC
 	if last != nil {
 		return organizationPlan{}, last
 	}
-	return fail(422, "custom identification must select an enabled compatible configured destination root")
+	return organizationPlan{}, &recognitionFailure{422, "identification must select an enabled compatible configured destination root"}
 }
 
 func (api organizationAPI) serveLegacyCustomRename(w http.ResponseWriter, r *http.Request) {
+	api.serveLegacyIdentification(w, r, false)
+}
+
+func (api organizationAPI) serveLegacyRename(w http.ResponseWriter, r *http.Request) {
+	api.serveLegacyIdentification(w, r, true)
+}
+
+func (api organizationAPI) serveLegacyIdentification(w http.ResponseWriter, r *http.Request, linked bool) {
 	if !api.jobsAuthorized(w, r) {
 		return
 	}
-	input, ok := decodeLegacyCustom(w, r)
+	input, ok := decodeLegacyIdentification(w, r, linked)
 	if !ok {
 		return
 	}
@@ -226,9 +288,16 @@ func (api organizationAPI) serveLegacyCustomRename(w http.ResponseWriter, r *htt
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
-	plan, failure := api.legacyCustomPlan(ctx, input, claims.Username)
+	planner := api.legacyCustomPlan
+	if linked {
+		planner = api.legacyRenamePlan
+	}
+	plan, failure := planner(ctx, input, claims.Username)
+	if failure == nil && input.ReviewFingerprint != "" && plan.Fingerprint != input.ReviewFingerprint {
+		failure = &recognitionFailure{409, "reviewed rename plan changed; preview again before execution"}
+	}
 	if failure == nil {
-		fresh, f := api.legacyCustomPlan(ctx, input, claims.Username)
+		fresh, f := planner(ctx, input, claims.Username)
 		failure = f
 		if failure == nil && fresh.Fingerprint != plan.Fingerprint {
 			failure = &recognitionFailure{409, "source or plan changed; submit a fresh reviewed request"}
@@ -260,5 +329,5 @@ func (api organizationAPI) serveLegacyCustomRename(w http.ResponseWriter, r *htt
 			filtered++
 		}
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "转移成功", "data": map[string]any{"jobId": id, "state": job.State, "filtered": filtered}})
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "转移成功", "data": map[string]any{"jobId": id, "state": job.State, "filtered": filtered, "unknownState": job.UnknownState}})
 }

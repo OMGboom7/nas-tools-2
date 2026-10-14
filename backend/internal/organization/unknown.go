@@ -40,7 +40,7 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 	if err != nil {
 		return err
 	}
-	if currentJob.UnknownState == "resolved" {
+	if currentJob.UnknownState == "resolved" || currentJob.UnknownState == "preserved" {
 		return nil
 	}
 	if currentJob.UnknownState == "detached" {
@@ -51,8 +51,11 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 			return nil
 		}
 	}
-	if err = verifyUnknownScope(ctx, currentJob); err != nil {
-		return err
+	preserve := currentJob.Definition.LegacyRename != nil && currentJob.Definition.LegacyRename.PreserveUnknown
+	if !preserve {
+		if err = verifyUnknownScope(ctx, currentJob); err != nil {
+			return err
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -63,7 +66,7 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 	if err = tx.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, job.ID, job.Definition.Unknown.ID).Scan(&state); err != nil {
 		return err
 	}
-	if state == "resolved" {
+	if state == "resolved" || state == "preserved" {
 		return nil
 	}
 	if state != "pending" {
@@ -101,6 +104,9 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 		return err
 	}
 	actualState := current.State
+	if preserve && Digest(current) != Digest(*job.Definition.Unknown) {
+		return ErrState
+	}
 	if job.Definition.Unknown.State == "N" {
 		current.State = "N"
 	} else if !job.Definition.UnknownAllowProcessed || job.Definition.Unknown.State != "Y" || actualState != "Y" {
@@ -109,12 +115,16 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 	if (actualState != "N" && actualState != "Y") || Digest(current) != Digest(*job.Definition.Unknown) {
 		return ErrState
 	}
-	if actualState == "N" {
+	if actualState == "N" && !preserve {
 		if _, err = tx.ExecContext(ctx, `UPDATE TRANSFER_UNKNOWN SET STATE='Y' WHERE ID=? AND STATE='N'`, current.ID); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='resolved' WHERE JOB_ID=? AND STATE='pending'`, job.ID); err != nil {
+	resolution := "resolved"
+	if preserve {
+		resolution = "preserved"
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE=? WHERE JOB_ID=? AND STATE='pending'`, resolution, job.ID); err != nil {
 		return err
 	}
 	return tx.Commit()

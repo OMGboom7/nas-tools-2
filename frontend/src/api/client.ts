@@ -691,14 +691,15 @@ export function restoreUnknownRecord(token: string, receipt: string, confirmReco
 export type OrganizationEpisodeSelection = { tmdbId: string; season: number; episodeFormat: string; startEpisode?: number; endEpisode?: number; episodeOffset?: number; partOverride?: string };
 export type OrganizationUnknownItem = { id: number; idText?: string; path: string; dest: string; mode: string; state: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; jobId?: string; reason?: string };
 export type OrganizationUnknownData = { items: OrganizationUnknownItem[]; total: number; page: number; pageSize: number; totalPages: number };
-export type OrganizationHistoryItem = { id: number; mode: string; type: string; title: string; year: string; tmdbId: string; sourcePath: string; sourceFilename: string; dest: string; destPath: string; destFilename: string; date: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; reason?: string };
+export type OrganizationHistoryItem = { id: number; idText?: string; mode: string; type: string; title: string; year: string; tmdbId: string; sourcePath: string; sourceFilename: string; dest: string; destPath: string; destFilename: string; date: string; fingerprint: string; sourceId?: string; targetId?: string; relative?: string; nativeMode?: string; reason?: string };
 export type OrganizationHistoryData = { items: OrganizationHistoryItem[]; total: number; page: number; totalPages: number };
 export type OrganizationUnknownReview = { jobId: string; state: string; original: { id: number; path: string; dest: string; mode: string; state: string }; current: { id: number; path: string; dest: string; mode: string; state: string } | null; fingerprint: string; eligible: boolean };
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[]; episodeSelection?: OrganizationEpisodeSelection; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
 export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number; partOverride?: string };
 export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 export type OrganizationLegacySelection = OrganizationEpisodeRule & { kind?: string; tmdbId?: string; season?: number; episodeDetails?: string; minimumMB?: number };
-export type OrganizationJob = { id: string; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
+export type OrganizationLegacyRenameOptions = { expandedScope?: boolean; preserveUnknown?: boolean };
+export type OrganizationJob = { id: string; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 
 export async function getOrganizationHistory(token: string, page = 1, keyword = ""): Promise<OrganizationHistoryData> {
   const result = await readResponse<OrganizationHistoryData>(await fetch(`/api/v1/organization/history?${new URLSearchParams({ page: String(page), keyword })}`, { headers: { Authorization: token } }));
@@ -1070,4 +1071,24 @@ async function readResponse<T>(response: Response): Promise<ApiResponse<T>> {
   }
   if (!response.ok) throw new ApiError(result.message || `服务请求失败（HTTP ${response.status}）`, result.code || response.status);
   return result;
+}
+
+export type OrganizationRenameInput = { logid?: string; unknown_id?: string; syncmod: string; type?: "MOV" | "TV"; tmdb?: string; season?: string; episode_format?: string; episode_details?: string; episode_offset?: string; episode_part?: string; min_filesize?: string; confirmParentScope?: boolean };
+export type OrganizationRenameReview = { plan: OrganizationPlan; sourceRoot: string; targetRoot: string; origin: { kind: string; recordId: string; actor: string }; options: OrganizationLegacyRenameOptions; selection: OrganizationLegacySelection; unknown?: { path: string; mode: string; state: string }; history?: { sourcePath: string; sourceFilename: string; mode: string; title: string } };
+export type OrganizationRenameOutcome = { jobId: string; state: string; filtered?: number; unknownState?: string };
+export class OrganizationRenameError extends ApiError {
+  constructor(message: string, code?: number, readonly jobId?: string) { super(message, code); }
+}
+export async function previewRecordRename(token: string, input: OrganizationRenameInput): Promise<OrganizationRenameReview> {
+  const result = await readResponse<OrganizationRenameReview>(await fetch("/api/v1/organization/unknown/rename/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  if (!result.success || result.code !== 0 || !result.data?.plan?.fingerprint) throw new ApiError(result.message || "关联记录改名预览失败", result.code);
+  return result.data;
+}
+export async function executeRecordRename(token: string, input: OrganizationRenameInput, reviewFingerprint: string, confirmed = false, confirmSourceRemoval = false): Promise<OrganizationRenameOutcome> {
+  if (!confirmed || !/^[a-f0-9]{64}$/.test(reviewFingerprint) || input.syncmod === "move" && !confirmSourceRemoval) throw new ApiError("须审核预览并明确确认；移动另需源移除授权", 400);
+  const response = await fetch("/api/v1/organization/unknown/rename", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, reviewFingerprint, confirmSourceRemoval }) });
+  let result: ApiResponse<OrganizationRenameOutcome>;
+  try { result = await response.json() as ApiResponse<OrganizationRenameOutcome>; } catch { throw new OrganizationRenameError("响应无法核实；请只刷新任务列表，不能自动重试", response.status); }
+  if (!response.ok || !result.success || result.code !== 0 || result.data?.state !== "completed" || !result.data.jobId) throw new OrganizationRenameError(result.message || "改名未完成；请核对已保存任务，不要重跑", result.code || response.status, result.data?.jobId);
+  return result.data;
 }
