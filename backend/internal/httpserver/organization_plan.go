@@ -38,15 +38,16 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
-	AllowProcessedUnknown bool                           `json:"-"`
-	EpisodeSelection      *organization.EpisodeSelection `json:"episodeSelection,omitempty"`
-	HistoryRecord         *organizationHistorySelector   `json:"historyRecord,omitempty"`
-	UnknownRecord         *organizationUnknownSelector   `json:"unknownRecord,omitempty"`
-	SourceID              string                         `json:"sourceId"`
-	TargetID              string                         `json:"targetId"`
-	Path                  string                         `json:"path"`
-	Mode                  string                         `json:"mode"`
-	Assignments           []organizationMediaAssignment  `json:"assignments,omitempty"`
+	LegacySelection       *organization.LegacyMediaSelection `json:"-"`
+	AllowProcessedUnknown bool                               `json:"-"`
+	EpisodeSelection      *organization.EpisodeSelection     `json:"episodeSelection,omitempty"`
+	HistoryRecord         *organizationHistorySelector       `json:"historyRecord,omitempty"`
+	UnknownRecord         *organizationUnknownSelector       `json:"unknownRecord,omitempty"`
+	SourceID              string                             `json:"sourceId"`
+	TargetID              string                             `json:"targetId"`
+	Path                  string                             `json:"path"`
+	Mode                  string                             `json:"mode"`
+	Assignments           []organizationMediaAssignment      `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
 	PartOverride  *string `json:"partOverride,omitempty"`
@@ -261,6 +262,12 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	fail := func(status int, message string) (organizationPlan, *recognitionFailure) {
 		return organizationPlan{}, &recognitionFailure{status, message}
 	}
+	if err := validateLegacySelection(input.LegacySelection); err != nil {
+		return fail(422, err.Error())
+	}
+	if input.LegacySelection != nil && (len(input.Assignments) != 0 || input.EpisodeSelection != nil) {
+		return fail(422, "legacy and native identity selections must not be mixed")
+	}
 	if ctx.Err() != nil {
 		return fail(504, "organization preview was cancelled or timed out")
 	}
@@ -353,6 +360,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.LegacySelection = input.LegacySelection
 	result.definition.UnknownAllowProcessed = input.AllowProcessedUnknown && unknown != nil && unknown.State == "Y"
 	result.definition.EpisodeSelection = episodeSelection
 	result.definition.History = history
@@ -365,6 +373,9 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		if err != nil || minimumMB < 0 || minimumMB > 1000000 {
 			return fail(422, "configured minimum media file size is invalid")
 		}
+	}
+	if input.LegacySelection != nil && input.LegacySelection.MinimumMB != nil {
+		minimumMB = *input.LegacySelection.MinimumMB
 	}
 	selectionRoot, err := organization.OpenRoot(sourcePath)
 	if err != nil {
@@ -417,6 +428,17 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			item.PartOverride = assignment.PartOverride
 			item.EpisodeFormat, item.EpisodeOffset = assignment.EpisodeFormat, assignment.EpisodeOffset
 			recognition, failure = api.recognition.recognizeAssigned(ctx, filepath.Base(file.Path), assignment)
+		} else if input.LegacySelection != nil {
+			var filtered bool
+			recognition, failure, filtered = api.legacySelectedRecognition(ctx, filepath.Base(file.Path), input.LegacySelection)
+			item.Assigned = input.LegacySelection.TMDBID != ""
+			item.PartOverride = input.LegacySelection.PartOverride
+			item.EpisodeFormat, item.EpisodeOffset = input.LegacySelection.EpisodeFormat, input.LegacySelection.EpisodeOffset
+			if filtered {
+				item.Status, item.Reason = "filtered", "file does not match the explicit legacy episode selection"
+				result.Items = append(result.Items, item)
+				continue
+			}
 		} else {
 			recognition, failure = api.recognition.recognize(ctx, filepath.Base(file.Path), "")
 		}

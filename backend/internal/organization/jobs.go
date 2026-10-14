@@ -71,8 +71,19 @@ type LegacyOrganizationOrigin struct {
 	RecordID string `json:"recordId"`
 	Actor    string `json:"actor"`
 }
+type LegacyMediaSelection struct {
+	Kind           string  `json:"kind,omitempty"`
+	TMDBID         string  `json:"tmdbId,omitempty"`
+	Season         *int    `json:"season,omitempty"`
+	EpisodeFormat  string  `json:"episodeFormat,omitempty"`
+	EpisodeDetails string  `json:"episodeDetails,omitempty"`
+	EpisodeOffset  int     `json:"episodeOffset,omitempty"`
+	PartOverride   *string `json:"partOverride,omitempty"`
+	MinimumMB      *int64  `json:"minimumMB,omitempty"`
+}
 
 type Definition struct {
+	LegacySelection       *LegacyMediaSelection     `json:"legacySelection,omitempty"`
 	LegacyOrigin          *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
 	UnknownAllowProcessed bool                      `json:"unknownAllowProcessed,omitempty"`
 	EpisodeSelection      *EpisodeSelection         `json:"episodeSelection,omitempty"`
@@ -116,6 +127,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	LegacySelection  *LegacyMediaSelection     `json:"legacySelection,omitempty"`
 	LegacyOrigin     *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
 	EpisodeSelection *EpisodeSelection         `json:"episodeSelection,omitempty"`
 	HistoryRecordID  int64                     `json:"historyRecordId,omitempty"`
@@ -291,6 +303,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	job.EpisodeSelection = job.Definition.EpisodeSelection
 	job.Mode = job.Definition.Mode
 	job.LegacyOrigin = job.Definition.LegacyOrigin
+	job.LegacySelection = job.Definition.LegacySelection
 	if job.Definition.History != nil {
 		job.HistoryRecordID = job.Definition.History.ID
 	}

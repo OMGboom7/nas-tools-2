@@ -1,0 +1,264 @@
+package httpserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"mime"
+	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/organization"
+)
+
+type legacyCustomInput struct {
+	Source, Target, Mode string
+	Selection            organization.LegacyMediaSelection
+	ConfirmSourceRemoval bool
+}
+
+// The old form and JSON clients use both strings and integers. Keep numbers
+// exact; never route a database/TMDB ID through a floating-point decoder.
+func decodeLegacyCustom(w http.ResponseWriter, r *http.Request) (legacyCustomInput, bool) {
+	input := legacyCustomInput{}
+	bad := func(message string) (legacyCustomInput, bool) {
+		writeAPIError(w, 400, 400, message)
+		return input, false
+	}
+	fields := map[string]string{}
+	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if media == "application/json" {
+		var values map[string]json.RawMessage
+		if !decodeOrganizationRequest(w, r, &values, "invalid custom identification request") {
+			return input, false
+		}
+		for key, raw := range values {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				value = string(raw)
+				if value == "null" || strings.ContainsAny(value, "{}[]") {
+					return bad("invalid custom identification value")
+				}
+			}
+			fields[key] = value
+		}
+	} else if media == "application/x-www-form-urlencoded" {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if r.ParseForm() != nil {
+			return bad("invalid custom identification form")
+		}
+		for key, values := range r.PostForm {
+			if len(values) != 1 {
+				return bad("duplicate custom identification field")
+			}
+			fields[key] = values[0]
+		}
+	} else {
+		return bad("unsupported custom identification content type")
+	}
+	allowed := map[string]bool{}
+	for _, key := range []string{"inpath", "outpath", "syncmod", "tmdb", "type", "season", "episode_format", "episode_details", "episode_offset", "episode_part", "min_filesize", "confirmSourceRemoval", "title", "year"} {
+		allowed[key] = true
+	}
+	for key := range fields {
+		if !allowed[key] {
+			return bad("unsupported custom identification field")
+		}
+	}
+	input.Source, input.Target = fields["inpath"], fields["outpath"]
+	input.Mode = transferModes[fields["syncmod"]]
+	if input.Mode == "" && organization.SupportedMode(fields["syncmod"]) {
+		input.Mode = fields["syncmod"]
+	}
+	if !organization.SupportedMode(input.Mode) {
+		writeAPIError(w, 501, 501, "transfer mode is not migrated; no fallback")
+		return input, false
+	}
+	for _, path := range []string{input.Source, input.Target} {
+		if len(path) > 4096 || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\\\x00\r\n") {
+			return bad("select canonical absolute configured paths")
+		}
+	}
+	if fields["title"] != "" || fields["year"] != "" {
+		return bad("custom title/year are not authoritative; select a verified TMDB identity")
+	}
+	choice := &input.Selection
+	switch fields["type"] {
+	case "":
+	case "MOV", "电影":
+		choice.Kind = "movie"
+	case "TV", "电视剧":
+		choice.Kind = "tv"
+	case "ANIME", "动漫":
+		writeAPIError(w, 501, 501, "forced anime classification is not migrated")
+		return input, false
+	default:
+		return bad("invalid custom media type")
+	}
+	choice.TMDBID = fields["tmdb"]
+	if choice.TMDBID != "" && choice.Kind == "" {
+		return bad("explicit TMDB identity requires MOV or TV type")
+	}
+	choice.EpisodeFormat, choice.EpisodeDetails = fields["episode_format"], fields["episode_details"]
+	parse := func(key string) (int, error) { return strconv.Atoi(fields[key]) }
+	if fields["season"] != "" {
+		n, err := parse("season")
+		if err != nil {
+			return bad("invalid season")
+		}
+		choice.Season = &n
+	}
+	if fields["episode_offset"] != "" {
+		n, err := parse("episode_offset")
+		if err != nil {
+			return bad("invalid episode offset")
+		}
+		choice.EpisodeOffset = n
+	}
+	if fields["min_filesize"] != "" {
+		n, err := strconv.ParseInt(fields["min_filesize"], 10, 64)
+		if err != nil {
+			return bad("invalid minimum file size")
+		}
+		choice.MinimumMB = &n
+	}
+	if value, exists := fields["episode_part"]; exists {
+		choice.PartOverride = &value
+	}
+	if value, exists := fields["confirmSourceRemoval"]; exists {
+		if value != "true" && value != "false" {
+			return bad("invalid source-removal consent")
+		}
+		input.ConfirmSourceRemoval = value == "true"
+	}
+	if err := validateLegacySelection(choice); err != nil {
+		return bad(err.Error())
+	}
+	return input, true
+}
+
+func (api organizationAPI) legacyCustomPlan(ctx context.Context, request legacyCustomInput, actor string) (organizationPlan, *recognitionFailure) {
+	fail := func(status int, message string) (organizationPlan, *recognitionFailure) {
+		return organizationPlan{}, &recognitionFailure{status, message}
+	}
+	roots, err := api.roots(ctx)
+	if err != nil {
+		return fail(503, "configured organization directories are unavailable")
+	}
+	input := organizationPlanInput{Mode: request.Mode, LegacySelection: &request.Selection}
+	longest := -1
+	for _, root := range roots.Sources {
+		// Expand only configured root aliases. Child symlinks are still rejected
+		// by the rooted scanner and executor, never resolved into authority.
+		aliases := []string{root.Path}
+		if physical, err := filepath.EvalSymlinks(root.Path); err == nil {
+			aliases = append(aliases, physical)
+		}
+		for _, alias := range aliases {
+			rel, err := filepath.Rel(alias, request.Source)
+			if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && len(alias) > longest {
+				input.SourceID, input.Path, longest = root.ID, rel, len(alias)
+			}
+		}
+	}
+	if input.SourceID == "" {
+		return fail(422, "custom identification must select enabled configured source and destination roots")
+	}
+	var last *recognitionFailure
+	for _, root := range roots.Targets {
+		if !historyPathMatches(root.Path, ".", request.Target) {
+			continue
+		}
+		if root.Type != "" && (request.Selection.Kind == "tv" && root.Type != "TV" || request.Selection.Kind == "movie" && root.Type != "MOV") {
+			continue
+		}
+		input.TargetID = root.ID
+		plan, failure := api.plan(ctx, input)
+		if failure != nil {
+			if ctx.Err() != nil {
+				return plan, failure
+			}
+			last = failure
+			continue
+		}
+		complete := len(plan.definition.Entries) > 0 && plan.Skipped == 0
+		for _, item := range plan.Items {
+			if item.Status != "available" && item.Status != "filtered" {
+				complete = false
+			}
+		}
+		if !complete {
+			last = &recognitionFailure{422, "custom selection contains skipped, blocked, ambiguous, conflicting or no available files"}
+			continue
+		}
+		plan.definition.LegacyOrigin = &organization.LegacyOrganizationOrigin{Action: "renameudf", Kind: "custom", Actor: actor}
+		plan.Fingerprint = organization.Digest(struct {
+			Definition organization.Definition
+			Items      []organizationPlanItem
+		}{plan.definition, plan.Items})
+		return plan, nil
+	}
+	if last != nil {
+		return organizationPlan{}, last
+	}
+	return fail(422, "custom identification must select an enabled compatible configured destination root")
+}
+
+func (api organizationAPI) serveLegacyCustomRename(w http.ResponseWriter, r *http.Request) {
+	if !api.jobsAuthorized(w, r) {
+		return
+	}
+	input, ok := decodeLegacyCustom(w, r)
+	if !ok {
+		return
+	}
+	if input.Mode == "move" && !input.ConfirmSourceRemoval {
+		writeAPIError(w, 400, 400, "separate source-removal consent is required before creating or executing a move job")
+		return
+	}
+	claims, err := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
+	if err != nil {
+		writeAPIError(w, 401, 401, "invalid or expired authorization")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	defer cancel()
+	plan, failure := api.legacyCustomPlan(ctx, input, claims.Username)
+	if failure == nil {
+		fresh, f := api.legacyCustomPlan(ctx, input, claims.Username)
+		failure = f
+		if failure == nil && fresh.Fingerprint != plan.Fingerprint {
+			failure = &recognitionFailure{409, "source or plan changed; submit a fresh reviewed request"}
+		}
+		plan = fresh
+	}
+	if failure != nil {
+		writeAPIError(w, failure.status, failure.status, failure.message)
+		return
+	}
+	id, err := api.jobs.Create(ctx, plan.Fingerprint, plan.definition)
+	if err != nil {
+		failure = legacyRedoFailure(err, "job reservation failed; inspect saved jobs before retry")
+		writeAPIError(w, failure.status, failure.status, failure.message)
+		return
+	}
+	job, err := api.runLegacyRedo(ctx, id, input.ConfirmSourceRemoval)
+	if err == nil && job.State != "completed" {
+		err = errors.New("custom identification did not complete")
+	}
+	if err != nil {
+		failure = legacyRedoFailure(err, "execution requires review; inspect saved job and do not automatically retry")
+		writeJSON(w, failure.status, map[string]any{"code": failure.status, "success": false, "message": failure.message, "data": map[string]any{"jobId": id, "state": job.State}})
+		return
+	}
+	filtered := 0
+	for _, item := range plan.Items {
+		if item.Status == "filtered" {
+			filtered++
+		}
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "转移成功", "data": map[string]any{"jobId": id, "state": job.State, "filtered": filtered}})
+}
