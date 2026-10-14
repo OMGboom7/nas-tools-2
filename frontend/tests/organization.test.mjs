@@ -5,7 +5,36 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord, previewRecordRename, executeRecordRename, OrganizationRenameError } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord, previewRecordRename, executeRecordRename, OrganizationRenameError, getDirectSyncRecords, previewDirectSync, createDirectSync } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+
+test("direct sync reads exact configuration IDs then previews and saves without execution", async (t) => {
+  const id = "9223372036854775807"; const fingerprint = "f".repeat(64); let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(options.headers.Authorization, "token");
+    if (calls === 1) { assert.equal(path, "/api/v1/organization/sync"); assert.equal(options.method, undefined); return new Response(JSON.stringify({ code: 0, success: true, data: { items: [{ id, source: "/source", dest: "/target", mode: "移动", rename: 0, nullFields: ["note"] }] } })); }
+    assert.equal(options.method, "POST");
+    assert.equal(path, calls === 2 ? "/api/v1/organization/sync/plan" : "/api/v1/organization/sync/jobs");
+    assert.deepEqual(JSON.parse(options.body), calls === 2 ? { id, path: "Folder" } : { id, path: "Folder", fingerprint });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 2 ? { fingerprint, items: [{ kind: "file", status: "recorded" }] } : { id: "sync-job", state: "ready", sync: { record: { id }, actor: "admin", scope: "Folder" } } }));
+  });
+  assert.equal((await getDirectSyncRecords("token"))[0].id, id);
+  assert.equal((await previewDirectSync("token", id, "Folder")).items[0].status, "recorded");
+  assert.equal((await createDirectSync("token", id, "Folder", fingerprint)).state, "ready");
+  assert.equal(calls, 3);
+});
+
+test("direct sync reservation errors never retry, execute or fall back to metadata organizing", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path) => { calls++; assert.equal(path, "/api/v1/organization/sync/jobs"); return new Response(JSON.stringify({ code: 409, success: false, message: "config changed" }), { status: 409 }); });
+  await assert.rejects(createDirectSync("token", "7", ".", "a".repeat(64)));
+  assert.equal(calls, 1);
+});
+
+test("direct sync provenance reloads readonly without inventing media metadata", async (t) => {
+  const data = { id: "raw", state: "completed", sync: { record: { id: "7", rename: 0 }, scope: ".", actor: "admin" }, items: [{ kind: "file", source: "data.bin", target: "data.bin", tmdbId: "" }] };
+  t.mock.method(globalThis, "fetch", async (_path, options) => { assert.equal(options.method, undefined); return new Response(JSON.stringify({ code: 0, success: true, data })); });
+  assert.deepEqual(await getOrganizationJob("token", "raw"), data);
+});
 
 test("record rename preview preserves exact IDs and parent consent without execution", async (t) => {
   const input = { unknown_id: "9223372036854775807", syncmod: "move", type: "TV", tmdb: "200", episode_format: "Show.{ep}.mkv", episode_details: "11,11", episode_offset: "-10", confirmParentScope: true };

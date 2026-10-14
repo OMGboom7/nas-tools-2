@@ -92,6 +92,7 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	Sync                  *SyncOrigin               `json:"sync,omitempty"`
 	LegacyTargetOverride  bool                      `json:"legacyTargetOverride,omitempty"`
 	LegacyRename          *LegacyRenameOptions      `json:"legacyRename,omitempty"`
 	LegacySelection       *LegacyMediaSelection     `json:"legacySelection,omitempty"`
@@ -138,6 +139,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	Sync                 *SyncOrigin               `json:"sync,omitempty"`
 	LegacyTargetOverride bool                      `json:"legacyTargetOverride,omitempty"`
 	LegacyRename         *LegacyRenameOptions      `json:"legacyRename,omitempty"`
 	LegacySelection      *LegacyMediaSelection     `json:"legacySelection,omitempty"`
@@ -216,6 +218,16 @@ func OpenStore(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (string, error) {
+	if d.Sync != nil {
+		if d.Sync.Actor == "" || d.Sync.ScopeIdentity == "" || len(d.Sync.GraphDigest) != 64 || d.Sync.Record.Rename != 0 || d.Unknown != nil || d.History != nil || d.LegacyOrigin != nil || !validRelative(d.Sync.Scope) {
+			return "", ErrState
+		}
+		for _, entry := range d.Entries {
+			if entry.Kind != "file" || entry.Source != entry.Target || entry.TMDBID != "" {
+				return "", ErrState
+			}
+		}
+	}
 	if d.LegacyTargetOverride && (d.LegacyOrigin == nil || d.LegacySelection == nil && d.Unknown == nil && d.History == nil) {
 		return "", ErrState
 	}
@@ -243,6 +255,20 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 		return "", err
 	}
 	defer tx.Rollback()
+	if err := verifySyncRecord(ctx, tx, d); err != nil {
+		return "", err
+	}
+	if d.Sync != nil {
+		for _, entry := range d.Entries {
+			exists, err := syncRecorded(ctx, tx, d, entry.Source)
+			if err != nil {
+				return "", err
+			}
+			if exists {
+				return "", ErrState
+			}
+		}
+	}
 	var existing string
 	err = tx.QueryRowContext(ctx, `SELECT ID FROM GO_ORGANIZATION_JOBS WHERE FINGERPRINT=? AND STATE='active' ORDER BY CREATED DESC LIMIT 1`, fingerprint).Scan(&existing)
 	if err == nil {
@@ -333,6 +359,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	job.LegacySelection = job.Definition.LegacySelection
 	job.LegacyRename = job.Definition.LegacyRename
 	job.LegacyTargetOverride = job.Definition.LegacyTargetOverride
+	job.Sync = job.Definition.Sync
 	if job.Definition.History != nil {
 		job.HistoryRecordID = job.Definition.History.ID
 	}
@@ -587,6 +614,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if jobState != "active" {
 		return ErrState
 	}
+	if err := verifySyncRecord(ctx, tx, job.Definition); err != nil {
+		return err
+	}
 	if job.Definition.History != nil {
 		current, err := readHistory(ctx, tx, job.Definition.History.ID)
 		if err != nil {
@@ -612,7 +642,22 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if job.Definition.Mode == "move" && (storedProof.SourceHold == "" || storedProof.SourceHoldIdentity == "" || storedProof.SourceParentIdentity == "") {
 		return ErrState
 	}
-	if item.Kind == "media" {
+	if job.Definition.Sync != nil {
+		exists, err := syncRecorded(ctx, tx, job.Definition, item.Source)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return ErrState
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS SYNC_HISTORY(ID INTEGER PRIMARY KEY,PATH TEXT,SRC TEXT,DEST TEXT)`); err != nil {
+			return err
+		}
+		r := job.Definition.Sync.Record
+		if _, err := tx.ExecContext(ctx, `INSERT INTO SYNC_HISTORY(PATH,SRC,DEST) VALUES(?,?,?)`, filepath.Join(r.Source, item.Source), filepath.Clean(r.Source), filepath.Clean(r.Dest)); err != nil {
+			return err
+		}
+	} else if item.Kind == "media" {
 		if _, err = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS TRANSFER_HISTORY (ID INTEGER PRIMARY KEY, MODE TEXT, TYPE TEXT, CATEGORY TEXT, TMDBID INTEGER, TITLE TEXT, YEAR TEXT, SEASON_EPISODE TEXT, SOURCE TEXT, SOURCE_PATH TEXT, SOURCE_FILENAME TEXT, DEST TEXT, DEST_PATH TEXT, DEST_FILENAME TEXT, DATE TEXT)`); err != nil {
 			return err
 		}

@@ -132,7 +132,24 @@ func (api organizationAPI) validateJob(ctx context.Context, job organization.Job
 	if err := api.jobs.VerifyUnknown(ctx, job); err != nil {
 		return err
 	}
-	return api.jobs.VerifyHistory(ctx, job)
+	if err := api.jobs.VerifyHistory(ctx, job); err != nil {
+		return err
+	}
+	if err := api.jobs.VerifySync(ctx, job); err != nil {
+		return err
+	}
+	if job.Definition.Sync != nil {
+		records, err := api.jobs.ListSync(ctx)
+		if err != nil {
+			return err
+		}
+		snapshot, err := api.service.configStore.Snapshot()
+		if err != nil {
+			return err
+		}
+		return validateDirectSyncGraph(job.Definition.Sync.Record, records, objectValue(snapshot["media"]))
+	}
+	return nil
 }
 
 func (api organizationAPI) validateJobConfiguration(ctx context.Context, job organization.Job) error {

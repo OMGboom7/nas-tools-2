@@ -699,7 +699,9 @@ export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: 
 export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; mediaType?: string; category?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 export type OrganizationLegacySelection = OrganizationEpisodeRule & { kind?: string; tmdbId?: string; season?: number; episodeDetails?: string; minimumMB?: number };
 export type OrganizationLegacyRenameOptions = { expandedScope?: boolean; preserveUnknown?: boolean };
-export type OrganizationJob = { id: string; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
+export type OrganizationSyncRecord = { id: string; source: string; dest: string; unknown: string; mode: string; compatibility: number; rename: number; enabled: number; locating: number; note: string; nullFields?: string[] };
+export type OrganizationSyncOrigin = { record: OrganizationSyncRecord; scope: string; scopeIdentity: string; graphDigest: string; actor: string };
+export type OrganizationJob = { id: string; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 
 export async function getOrganizationHistory(token: string, page = 1, keyword = ""): Promise<OrganizationHistoryData> {
   const result = await readResponse<OrganizationHistoryData>(await fetch(`/api/v1/organization/history?${new URLSearchParams({ page: String(page), keyword })}`, { headers: { Authorization: token } }));
@@ -1082,6 +1084,22 @@ export class OrganizationRenameError extends ApiError {
 export async function previewRecordRename(token: string, input: OrganizationRenameInput): Promise<OrganizationRenameReview> {
   const result = await readResponse<OrganizationRenameReview>(await fetch("/api/v1/organization/unknown/rename/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
   if (!result.success || result.code !== 0 || !result.data?.plan?.fingerprint) throw new ApiError(result.message || "关联记录改名预览失败", result.code);
+  return result.data;
+}
+
+export async function getDirectSyncRecords(token: string): Promise<OrganizationSyncRecord[]> {
+  const result = await readResponse<{ items: OrganizationSyncRecord[] }>(await fetch("/api/v1/organization/sync", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "同步配置读取失败", result.code);
+  return result.data.items;
+}
+export async function previewDirectSync(token: string, id: string, path = "."): Promise<OrganizationPlan> {
+  const result = await readResponse<OrganizationPlan>(await fetch("/api/v1/organization/sync/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ id, path }) }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "直接同步预览失败", result.code);
+  return result.data;
+}
+export async function createDirectSync(token: string, id: string, path: string, fingerprint: string): Promise<OrganizationJob> {
+  const result = await readResponse<OrganizationJob>(await fetch("/api/v1/organization/sync/jobs", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ id, path, fingerprint }) }));
+  if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "同步任务保存未能核实；请只刷新任务列表，不自动重试", result.code);
   return result.data;
 }
 export async function executeRecordRename(token: string, input: OrganizationRenameInput, reviewFingerprint: string, confirmed = false, confirmSourceRemoval = false): Promise<OrganizationRenameOutcome> {

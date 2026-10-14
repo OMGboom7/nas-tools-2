@@ -97,6 +97,16 @@ func noLinks(root *os.Root, name string) (fs.FileInfo, error) {
 }
 
 func Scan(ctx context.Context, base, selected string) (ScanResult, error) {
+	return scan(ctx, base, selected, false)
+}
+
+// ScanAll preserves safe regular files regardless of extension for direct
+// directory sync. It does not identify arbitrary files as media.
+func ScanAll(ctx context.Context, base, selected string) (ScanResult, error) {
+	return scan(ctx, base, selected, true)
+}
+
+func scan(ctx context.Context, base, selected string, all bool) (ScanResult, error) {
 	result := ScanResult{Files: []File{}}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
@@ -120,12 +130,16 @@ func Scan(ctx context.Context, base, selected string) (ScanResult, error) {
 		if visited > 20000 || depth > 32 {
 			return ErrLimit
 		}
-		if info.Mode()&fs.ModeSymlink != 0 || strings.HasPrefix(filepath.Base(name), ".") && name != "." {
+		baseName := filepath.Base(name)
+		if info.Mode()&fs.ModeSymlink != 0 || strings.HasPrefix(baseName, ".") && name != "." || all && (baseName == "@Recycle" || baseName == "#recycle" || strings.HasPrefix(baseName, "@eaDir")) {
 			result.Skipped++
 			return nil
 		}
 		if !info.IsDir() {
 			kind := extensions[strings.ToLower(filepath.Ext(name))]
+			if all {
+				kind = "file"
+			}
 			if !info.Mode().IsRegular() || kind == "" {
 				result.Skipped++
 				return nil
