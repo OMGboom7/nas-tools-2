@@ -51,7 +51,7 @@ func validateLegacySelection(choice *organization.LegacyMediaSelection) error {
 	if choice == nil {
 		return nil
 	}
-	if choice.Kind != "" && choice.Kind != "movie" && choice.Kind != "tv" {
+	if choice.Kind != "" && choice.Kind != "movie" && choice.Kind != "tv" && choice.Kind != "anime" {
 		return errors.New("invalid legacy media type")
 	}
 	if choice.TMDBID != "" {

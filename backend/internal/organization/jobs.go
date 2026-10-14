@@ -92,6 +92,7 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	LegacyTargetOverride  bool                      `json:"legacyTargetOverride,omitempty"`
 	LegacyRename          *LegacyRenameOptions      `json:"legacyRename,omitempty"`
 	LegacySelection       *LegacyMediaSelection     `json:"legacySelection,omitempty"`
 	LegacyOrigin          *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
@@ -137,23 +138,24 @@ type JobItem struct {
 }
 
 type Job struct {
-	LegacyRename     *LegacyRenameOptions      `json:"legacyRename,omitempty"`
-	LegacySelection  *LegacyMediaSelection     `json:"legacySelection,omitempty"`
-	LegacyOrigin     *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
-	EpisodeSelection *EpisodeSelection         `json:"episodeSelection,omitempty"`
-	HistoryRecordID  int64                     `json:"historyRecordId,omitempty"`
-	UnknownDetach    *UnknownDetachReceipt     `json:"unknownDetach,omitempty"`
-	UnknownRecordID  int64                     `json:"unknownRecordId,omitempty"`
-	UnknownState     string                    `json:"unknownState,omitempty"`
-	ID               string                    `json:"id"`
-	Fingerprint      string                    `json:"fingerprint"`
-	Created          string                    `json:"created"`
-	State            string                    `json:"state"`
-	Mode             string                    `json:"mode"`
-	SourceRoot       string                    `json:"sourceRoot"`
-	TargetRoot       string                    `json:"targetRoot"`
-	Items            []JobItem                 `json:"items"`
-	Definition       Definition                `json:"-"`
+	LegacyTargetOverride bool                      `json:"legacyTargetOverride,omitempty"`
+	LegacyRename         *LegacyRenameOptions      `json:"legacyRename,omitempty"`
+	LegacySelection      *LegacyMediaSelection     `json:"legacySelection,omitempty"`
+	LegacyOrigin         *LegacyOrganizationOrigin `json:"legacyOrigin,omitempty"`
+	EpisodeSelection     *EpisodeSelection         `json:"episodeSelection,omitempty"`
+	HistoryRecordID      int64                     `json:"historyRecordId,omitempty"`
+	UnknownDetach        *UnknownDetachReceipt     `json:"unknownDetach,omitempty"`
+	UnknownRecordID      int64                     `json:"unknownRecordId,omitempty"`
+	UnknownState         string                    `json:"unknownState,omitempty"`
+	ID                   string                    `json:"id"`
+	Fingerprint          string                    `json:"fingerprint"`
+	Created              string                    `json:"created"`
+	State                string                    `json:"state"`
+	Mode                 string                    `json:"mode"`
+	SourceRoot           string                    `json:"sourceRoot"`
+	TargetRoot           string                    `json:"targetRoot"`
+	Items                []JobItem                 `json:"items"`
+	Definition           Definition                `json:"-"`
 }
 
 type Store struct {
@@ -214,6 +216,9 @@ func OpenStore(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (string, error) {
+	if d.LegacyTargetOverride && (d.LegacyOrigin == nil || d.LegacySelection == nil && d.Unknown == nil && d.History == nil) {
+		return "", ErrState
+	}
 	if d.LegacyRename != nil && (d.LegacyOrigin == nil || d.LegacyOrigin.Action != "rename" || d.LegacySelection == nil || d.Unknown == nil && d.History == nil || d.LegacyRename.PreserveUnknown && d.Unknown == nil) {
 		return "", ErrState
 	}
@@ -327,6 +332,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	job.LegacyOrigin = job.Definition.LegacyOrigin
 	job.LegacySelection = job.Definition.LegacySelection
 	job.LegacyRename = job.Definition.LegacyRename
+	job.LegacyTargetOverride = job.Definition.LegacyTargetOverride
 	if job.Definition.History != nil {
 		job.HistoryRecordID = job.Definition.History.ID
 	}

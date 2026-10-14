@@ -86,11 +86,12 @@ func (api mediaNameAPI) serveHTTP(response http.ResponseWriter, request *http.Re
 }
 
 type nativeRecognition struct {
-	data     map[string]any
-	meta     mediameta.Metadata
-	detail   tmdbMediaDetails
-	kind     string
-	subtitle string
+	libraryCategory string
+	data            map[string]any
+	meta            mediameta.Metadata
+	detail          tmdbMediaDetails
+	kind            string
+	subtitle        string
 }
 
 type recognitionFailure struct {
@@ -107,6 +108,9 @@ func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forc
 }
 
 func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo, selectedPart *string) (*nativeRecognition, *recognitionFailure) {
+	if forcedKind == "anime" {
+		forcedKind = "tv"
+	} // Old ANIME selects TV lookup; TMDB genres decide classification.
 	if forcedKind != "" && forcedKind != "movie" && forcedKind != "tv" {
 		return nil, &recognitionFailure{422, "invalid media type"}
 	}
@@ -172,21 +176,16 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 		return nil, &recognitionFailure{502, "invalid media details"}
 	}
 	categoryKind := kind
-	config, err := api.service.configStore.Snapshot()
-	if err != nil {
-		return nil, &recognitionFailure{500, "media configuration is unavailable"}
-	}
-	if kind == "tv" && text(objectValue(config["media"])["anime_path"]) != "" {
-		for _, genre := range categoryArray(detail.Attributes["genres"]) {
-			if object, ok := genre.(map[string]any); ok && number(object["id"]) == 16 {
-				categoryKind, typeName = "anime", "动漫"
-				break
-			}
-		}
+	if kind == "tv" && animationDetail(detail) {
+		categoryKind, typeName = "anime", "动漫"
 	}
 	category, err := api.categories.match(categoryKind, detail.Attributes)
 	if err != nil {
 		return nil, &recognitionFailure{502, "media category configuration is unavailable"}
+	}
+	libraryCategory, err := api.recognitionLibraryCategory(kind, detail, category)
+	if err != nil {
+		return nil, &recognitionFailure{502, "media library category configuration is unavailable"}
 	}
 	year := meta.Year
 	if selectedID != "" {
@@ -216,7 +215,7 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 			episodeLink += "/episode/" + strconv.Itoa(*meta.Episodes.Episode)
 		}
 	}
-	return &nativeRecognition{meta: meta, detail: detail, kind: kind, subtitle: processedSubtitle.Title, data: map[string]any{
+	return &nativeRecognition{libraryCategory: libraryCategory, meta: meta, detail: detail, kind: kind, subtitle: processedSubtitle.Title, data: map[string]any{
 		"type": typeName, "name": meta.Title, "title": verifiedTitle, "year": year,
 		"season_episode": seasonEpisode, "part": meta.Part, "tmdbid": detail.ID, "tmdblink": link, "tmdb_S_E_link": episodeLink,
 		"category": category, "restype": meta.Source, "effect": meta.Effect, "pix": meta.Resolution,

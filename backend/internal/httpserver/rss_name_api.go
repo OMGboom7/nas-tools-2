@@ -95,7 +95,7 @@ func (api rssNameAPI) serveHTTP(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	matched = matched && filter.Matched
-	coverage, err := api.recognition.service.nativeMediaExistence(ctx, result.meta, result.detail, result.kind, text(result.data["category"]))
+	coverage, err := api.recognition.service.nativeMediaExistence(ctx, result.meta, result.detail, result.kind, result.libraryCategory)
 	if err != nil {
 		status, message := 502, "media inventory lookup failed"
 		if errors.Is(err, errLocalMediaUnavailable) {

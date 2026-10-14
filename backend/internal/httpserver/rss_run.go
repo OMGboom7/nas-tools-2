@@ -247,7 +247,7 @@ func (api *rssRunAPI) run(ctx context.Context, id int64) (rssRunResult, *recogni
 				continue
 			}
 			meta, rev = recognized.meta, text(recognized.data["rev_string"])
-			coverage, err := api.recognition.service.nativeMediaExistence(ctx, meta, recognized.detail, recognized.kind, text(recognized.data["category"]))
+			coverage, err := api.recognition.service.nativeMediaExistence(ctx, meta, recognized.detail, recognized.kind, recognized.libraryCategory)
 			if err != nil {
 				return fail(503, "RSS media inventory could not be verified")
 			}

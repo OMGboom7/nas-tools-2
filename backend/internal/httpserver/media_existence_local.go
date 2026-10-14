@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -40,25 +39,17 @@ func localInventorySettings(media map[string]any, detail tmdbMediaDetails, tv bo
 	pathKey, format := "movie_path", localNamingTemplate(media, tv)
 	if tv {
 		pathKey = "tv_path"
-		if text(media["anime_path"]) != "" || len(categoryArray(media["anime_path"])) > 0 {
-			for _, genre := range categoryArray(detail.Attributes["genres"]) {
-				if fmt.Sprint(objectValue(genre)["id"]) == "16" {
-					pathKey = "anime_path"
-				}
-			}
+		kind, err := mediaTargetType(media, "tv", detail)
+		if err != nil {
+			return nil, "", mediaserver.ErrConfiguration
+		}
+		if kind == "ANIME" {
+			pathKey = "anime_path"
 		}
 	}
-	var roots []string
-	if root, ok := media[pathKey].(string); ok && root != "" {
-		roots = []string{root}
-	} else {
-		for _, value := range categoryArray(media[pathKey]) {
-			root, ok := value.(string)
-			if !ok || root == "" {
-				return nil, "", mediaserver.ErrConfiguration
-			}
-			roots = append(roots, root)
-		}
+	roots, err := mediaLibraryPaths(media, pathKey)
+	if err != nil {
+		return nil, "", mediaserver.ErrConfiguration
 	}
 	if len(roots) == 0 {
 		return nil, "", errLocalMediaUnavailable

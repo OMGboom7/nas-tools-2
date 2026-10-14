@@ -31,7 +31,7 @@ func (api organizationAPI) serveLegacyRenamePreview(w http.ResponseWriter, r *ht
 		return
 	}
 	d := plan.definition
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"plan": plan, "sourceRoot": d.SourceRoot, "targetRoot": d.TargetRoot, "origin": d.LegacyOrigin, "selection": d.LegacySelection, "options": d.LegacyRename, "unknown": d.Unknown, "history": d.History}})
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"plan": plan, "explicitTarget": d.LegacyTargetOverride, "sourceRoot": d.SourceRoot, "targetRoot": d.TargetRoot, "origin": d.LegacyOrigin, "selection": d.LegacySelection, "options": d.LegacyRename, "unknown": d.Unknown, "history": d.History}})
 }
 
 // The legacy row is provenance, not authority for arbitrary filesystem paths.

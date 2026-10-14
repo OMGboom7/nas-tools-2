@@ -38,6 +38,7 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
+	LegacyTargetOverride  bool                               `json:"-"`
 	LegacyRename          *organization.LegacyRenameOptions  `json:"-"`
 	LegacySelection       *organization.LegacyMediaSelection `json:"-"`
 	AllowProcessedUnknown bool                               `json:"-"`
@@ -172,20 +173,12 @@ func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error)
 		return result, err
 	}
 	media := objectValue(snapshot["media"])
-	for _, spec := range []struct{ key, label, kind string }{{"movie_path", "电影媒体库", "MOV"}, {"tv_path", "电视剧媒体库", "TV"}, {"anime_path", "动漫媒体库", "TV"}} {
-		value := media[spec.key]
-		if value == nil {
-			continue
+	for _, spec := range []struct{ key, label, kind string }{{"movie_path", "电影媒体库", "MOV"}, {"tv_path", "电视剧媒体库", "TV"}, {"anime_path", "动漫媒体库", "ANIME"}} {
+		paths, err := mediaLibraryPaths(media, spec.key)
+		if err != nil {
+			return result, err
 		}
-		paths := []any{value}
-		if values, ok := value.([]any); ok {
-			paths = values
-		}
-		for _, value := range paths {
-			path, ok := value.(string)
-			if !ok {
-				return result, organization.ErrPath
-			}
+		for _, path := range paths {
 			if err := add("target", path, spec.label, spec.kind); err != nil {
 				return result, err
 			}
@@ -364,6 +357,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.LegacyTargetOverride = input.LegacyTargetOverride
 	result.definition.LegacyRename = input.LegacyRename
 	result.definition.LegacySelection = input.LegacySelection
 	result.definition.UnknownAllowProcessed = input.AllowProcessedUnknown && unknown != nil && unknown.State == "Y"
@@ -463,14 +457,12 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		item.TMDBID = text(recognition.data["tmdbid"])
 		item.Part = recognition.meta.Part
 		item.Title, item.Year, item.MediaType, item.SeasonEpisode = text(recognition.data["title"]), text(recognition.data["year"]), text(recognition.data["type"]), text(recognition.data["season_episode"])
-		if categories := stringsOf(recognition.data["category"]); len(categories) > 0 {
-			item.Category = categories[0]
+		item.Category = text(recognition.data["category"])
+		kind, routingErr := mediaTargetType(media, recognition.kind, recognition.detail)
+		if routingErr != nil {
+			return fail(422, "media library routing configuration is invalid")
 		}
-		kind := "MOV"
-		if recognition.kind == "tv" {
-			kind = "TV"
-		}
-		if target.Type != "" && target.Type != kind {
+		if !input.LegacyTargetOverride && target.Type != "" && target.Type != kind {
 			item.Status, item.Reason = "blocked", "media type does not match selected target"
 			result.Items = append(result.Items, item)
 			continue
@@ -646,9 +638,7 @@ func (api organizationAPI) targetName(ctx context.Context, media map[string]any,
 	if err != nil {
 		return "", err
 	}
-	categories := stringsOf(r.data["category"])
-	if len(categories) > 0 {
-		category := categories[0]
+	if category := r.libraryCategory; category != "" {
 		if filepath.Base(category) != category || category == "." || category == ".." || strings.ContainsAny(category, "\\\x00") {
 			return "", errLibraryFormat
 		}

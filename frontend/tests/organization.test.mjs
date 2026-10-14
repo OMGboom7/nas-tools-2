@@ -92,6 +92,30 @@ test("record mutation errors never retry, restore automatically or fall back to 
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
+test("anime identity uses TV episode rules without asserting final metadata classification", () => {
+  const file = { source: "Show.11.mkv", kind: "media", identity: "1:2", size: 100, modified: "123" };
+  assert.deepEqual(buildOrganizationAssignment(file, "anime", "200", "1", "", "", "Show.{ep}.mkv", "-10"), { ...file, kind: "anime", tmdbId: "200", season: 1, episodeFormat: "Show.{ep}.mkv", episodeOffset: -10 });
+  assert.throws(() => buildOrganizationAssignment(file, "anime", "200", "", "1", ""));
+  assert.throws(() => buildOrganizationAssignment(file, "anime", "200", "1", "", ""));
+});
+
+test("legacy ANIME review preserves lookup intent and explicit target policy without execution", async (t) => {
+  const input = { unknown_id: "7", syncmod: "copy", type: "ANIME", tmdb: "200" };
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(path, "/api/v1/organization/unknown/rename/plan"); assert.deepEqual(JSON.parse(options.body), input);
+    return new Response(JSON.stringify({ code: 0, success: true, data: { plan: { fingerprint: "e".repeat(64), items: [] }, selection: { kind: "anime" } } }));
+  });
+  assert.equal((await previewRecordRename("token", input)).selection.kind, "anime");
+  assert.equal(calls, 1);
+});
+
+test("saved explicit destination policy and anime classification load without replanning", async (t) => {
+  const data = { id: "anime-job", legacyTargetOverride: true, legacySelection: { kind: "anime" }, items: [{ mediaType: "动漫" }] };
+  t.mock.method(globalThis, "fetch", async (_path, options) => { assert.equal(options.method, undefined); return new Response(JSON.stringify({ code: 0, success: true, data })); });
+  assert.deepEqual(await getOrganizationJob("token", "anime-job"), data);
+});
+
 test("batch episode selection requires explicit TV identity, season, template and paired filter", () => {
   assert.equal(buildOrganizationEpisodeSelection("200", "1", "Show.{date:ti}.{ep}.mkv", "", "", "").episodeFormat, "Show.{date:ti}.{ep}.mkv");
   assert.equal(buildOrganizationEpisodeSelection("200", "1", "{{Show}}.{ep:4}.mkv", "", "", "").episodeFormat, "{{Show}}.{ep:4}.mkv");

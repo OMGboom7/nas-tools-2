@@ -38,7 +38,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [detachReason, setDetachReason] = useState("");
   const [detachConfirmed, setDetachConfirmed] = useState(false);
   const [manualSource, setManualSource] = useState("");
-  const [manualKind, setManualKind] = useState<"movie" | "tv">("movie");
+  const [manualKind, setManualKind] = useState<"movie" | "tv" | "anime">("movie");
   const [manualId, setManualId] = useState("");
   const [manualSeason, setManualSeason] = useState("");
   const [manualEpisode, setManualEpisode] = useState("");
@@ -243,16 +243,17 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       </form>}
       {plan && <div aria-live="polite"><p>共 {plan.items.length} 个媒体或附件；跳过 {plan.skipped} 个隐藏、非媒体或常见未完成后缀项。此预览不能直接执行，也不证明文件已下载完成。</p>
         {plan.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.source}`}>分段覆盖：{item.source} → {item.partOverride || "明确清空"}（唯一附件继承）</p>)}
-        <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>核验状态</th></tr></thead><tbody>{plan.items.map((item) => <tr key={item.source}><td>{item.source}<small>{item.size} 字节 · {item.kind}{item.part ? ` · 分段 ${item.part}` : ""}</small>{(item.episodeFormat || !!item.episodeOffset) && <small>集号规则：{item.episodeFormat || "明确编号"} · 偏移 {item.episodeOffset || 0}</small>}</td><td>{item.target || "未生成"}{item.tmdbId && <small>{item.title} {item.year} · TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small>}</td><td>{statusLabels[item.status] || item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
+        <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>核验状态</th></tr></thead><tbody>{plan.items.map((item) => <tr key={item.source}><td>{item.source}<small>{item.size} 字节 · {item.kind}{item.part ? ` · 分段 ${item.part}` : ""}</small>{(item.episodeFormat || !!item.episodeOffset) && <small>集号规则：{item.episodeFormat || "明确编号"} · 偏移 {item.episodeOffset || 0}</small>}</td><td>{item.target || "未生成"}{item.tmdbId && <small>{item.title} {item.year} · {item.mediaType || "待核验类型"} · TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small>}</td><td>{statusLabels[item.status] || item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
         {!batchEnabled && <form onSubmit={(event) => void assignIdentity(event)} aria-label="逐文件指定媒体身份">
           <h2>纠正媒体身份</h2><p>只影响所选媒体文件，同名附件仍须唯一匹配；其他文件继续自动识别。TMDB 标题、年份、分类和偏移后的季集上限由服务器核验，不允许自填目标路径，也不能绕过大小、蓝光或冲突限制。应用只重新生成只读预览，不执行整理。</p>
           <label>当前预览中的媒体文件<select value={manualSource} disabled={busy} required onChange={(event) => setManualSource(event.target.value)}><option value="">请选择</option>{plan.items.filter((item) => item.kind === "media").map((item) => <option key={item.source} value={item.source}>{item.source}</option>)}</select></label>
-          <label>媒体类型<select value={manualKind} disabled={busy} onChange={(event) => { setManualKind(event.target.value as "movie" | "tv"); setManualSeason(""); setManualEpisode(""); setManualEndEpisode(""); setManualEpisodeFormat(""); setManualEpisodeOffset(""); }}><option value="movie">电影</option><option value="tv">电视剧／动漫</option></select></label>
+          <label>媒体查询类型<select value={manualKind} disabled={busy} onChange={(event) => { setManualKind(event.target.value as "movie" | "tv" | "anime"); setManualSeason(""); setManualEpisode(""); setManualEndEpisode(""); setManualEpisodeFormat(""); setManualEpisodeOffset(""); }}><option value="movie">电影</option><option value="tv">电视剧</option><option value="anime">动漫（TV 元数据查询）</option></select></label>
+          {manualKind !== "movie" && <p>电视剧和动漫均使用 TV 元数据；最终是否动漫以 TMDB 动画分类为准，不强改非动画作品。未配置动漫目录时使用电视剧目录。</p>}
           <label>TMDB ID<input value={manualId} disabled={busy} required inputMode="numeric" pattern="[1-9][0-9]*" onChange={(event) => setManualId(event.target.value)} /></label>
           <label>分段处理<select value={manualPartMode} disabled={busy} onChange={(event) => setManualPartMode(event.target.value as "auto" | "set" | "clear")}><option value="auto">自动识别</option><option value="set">指定分段</option><option value="clear">明确清空分段</option></select></label>
           {manualPartMode === "set" && <label>分段值<input value={manualPart} maxLength={32} disabled={busy} required placeholder="如 PARTIII、CD01、DISC12" onChange={(event) => setManualPart(event.target.value)} /></label>}
           {manualPartMode !== "auto" && <p>只覆盖所选文件和唯一附件的分段；明确清空可能导致目标重名，服务器仍会阻止冲突，不自动改名或覆盖。</p>}
-          {manualKind === "tv" && <>
+          {manualKind !== "movie" && <>
             <label>季号（0 为特别篇）<input type="number" min="0" max="99" value={manualSeason} disabled={busy} required onChange={(event) => setManualSeason(event.target.value)} /></label>
             <label>集号定位模板（留空则使用下面的明确集号）<input value={manualEpisodeFormat} maxLength={512} disabled={busy} placeholder="Show.第{ep}集.{a}.mkv" onChange={(event) => setManualEpisodeFormat(event.target.value)} /></label>
             <p>模板完整匹配所选文件名（含扩展名），字面忽略大小写。用 {'{ep}'} 标定数字或 EP11-EP13 范围；支持匿名字段、转义花括号、同值重复字段和文字宽度／对齐格式，如 {'{ep:4}'}。非集号字段支持常见字符、数值和日期／时间类型（如 {'{date:ti}'}）；日期和时间须有效。集号必须保留文字，自定义类型暂不支持。不会应用到目录中的其他文件。</p>
@@ -275,6 +276,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
           {job.legacyOrigin && <p>旧接口 {job.legacyOrigin.action} 请求：{job.legacyOrigin.kind === "custom" ? "自定义路径识别" : `${job.legacyOrigin.kind === "history" ? "原历史" : "未识别记录"} #${job.legacyOrigin.recordId}`} · 操作者 {job.legacyOrigin.actor}。实际结果以本任务的持久回执为准，接口失败不意味着可以重跑。</p>}
           {job.legacySelection && <p>已保存自定义识别规则：{job.legacySelection.kind || "自动类型"} · TMDB {job.legacySelection.tmdbId || "自动识别"} · 季 {job.legacySelection.season ?? "识别值或 TV 默认 1"} · 集号模板 {job.legacySelection.episodeFormat || "无"} · 范围 {job.legacySelection.episodeDetails || "无"} · 偏移 {job.legacySelection.episodeOffset || 0} · 最小大小 {job.legacySelection.minimumMB === undefined ? "配置值" : `${job.legacySelection.minimumMB} MiB`}。只执行已保存项目，不重新扫描扩大范围。</p>}
           {job.legacyRename && <p>关联改名范围：{job.legacyRename.expandedScope ? "已独立授权扩展到原文件父目录" : "原记录范围"}。{job.legacyRename.preserveUnknown ? "仅代表保存条目成功，原未识别记录保持原状，不标记整条成功。" : "兼容状态只根据完整范围成功回执提交。"}</p>}
+          {job.legacyTargetOverride && <p>本任务使用请求或原记录明确指定的配置目标根，不按媒体类型自动另选目录；仍不覆盖现有目标。</p>}
           {job.episodeSelection && <p>已保存批量 TV 规则：TMDB {job.episodeSelection.tmdbId} · 季 {job.episodeSelection.season} · {job.episodeSelection.episodeFormat} · 偏移 {job.episodeSelection.episodeOffset || 0} · 偏移前起始集筛选 {job.episodeSelection.startEpisode === undefined ? "不限制" : `${job.episodeSelection.startEpisode}–${job.episodeSelection.endEpisode}`}。只执行已保存项目，不重扫或扩大目录范围。</p>}
           {job.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.index}`}>已保存分段覆盖：{item.source} → {item.partOverride || "明确清空"}</p>)}
           {job.historyRecordId && <p>由原历史 #{job.historyRecordId} 重新规划。原历史保留，只有新的核验转移成功才追加新历史；不是覆盖原媒体的授权。</p>}

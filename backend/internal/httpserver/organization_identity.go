@@ -55,7 +55,7 @@ func organizationAssignments(ctx context.Context, input []organizationMediaAssig
 			return nil, &recognitionFailure{504, "organization episode selection was cancelled or timed out"}
 		}
 		id, err := strconv.ParseInt(selection.TMDBID, 10, 64)
-		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != selection.TMDBID || selection.Kind != "movie" && selection.Kind != "tv" || selection.Source == "" || selection.Identity == "" || selection.Modified == "" || selection.Size < 0 {
+		if err != nil || id <= 0 || strconv.FormatInt(id, 10) != selection.TMDBID || selection.Kind != "movie" && selection.Kind != "tv" && selection.Kind != "anime" || selection.Source == "" || selection.Identity == "" || selection.Modified == "" || selection.Size < 0 {
 			return nil, &recognitionFailure{422, "invalid manual media selector or file snapshot"}
 		}
 		if _, exists := result[selection.Source]; exists {
@@ -94,7 +94,7 @@ func organizationAssignments(ctx context.Context, input []organizationMediaAssig
 		if !found {
 			return nil, &recognitionFailure{422, "manual selection is outside the scanned media set"}
 		}
-		if selection.Kind == "tv" {
+		if selection.Kind != "movie" {
 			var start int
 			var end *int
 			var err error
@@ -128,7 +128,7 @@ func organizationAssignments(ctx context.Context, input []organizationMediaAssig
 
 func (api mediaNameAPI) recognizeAssigned(ctx context.Context, title string, selection organizationMediaAssignment) (*nativeRecognition, *recognitionFailure) {
 	episodes := mediameta.EpisodeInfo{}
-	if selection.Kind == "tv" {
+	if selection.Kind != "movie" {
 		episodes = mediameta.EpisodeInfo{TV: true, Season: selection.Season, Episode: selection.Episode, EndEpisode: selection.EndEpisode, Count: 1}
 		if selection.EndEpisode != nil {
 			episodes.Count = *selection.EndEpisode - *selection.Episode + 1

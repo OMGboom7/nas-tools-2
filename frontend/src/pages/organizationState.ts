@@ -41,7 +41,7 @@ export function canAbandonOrganizationJob(job: { state: string; items: Array<{ s
     && job.items.every((item) => item.state === "planned" || item.state === "prepared" || item.state === "staging"));
 }
 
-export function buildOrganizationAssignment(file: { source: string; kind: string; identity: string; modified: string; size: number }, kind: "movie" | "tv", id: string, season: string, episode: string, endEpisode: string, episodeFormat = "", episodeOffset = "", partMode: "auto" | "set" | "clear" = "auto", part = "") {
+export function buildOrganizationAssignment(file: { source: string; kind: string; identity: string; modified: string; size: number }, kind: "movie" | "tv" | "anime", id: string, season: string, episode: string, endEpisode: string, episodeFormat = "", episodeOffset = "", partMode: "auto" | "set" | "clear" = "auto", part = "") {
   const tmdbId = id.trim();
   if (file.kind !== "media" || !file.identity || !file.modified || !Number.isSafeInteger(file.size) || file.size < 0) throw new Error("请从当前预览选择媒体文件；文件快照缺失时请重新预览。");
   if (!/^[1-9]\d{0,18}$/.test(tmdbId) || BigInt(tmdbId) > 9223372036854775807n) throw new Error("请输入有效的 TMDB 数字 ID。");
@@ -52,7 +52,7 @@ export function buildOrganizationAssignment(file: { source: string; kind: string
     if (!/^(?:PART(?:[0-9ABI]{0,2}|C|III)|(?:CD|DVD|DISK|DISC)[0-9]{0,2})$/.test(normalized)) throw new Error("请输入有效分段，如 PART1、PARTIII、CD01、DVD2、DISK10 或 DISC12。");
     assignment.partOverride = normalized;
   }
-  if (kind === "tv") {
+  if (kind !== "movie") {
     const parse = (value: string, minimum: number, maximum: number) => {
       if (!/^\d+$/.test(value.trim())) throw new Error("电视剧必须明确指定季号和集号。");
       const number = Number(value);

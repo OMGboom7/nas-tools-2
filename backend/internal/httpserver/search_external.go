@@ -143,7 +143,7 @@ func (service *nativeExternalResourceSearch) group(ctx context.Context, items []
 				}
 				item.Season = text(result.data["season_episode"])
 				item.Resolution, item.Medium, item.Effect, item.ReleaseGroup, item.VideoCodec = result.meta.Resolution, result.meta.Source, result.meta.Effect, result.meta.Team, result.meta.VideoCodec
-				coverage, inventoryErr := service.recognition.service.nativeMediaExistence(ctx, result.meta, result.detail, result.kind, text(result.data["category"]))
+				coverage, inventoryErr := service.recognition.service.nativeMediaExistence(ctx, result.meta, result.detail, result.kind, result.libraryCategory)
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}

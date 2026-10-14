@@ -94,7 +94,7 @@ func TestLegacyCustomExplicitEpisodeDetailsAndDefaultSeason(t *testing.T) {
 func TestLegacyCustomRejectsInvalidOrUnsupportedRequestsBeforeJobs(t *testing.T) {
 	f, source, target, _, _ := organizationLinkFixture(t, "copy")
 	for _, extra := range []map[string]any{
-		{"syncmod": "move"}, {"syncmod": "Rclone移动"}, {"type": "ANIME"}, {"tmdb": "900719925474099312345"},
+		{"syncmod": "move"}, {"syncmod": "Rclone移动"}, {"type": "UNKNOWN"}, {"tmdb": "900719925474099312345"},
 		{"type": "TV", "episode_details": "3,2"}, {"type": "TV", "episode_details": "1,3"},
 		{"type": "MOV", "season": 1}, {"type": "TV", "season": 100}, {"episode_offset": 1.5},
 		{"min_filesize": -1}, {"actor": "forged"}, {"title": "forged"}, {"confirmSourceRemoval": "yes"},

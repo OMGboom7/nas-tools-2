@@ -132,6 +132,7 @@ func (api organizationAPI) legacyRedoPlan(ctx context.Context, kind string, id i
 		dest, storedMode = record.Dest, record.Mode
 	}
 	input.Mode = transferModes[storedMode]
+	input.LegacyTargetOverride = dest != ""
 	if storedMode == "" {
 		snapshot, err := api.service.configStore.Snapshot()
 		if err != nil {

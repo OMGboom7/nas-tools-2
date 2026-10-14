@@ -91,6 +91,33 @@ func (api mediaCategoryAPI) match(kind string, info map[string]any) (string, err
 	return matchMediaCategory(root, kind, info)
 }
 
+func categoryEnabled(root yaml.Node, kind string) (bool, error) {
+	if len(root.Content) == 0 {
+		return false, nil
+	}
+	document := root.Content[0]
+	if document.Kind != yaml.MappingNode {
+		return false, errors.New("invalid category document")
+	}
+	for i := 0; i+1 < len(document.Content); i += 2 {
+		if document.Content[i].Value != kind {
+			continue
+		}
+		section, err := categoryNode(document.Content[i+1])
+		if err != nil {
+			return false, err
+		}
+		if section.Tag == "!!null" {
+			return false, nil
+		}
+		if section.Kind != yaml.MappingNode {
+			return false, errors.New("invalid category section")
+		}
+		return len(section.Content) > 0, nil
+	}
+	return false, nil
+}
+
 // Conditions within a category are ANDed; comma-separated values within a
 // condition are ORed. First match wins, including an unconditional fallback.
 func matchMediaCategory(root yaml.Node, kind string, info map[string]any) (string, error) {

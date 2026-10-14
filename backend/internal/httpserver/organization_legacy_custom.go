@@ -132,14 +132,13 @@ func decodeLegacyIdentification(w http.ResponseWriter, r *http.Request, linked b
 	case "TV", "电视剧":
 		choice.Kind = "tv"
 	case "ANIME", "动漫":
-		writeAPIError(w, 501, 501, "forced anime classification is not migrated")
-		return input, false
+		choice.Kind = "anime"
 	default:
 		return bad("invalid custom media type")
 	}
 	choice.TMDBID = fields["tmdb"]
 	if choice.TMDBID != "" && choice.Kind == "" {
-		return bad("explicit TMDB identity requires MOV or TV type")
+		return bad("explicit TMDB identity requires MOV, TV or ANIME type")
 	}
 	choice.EpisodeFormat, choice.EpisodeDetails = fields["episode_format"], fields["episode_details"]
 	parse := func(key string) (int, error) { return strconv.Atoi(fields[key]) }
@@ -210,12 +209,10 @@ func (api organizationAPI) legacyCustomPlan(ctx context.Context, request legacyC
 }
 
 func (api organizationAPI) legacyIdentificationTargets(ctx context.Context, roots organizationRoots, input organizationPlanInput, dest string, origin *organization.LegacyOrganizationOrigin) (organizationPlan, *recognitionFailure) {
+	input.LegacyTargetOverride = dest != "" // An explicit configured destination is not an automatic library choice.
 	var last *recognitionFailure
 	for _, root := range roots.Targets {
 		if dest != "" && !historyPathMatches(root.Path, ".", dest) || dest == "" && root.Type == "" {
-			continue
-		}
-		if root.Type != "" && (input.LegacySelection.Kind == "tv" && root.Type != "TV" || input.LegacySelection.Kind == "movie" && root.Type != "MOV") {
 			continue
 		}
 		input.TargetID = root.ID

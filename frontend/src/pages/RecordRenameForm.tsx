@@ -9,7 +9,7 @@ export function RecordRenameForm({ token, enabled, onChanged, onSessionExpired }
   const [kind, setKind] = useState("unknown");
   const [recordID, setRecordID] = useState("");
   const [mode, setMode] = useState("copy");
-  const [mediaType, setMediaType] = useState<"" | "MOV" | "TV">("");
+  const [mediaType, setMediaType] = useState<"" | "MOV" | "TV" | "ANIME">("");
   const [tmdb, setTMDB] = useState("");
   const [season, setSeason] = useState("");
   const [format, setFormat] = useState("");
@@ -73,7 +73,8 @@ export function RecordRenameForm({ token, enabled, onChanged, onSessionExpired }
       <label>记录类型<select value={kind} onChange={(e) => { setKind(e.target.value); invalidate(); }}><option value="unknown">未识别记录</option><option value="history">原历史</option></select></label>
       <label>精确记录 ID<input value={recordID} inputMode="numeric" maxLength={19} onChange={(e) => { setRecordID(e.target.value); invalidate(); }} /></label>
       <label>本次转移方式<select value={mode} onChange={(e) => { setMode(e.target.value); invalidate(); }}><option value="copy">复制</option><option value="link">硬链接</option><option value="softlink">软链接</option><option value="move">移动</option></select></label>
-      <label>媒体类型<select value={mediaType} onChange={(e) => { setMediaType(e.target.value as typeof mediaType); invalidate(); }}><option value="">自动识别</option><option value="MOV">电影</option><option value="TV">电视剧</option></select></label>
+      <label>媒体查询类型<select value={mediaType} onChange={(e) => { setMediaType(e.target.value as typeof mediaType); invalidate(); }}><option value="">自动识别</option><option value="MOV">电影</option><option value="TV">电视剧</option><option value="ANIME">动漫（TV 元数据查询）</option></select></label>
+      <p>动漫身份由 TMDB 动画分类确定，不将非动画作品强改为动漫。未指定目的的旧记录按配置类型选库；原记录明确指定目的时仍使用该目录。</p>
       <label>TMDB ID（留空为自动）<input value={tmdb} maxLength={19} onChange={(e) => { setTMDB(e.target.value); invalidate(); }} /></label>
       <label>季号（留空沿用识别；TV 无值时为 1）<input type="number" value={season} min="0" max="99" onChange={(e) => { setSeason(e.target.value); invalidate(); }} /></label>
       <label>完整文件名集号模板<input value={format} maxLength={512} placeholder="Show.{ep}.mkv" onChange={(e) => { setFormat(e.target.value); invalidate(); }} /></label>
@@ -88,7 +89,8 @@ export function RecordRenameForm({ token, enabled, onChanged, onSessionExpired }
     {review && <div>
       <p>审核记录 #{review.origin.recordId}：{review.unknown?.path || `${review.history?.sourcePath}/${review.history?.sourceFilename}`} · 原方式 {review.unknown?.mode || review.history?.mode || "未指定"} → 本次 {review.plan.mode}</p>
       <p>来源根：<code>{review.sourceRoot}</code><br />目标根：<code>{review.targetRoot}</code>。{review.options.expandedScope ? "本次已扩展到原文件的父目录。" : "未扩展来源范围。"}{review.options.preserveUnknown ? "仅选中范围执行；旧未识别记录保持原状，不标记整条成功。" : review.history ? "原历史和已发布媒体不变；新的转移成功后另记历史。" : "关联未识别记录仅在全范围成功和完整回执后更新。"}</p>
-      <ul>{review.plan.items.map((item) => <li key={item.source}>{item.source} → {item.target || "不执行"} · {item.status}</li>)}</ul>
+      <p>{review.explicitTarget ? "本次使用原记录明确指定的配置目标根，不按媒体类型另选。" : "本次按已核验媒体类型选择配置媒体库。"}</p>
+      <ul>{review.plan.items.map((item) => <li key={item.source}>{item.source} → {item.target || "不执行"} · {item.mediaType || "未核验类型"} · {item.category || "无分类"} · {item.status}</li>)}</ul>
       <label><input type="checkbox" checked={confirmed} disabled={!enabled || busy} onChange={(e) => setConfirmed(e.target.checked)} />我已审核本次范围、身份规则和路径，确认来源已下载完成且至少 30 秒未修改，同意执行以上可规划项。</label>
       {mode === "move" && <label><input type="checkbox" checked={sourceRemoval} disabled={!enabled || busy} onChange={(e) => setSourceRemoval(e.target.checked)} />我另外同意移除上述来源中的原文件名，并在目标核验及历史提交后清理本任务源恢复备份；不删除源目录或其他文件。</label>}
       <button type="button" disabled={!enabled || busy || !confirmed || mode === "move" && !sourceRemoval} onClick={() => void operate(true)}>按已审核范围确认执行</button>

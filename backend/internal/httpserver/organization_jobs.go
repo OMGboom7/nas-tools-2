@@ -149,7 +149,9 @@ func (api organizationAPI) validateJobConfiguration(ctx context.Context, job org
 	}
 	find := func(list []organizationRoot, id, path string) bool {
 		for _, root := range list {
-			if root.ID == id {
+			// Earlier anime roots shared TV's ID. Preserve existing reviewed jobs
+			// at their exact saved physical root, never reinterpret their entries.
+			if root.ID == id || root.Type == "ANIME" && subscriptionResourceKey("target:"+root.Path+":TV") == id {
 				canonical, err := filepath.EvalSymlinks(root.Path)
 				return err == nil && canonical == path
 			}
