@@ -32,6 +32,8 @@ type ScanResult struct {
 
 var extensions = map[string]string{}
 
+func FileKind(name string) string { return extensions[strings.ToLower(filepath.Ext(name))] }
+
 func init() {
 	for kind, list := range map[string]string{
 		"media":    ".mp4 .mkv .ts .iso .rmvb .avi .mov .mpeg .mpg .wmv .3gp .asf .m4v .flv .m2ts .strm .tp .f4v",
@@ -97,16 +99,19 @@ func noLinks(root *os.Root, name string) (fs.FileInfo, error) {
 }
 
 func Scan(ctx context.Context, base, selected string) (ScanResult, error) {
-	return scan(ctx, base, selected, false)
+	return scan(ctx, base, selected, false, false)
 }
 
 // ScanAll preserves safe regular files regardless of extension for direct
 // directory sync. It does not identify arbitrary files as media.
 func ScanAll(ctx context.Context, base, selected string) (ScanResult, error) {
-	return scan(ctx, base, selected, true)
+	return scan(ctx, base, selected, true, false)
+}
+func ScanDirectory(ctx context.Context, base, selected string) (ScanResult, error) {
+	return scan(ctx, base, selected, false, true)
 }
 
-func scan(ctx context.Context, base, selected string, all bool) (ScanResult, error) {
+func scan(ctx context.Context, base, selected string, all, shallow bool) (ScanResult, error) {
 	result := ScanResult{Files: []File{}}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
@@ -148,6 +153,9 @@ func scan(ctx context.Context, base, selected string, all bool) (ScanResult, err
 				return ErrLimit
 			}
 			result.Files = append(result.Files, File{Path: name, Kind: kind, Size: info.Size(), Modified: info.ModTime().UnixNano(), Identity: Identity(info)})
+			return nil
+		}
+		if shallow && depth > 0 {
 			return nil
 		}
 		directory, err := root.Open(name)

@@ -22,11 +22,13 @@ type SyncRecord struct {
 	NullFields    []string `json:"nullFields,omitempty"`
 }
 type SyncOrigin struct {
-	Record        SyncRecord `json:"record"`
-	Scope         string     `json:"scope"`
-	ScopeIdentity string     `json:"scopeIdentity"`
-	GraphDigest   string     `json:"graphDigest"`
-	Actor         string     `json:"actor"`
+	MonitorGeneration string     `json:"monitorGeneration,omitempty"`
+	MonitorEvent      string     `json:"monitorEvent,omitempty"`
+	Record            SyncRecord `json:"record"`
+	Scope             string     `json:"scope"`
+	ScopeIdentity     string     `json:"scopeIdentity"`
+	GraphDigest       string     `json:"graphDigest"`
+	Actor             string     `json:"actor"`
 }
 
 const syncColumns = `ID,SOURCE,DEST,UNKNOWN,MODE,COMPATIBILITY,RENAME,ENABLED,NOTE,LOCATING`
@@ -134,7 +136,7 @@ func verifySyncRecord(ctx context.Context, reader syncReader, d Definition) erro
 	if err != nil {
 		return err
 	}
-	if r.Enabled != 1 || r.Rename != 0 || Digest(r) != Digest(d.Sync.Record) {
+	if r.Enabled != 1 || Digest(r) != Digest(d.Sync.Record) {
 		return ErrState
 	}
 	records, err := listSync(ctx, reader)
@@ -159,6 +161,9 @@ func (s *Store) VerifySync(ctx context.Context, job Job) error {
 	}
 	for _, item := range current.Items {
 		if item.State == "completed" {
+			continue
+		}
+		if job.Definition.Sync.Record.Rename != 0 {
 			continue
 		}
 		exists, err := syncRecorded(ctx, s.db, current.Definition, item.Source)

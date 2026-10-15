@@ -5,6 +5,43 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+const { getSyncMonitor, reviewSyncMonitor, activateSyncMonitor, stopSyncMonitor, dismissSyncMonitorEvent } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+
+test("sync monitor reads and reviews without enabling execution", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(options.headers.Authorization, "token");
+    if (calls === 1) { assert.equal(path, "/api/v1/organization/sync/monitor"); assert.equal(options.method, undefined); return new Response(JSON.stringify({ code: 0, success: true, data: { control: { state: "disabled", lease: {} }, events: [] } })); }
+    assert.equal(path, "/api/v1/organization/sync/monitor/review"); assert.deepEqual(JSON.parse(options.body), { ids: ["9223372036854775807"], includeExisting: false });
+    return new Response(JSON.stringify({ code: 0, success: true, data: { fingerprint: "a".repeat(64), needsSourceRemoval: true } }));
+  });
+  assert.equal((await getSyncMonitor("token")).control.state, "disabled");
+  assert.equal((await reviewSyncMonitor("token", { ids: ["9223372036854775807"], includeExisting: false })).needsSourceRemoval, true);
+  assert.equal(calls, 2);
+});
+test("sync monitor requires independent opt-in and actual old executor stop confirmation", async (t) => {
+  let calls = 0; const input = { ids: ["7"], includeExisting: true };
+  t.mock.method(globalThis, "fetch", async (path, options) => { calls++; assert.equal(path, "/api/v1/organization/sync/monitor/activate"); assert.deepEqual(JSON.parse(options.body), { ...input, fingerprint: "a".repeat(64), confirm: true, confirmOldExecutorsStopped: true, confirmSourceRemoval: true }); return new Response(JSON.stringify({ code: 0, success: true })); });
+  await assert.rejects(activateSyncMonitor("token", input, "a".repeat(64)));
+  await assert.rejects(activateSyncMonitor("token", input, "a".repeat(64), true));
+  assert.equal(calls, 0);
+  await activateSyncMonitor("token", input, "a".repeat(64), true, true, true); assert.equal(calls, 1);
+});
+test("sync monitor lost mutation responses never cause retry, stop or file execution", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path) => { calls++; assert.equal(path, "/api/v1/organization/sync/monitor/activate"); throw new Error("lost response"); });
+  await assert.rejects(activateSyncMonitor("token", { ids: ["7"], includeExisting: false }, "a".repeat(64), true, true)); assert.equal(calls, 1);
+});
+test("monitor pause and dismissal are explicit and never invent success", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(path, `/api/v1/organization/sync/monitor/${calls === 1 ? "stop" : "dismiss"}`);
+    assert.deepEqual(JSON.parse(options.body), calls === 1 ? { confirm: true } : { key: "event", reason: "reviewed", confirm: true });
+    return new Response(JSON.stringify({ code: 0, success: true }));
+  });
+  await assert.rejects(stopSyncMonitor("token")); await assert.rejects(dismissSyncMonitorEvent("token", "event", "", true)); assert.equal(calls, 0);
+  await stopSyncMonitor("token", true); await dismissSyncMonitorEvent("token", "event", " reviewed ", true); assert.equal(calls, 2);
+});
 const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord, previewRecordRename, executeRecordRename, OrganizationRenameError, getDirectSyncRecords, previewDirectSync, createDirectSync, reviewSyncConfig, applySyncConfig, getSyncConfigReceipts } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 
 test("sync config review is readonly and keeps large IDs and separate job invalidation", async (t) => {

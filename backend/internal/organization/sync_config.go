@@ -244,6 +244,9 @@ func (s *Store) ApplySyncConfig(ctx context.Context, review SyncConfigReview, al
 			return SyncConfigReceipt{}, err
 		}
 	}
+	if err := pauseMonitorControl(ctx, tx, "sync configuration changed; explicit reactivation required"); err != nil {
+		return SyncConfigReceipt{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return SyncConfigReceipt{}, err
 	}

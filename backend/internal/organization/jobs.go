@@ -139,6 +139,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	AutomaticGeneration  string                    `json:"-"`
 	Sync                 *SyncOrigin               `json:"sync,omitempty"`
 	LegacyTargetOverride bool                      `json:"legacyTargetOverride,omitempty"`
 	LegacyRename         *LegacyRenameOptions      `json:"legacyRename,omitempty"`
@@ -219,16 +220,16 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (string, error) {
 	if d.Sync != nil {
-		if d.Sync.Actor == "" || d.Sync.ScopeIdentity == "" || len(d.Sync.GraphDigest) != 64 || d.Sync.Record.Rename != 0 || d.Unknown != nil || d.History != nil || d.LegacyOrigin != nil || !validRelative(d.Sync.Scope) {
+		if d.Sync.Actor == "" || d.Sync.ScopeIdentity == "" || len(d.Sync.GraphDigest) != 64 || d.Sync.Record.Rename < 0 || d.Sync.Record.Rename > 1 || d.Unknown != nil || d.History != nil || d.LegacyOrigin != nil || !validRelative(d.Sync.Scope) {
 			return "", ErrState
 		}
 		for _, entry := range d.Entries {
-			if entry.Kind != "file" || entry.Source != entry.Target || entry.TMDBID != "" {
+			if d.Sync.Record.Rename == 0 && (entry.Kind != "file" || entry.Source != entry.Target || entry.TMDBID != "") || d.Sync.Record.Rename == 1 && (entry.Kind == "file" || entry.TMDBID == "") {
 				return "", ErrState
 			}
 		}
 	}
-	if d.LegacyTargetOverride && (d.LegacyOrigin == nil || d.LegacySelection == nil && d.Unknown == nil && d.History == nil) {
+	if d.LegacyTargetOverride && d.Sync == nil && (d.LegacyOrigin == nil || d.LegacySelection == nil && d.Unknown == nil && d.History == nil) {
 		return "", ErrState
 	}
 	if d.LegacyRename != nil && (d.LegacyOrigin == nil || d.LegacyOrigin.Action != "rename" || d.LegacySelection == nil || d.Unknown == nil && d.History == nil || d.LegacyRename.PreserveUnknown && d.Unknown == nil) {
@@ -258,7 +259,7 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 	if err := verifySyncRecord(ctx, tx, d); err != nil {
 		return "", err
 	}
-	if d.Sync != nil {
+	if d.Sync != nil && d.Sync.Record.Rename == 0 {
 		for _, entry := range d.Entries {
 			exists, err := syncRecorded(ctx, tx, d, entry.Source)
 			if err != nil {
@@ -617,6 +618,11 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if err := verifySyncRecord(ctx, tx, job.Definition); err != nil {
 		return err
 	}
+	if job.AutomaticGeneration != "" {
+		if err := verifyMonitorControl(ctx, tx, job.AutomaticGeneration); err != nil {
+			return err
+		}
+	}
 	if job.Definition.History != nil {
 		current, err := readHistory(ctx, tx, job.Definition.History.ID)
 		if err != nil {
@@ -642,7 +648,7 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if job.Definition.Mode == "move" && (storedProof.SourceHold == "" || storedProof.SourceHoldIdentity == "" || storedProof.SourceParentIdentity == "") {
 		return ErrState
 	}
-	if job.Definition.Sync != nil {
+	if job.Definition.Sync != nil && job.Definition.Sync.Record.Rename == 0 {
 		exists, err := syncRecorded(ctx, tx, job.Definition, item.Source)
 		if err != nil {
 			return err
@@ -662,7 +668,11 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 			return err
 		}
 		source, target := filepath.Join(job.Definition.SourceRoot, item.Source), filepath.Join(job.Definition.TargetRoot, item.Target)
-		if _, err = tx.ExecContext(ctx, `INSERT INTO TRANSFER_HISTORY (MODE,TYPE,CATEGORY,TMDBID,TITLE,YEAR,SEASON_EPISODE,SOURCE,SOURCE_PATH,SOURCE_FILENAME,DEST,DEST_PATH,DEST_FILENAME,DATE) VALUES (?,?,?,?,?,?,?,'手动整理',?,?,?,?,?,?)`, ModeLabel(job.Definition.Mode), item.MediaType, item.Category, item.TMDBID, item.Title, item.Year, item.SeasonEpisode, filepath.Dir(source), filepath.Base(source), job.Definition.TargetRoot, filepath.Dir(target), filepath.Base(target), time.Now().Format("2006-01-02 15:04:05")); err != nil {
+		origin := "手动整理"
+		if job.Definition.Sync != nil {
+			origin = "目录同步"
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO TRANSFER_HISTORY (MODE,TYPE,CATEGORY,TMDBID,TITLE,YEAR,SEASON_EPISODE,SOURCE,SOURCE_PATH,SOURCE_FILENAME,DEST,DEST_PATH,DEST_FILENAME,DATE) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ModeLabel(job.Definition.Mode), item.MediaType, item.Category, item.TMDBID, item.Title, item.Year, item.SeasonEpisode, origin, filepath.Dir(source), filepath.Base(source), job.Definition.TargetRoot, filepath.Dir(target), filepath.Base(target), time.Now().Format("2006-01-02 15:04:05")); err != nil {
 			return err
 		}
 	}

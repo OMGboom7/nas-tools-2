@@ -63,6 +63,11 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSearch := startSubscriptionSearchWorker(workerContext, runner.search)
 		wait = func() { waitRSS(); waitRefresh(); waitSearch() }
 	}
+	if workerContext != nil && cfg.DisableLegacy && runner.organizer != nil {
+		waitExisting := wait
+		waitSync := startSyncMonitorWorker(workerContext, runner.organizer)
+		wait = func() { waitExisting(); waitSync() }
+	}
 	return handler, wait, nil
 }
 
@@ -303,6 +308,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, records: organizationRecords, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("GET /api/v1/organization/sync", organizer.serveSyncRecords)
+	mux.HandleFunc("GET /api/v1/organization/sync/monitor", organizer.serveMonitorStatus)
+	mux.HandleFunc("POST /api/v1/organization/sync/monitor/review", organizer.serveMonitorReview)
+	mux.HandleFunc("POST /api/v1/organization/sync/monitor/activate", organizer.serveMonitorActivate)
+	mux.HandleFunc("POST /api/v1/organization/sync/monitor/stop", organizer.serveMonitorStop)
+	mux.HandleFunc("POST /api/v1/organization/sync/monitor/dismiss", organizer.serveMonitorDismiss)
 	mux.HandleFunc("POST /api/v1/organization/sync/config/review", organizer.serveSyncConfigReview)
 	mux.HandleFunc("POST /api/v1/organization/sync/config/apply", organizer.serveSyncConfigApply)
 	mux.HandleFunc("GET /api/v1/organization/sync/config/receipts", organizer.serveSyncConfigReceipts)
@@ -331,7 +341,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}", organizer.serveJob)
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}/unknown-status", organizer.serveUnknownReview)
 	mux.HandleFunc("POST /api/v1/organization/jobs/{id}/{action}", organizer.serveJobAction)
-	rssRunner := &rssRunAPI{pureGo: cfg.DisableLegacy, filters: nativeFilters,
+	rssRunner := &rssRunAPI{organizer: &organizer, pureGo: cfg.DisableLegacy, filters: nativeFilters,
 		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},
 		download:    rssItemDownloadAPI{tasks: nativeRSSTasks, downloaders: nativeDownloaders, system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, service: downloads},
 		recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},

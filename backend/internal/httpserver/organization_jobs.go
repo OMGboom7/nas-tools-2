@@ -126,6 +126,11 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 // Revalidate admin configuration before any write, not just the opaque root IDs
 // supplied by the browser. Stored destinations never come from client payloads.
 func (api organizationAPI) validateJob(ctx context.Context, job organization.Job) error {
+	if api.monitorGeneration != "" {
+		if err := api.jobs.VerifyMonitorControl(ctx, api.monitorGeneration); err != nil {
+			return err
+		}
+	}
 	if err := api.validateJobConfiguration(ctx, job); err != nil {
 		return err
 	}
@@ -329,6 +334,14 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 		}
 		if !claimed {
 			return organization.ErrState
+		}
+		// A stop/configuration change may race the claim. Recheck before the
+		// transfer creates even an empty destination or private staging anchor.
+		if err := api.validateJob(ctx, job); err != nil {
+			persist, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = api.jobs.RecordError(persist, job.ID, item.Index)
+			cancel()
+			return err
 		}
 		prepare := func(p organization.Proof) error {
 			if err := api.validateJob(ctx, job); err != nil {

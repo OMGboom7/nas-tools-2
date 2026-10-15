@@ -20,6 +20,7 @@ import (
 )
 
 type rssRunAPI struct {
+	organizer   *organizationAPI
 	preview     rssPreviewAPI
 	download    rssItemDownloadAPI
 	filters     *filterconfig.Store

@@ -700,11 +700,14 @@ export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode
 export type OrganizationLegacySelection = OrganizationEpisodeRule & { kind?: string; tmdbId?: string; season?: number; episodeDetails?: string; minimumMB?: number };
 export type OrganizationLegacyRenameOptions = { expandedScope?: boolean; preserveUnknown?: boolean };
 export type OrganizationSyncRecord = { id: string; source: string; dest: string; unknown: string; mode: string; compatibility: number; rename: number; enabled: number; locating: number; note: string; nullFields?: string[] };
-export type OrganizationSyncOrigin = { record: OrganizationSyncRecord; scope: string; scopeIdentity: string; graphDigest: string; actor: string };
+export type OrganizationSyncOrigin = { record: OrganizationSyncRecord; scope: string; scopeIdentity: string; graphDigest: string; actor: string; monitorGeneration?: string; monitorEvent?: string };
 export type SyncConfigPatch = Partial<Pick<OrganizationSyncRecord, "source" | "dest" | "unknown" | "mode" | "note">> & { enabled?: boolean; rename?: boolean; compatibility?: boolean; locating?: boolean };
 export type SyncConfigInput = { action: "create" | "update" | "delete" | "status" | "restore"; id?: string; patch?: SyncConfigPatch; restoreId?: string };
 export type SyncConfigReview = { action: string; actor: string; before: OrganizationSyncRecord[]; after: OrganizationSyncRecord[]; jobs: Array<{ id: string; configId: string; mode: string }>; fingerprint: string; restoreId?: string };
 export type SyncConfigReceipt = { id: string; review: SyncConfigReview; after: OrganizationSyncRecord[]; created: string; restoreId?: string };
+export type SyncMonitorInput = { ids: string[]; includeExisting: boolean };
+export type SyncMonitorReview = { lease: { ids: string[]; actor: string; includeExisting: boolean }; records: OrganizationSyncRecord[]; snapshots: Array<{ configId: string; scope: string; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }> }>; fingerprint: string; needsSourceRemoval: boolean };
+export type SyncMonitorStatus = { control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[]; includeExisting?: boolean; sourceRemoval?: boolean } }; events: Array<{ key: string; generation: string; snapshot: { configId: string; scope: string }; firstSeen: string; state: string; jobs: string[]; reason?: string; updated: string }> };
 export type OrganizationJob = { id: string; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 
 export async function getOrganizationHistory(token: string, page = 1, keyword = ""): Promise<OrganizationHistoryData> {
@@ -1111,6 +1114,31 @@ export async function getSyncConfigReceipts(token: string): Promise<SyncConfigRe
   const result = await readResponse<SyncConfigReceipt[]>(await fetch("/api/v1/organization/sync/config/receipts", { headers: { Authorization: token } }));
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "配置回执读取失败", result.code);
   return result.data;
+}
+export async function getSyncMonitor(token: string): Promise<SyncMonitorStatus> {
+  const result = await readResponse<SyncMonitorStatus>(await fetch("/api/v1/organization/sync/monitor", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "监控状态读取失败", result.code);
+  return result.data;
+}
+export async function reviewSyncMonitor(token: string, input: SyncMonitorInput): Promise<SyncMonitorReview> {
+  const result = await readResponse<SyncMonitorReview>(await fetch("/api/v1/organization/sync/monitor/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "监控范围审核失败", result.code);
+  return result.data;
+}
+export async function activateSyncMonitor(token: string, input: SyncMonitorInput, fingerprint: string, confirm = false, confirmOldExecutorsStopped = false, confirmSourceRemoval = false): Promise<void> {
+  if (!confirm || !confirmOldExecutorsStopped || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("须审核来源范围并确认实际已停止旧执行器", 400);
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/sync/monitor/activate", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm, confirmOldExecutorsStopped, confirmSourceRemoval }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "监控启用回执未核实，请只读取状态，不自动重试", result.code);
+}
+export async function stopSyncMonitor(token: string, confirm = false): Promise<void> {
+  if (!confirm) throw new ApiError("明确确认停止请求", 400);
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/sync/monitor/stop", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "停止请求未核实，请读取状态和任务账本", result.code);
+}
+export async function dismissSyncMonitorEvent(token: string, key: string, reason: string, confirm = false): Promise<void> {
+  if (!confirm || !reason.trim()) throw new ApiError("须审核事件并提供忽略原因", 400);
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/sync/monitor/dismiss", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ key, reason: reason.trim(), confirm }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "事件仍需核对，不自动释放任务", result.code);
 }
 export async function previewDirectSync(token: string, id: string, path = "."): Promise<OrganizationPlan> {
   const result = await readResponse<OrganizationPlan>(await fetch("/api/v1/organization/sync/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ id, path }) }));

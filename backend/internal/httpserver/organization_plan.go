@@ -18,12 +18,13 @@ import (
 )
 
 type organizationAPI struct {
-	service     subscriptionService
-	auth        *nativeAuthentication
-	recognition mediaNameAPI
-	jobs        *organization.Store
-	records     *organization.Store
-	pureGo      bool
+	monitorGeneration string
+	service           subscriptionService
+	auth              *nativeAuthentication
+	recognition       mediaNameAPI
+	jobs              *organization.Store
+	records           *organization.Store
+	pureGo            bool
 }
 type organizationRoot struct {
 	ID    string `json:"id"`
@@ -38,6 +39,7 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
+	Sync                  *organization.SyncOrigin           `json:"-"`
 	LegacyTargetOverride  bool                               `json:"-"`
 	LegacyRename          *organization.LegacyRenameOptions  `json:"-"`
 	LegacySelection       *organization.LegacyMediaSelection `json:"-"`
@@ -314,7 +316,11 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		return fail(422, "target root is unavailable")
 	}
 	root.Close()
-	scan, err := organization.Scan(ctx, source.Path, input.Path)
+	scanner := organization.Scan
+	if input.Sync != nil && input.Sync.Record.Rename == 1 {
+		scanner = organization.ScanDirectory
+	}
+	scan, err := scanner(ctx, source.Path, input.Path)
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
@@ -351,12 +357,20 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	media := objectValue(snapshot["media"])
 	sourceInfo, e1 := os.Stat(sourcePath)
+	var syncRules directSyncRules
+	if input.Sync != nil {
+		syncRules, err = compileDirectSyncRules(media)
+		if err != nil {
+			return fail(422, "invalid sync ignore rule")
+		}
+	}
 	targetInfo, e2 := os.Stat(targetPath)
 	if e1 != nil || e2 != nil || !sourceInfo.IsDir() || !targetInfo.IsDir() || os.SameFile(sourceInfo, targetInfo) {
 		return fail(422, "organization roots changed")
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
+	result.definition.Sync = input.Sync
 	result.definition.LegacyTargetOverride = input.LegacyTargetOverride
 	result.definition.LegacyRename = input.LegacyRename
 	result.definition.LegacySelection = input.LegacySelection
@@ -395,6 +409,17 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			return fail(504, "organization preview was cancelled or timed out")
 		}
 		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Identity: file.Identity, Status: "unmatched"}
+		if input.Sync != nil {
+			ignored, err := syncRules.ignored(ctx, filepath.Join(input.Sync.Record.Source, file.Path))
+			if err != nil {
+				return fail(422, "sync ignore matching failed; no execution")
+			}
+			if ignored {
+				item.Status, item.Reason = "filtered", "source matches explicit sync ignore rules"
+				result.Items = append(result.Items, item)
+				continue
+			}
+		}
 		if file.Kind != "media" {
 			result.Items = append(result.Items, item)
 			continue
@@ -499,7 +524,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	// Ambiguous, unrelated and blocked sidecars are never guessed into a target.
 	for i := range result.Items {
 		item := &result.Items[i]
-		if item.Kind == "media" {
+		if item.Kind == "media" || item.Status == "filtered" {
 			continue
 		}
 		var matches []organizationPlanItem
