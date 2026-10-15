@@ -222,6 +222,20 @@ func OpenStore(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	id, err := createJobTx(ctx, tx, fingerprint, d)
+	if err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
+}
+
+// Shared by ordinary creation and atomic completion of a reviewed reservation.
+func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definition) (string, error) {
 	if d.Sync != nil {
 		if d.Sync.Actor == "" || d.Sync.ScopeIdentity == "" || len(d.Sync.GraphDigest) != 64 || d.Sync.Record.Rename < 0 || d.Sync.Record.Rename > 1 || d.Unknown != nil || d.History != nil || d.LegacyOrigin != nil || !validRelative(d.Sync.Scope) {
 			return "", ErrState
@@ -254,11 +268,6 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 			return "", ErrPath
 		}
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
 	if err := verifySyncRecord(ctx, tx, d); err != nil {
 		return "", err
 	}
@@ -277,7 +286,7 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 		}
 	}
 	var existing string
-	err = tx.QueryRowContext(ctx, `SELECT ID FROM GO_ORGANIZATION_JOBS WHERE FINGERPRINT=? AND STATE='active' ORDER BY CREATED DESC LIMIT 1`, fingerprint).Scan(&existing)
+	err := tx.QueryRowContext(ctx, `SELECT ID FROM GO_ORGANIZATION_JOBS WHERE FINGERPRINT=? AND STATE='active' ORDER BY CREATED DESC LIMIT 1`, fingerprint).Scan(&existing)
 	if err == nil {
 		return existing, nil
 	}
@@ -344,7 +353,7 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 			return "", err
 		}
 	}
-	return id, tx.Commit()
+	return id, nil
 }
 
 func (s *Store) Get(ctx context.Context, id string) (Job, error) {

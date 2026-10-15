@@ -739,6 +739,19 @@ export type DownloadOrganizationReview = { completion: DownloadCompletionReview;
 export type DownloadOrganizationBatch = { id: string; origin: DownloadOrganizationOrigin; fingerprint: string; state: string; reason?: string; jobs: string[]; omitted: DownloadCompletionReview["files"]; created: string; resultProof?: string; expected: number; mode: string };
 export type DownloadResultReview = { batchId: string; actor: string; operation: string; beforeLabels: string[]; afterLabels: string[]; needsExclusiveLabels: boolean; fingerprint: string };
 export type DownloadBatchConsent = { confirmSourceRemoval?: boolean; confirmTaskStopped?: boolean; confirmTaskRemoval?: boolean; confirmExclusiveLabels?: boolean };
+export type DownloadReservationReview = { batchId: string; actor: string; reason: string; state: string; jobs: string[]; missing: number[]; plans: OrganizationPlan[]; omitted: DownloadCompletionReview["files"]; fingerprint: string };
+export async function reviewDownloadReservation(token: string, id: string, reason: string): Promise<DownloadReservationReview> {
+  if (!reason.trim() || reason.length > 1000) throw new ApiError("请说明补齐原预留的原因", 400);
+  const result = await readResponse<DownloadReservationReview>(await fetch(`/api/v1/organization/downloads/batches/${encodeURIComponent(id)}/reservation-review`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ reason }) }));
+  if (!result.success || result.code !== 0 || result.data?.batchId !== id || !/^[a-f0-9]{64}$/.test(result.data.fingerprint)) throw new ApiError(result.message || "原预留不能安全补齐，请逐任务核对", result.code);
+  return result.data;
+}
+export async function recoverDownloadReservation(token: string, id: string, review: DownloadReservationReview, confirm = false, confirmOldExecutorsStopped = false, confirmOmitted = false): Promise<DownloadOrganizationBatch> {
+  if (!confirm || !confirmOldExecutorsStopped || review.batchId !== id || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.omitted.length > 0 && !confirmOmitted) throw new ApiError("先审核原预留、确认旧执行器停止及本次仅补齐任务", 400);
+  const result = await readResponse<DownloadOrganizationBatch>(await fetch(`/api/v1/organization/downloads/batches/${encodeURIComponent(id)}/recover-reservation`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ reason: review.reason, fingerprint: review.fingerprint, confirm, confirmOldExecutorsStopped, confirmOmitted }) }));
+  if (!result.success || result.code !== 0 || result.data?.id !== id) throw new ApiError(result.message || "补齐响应未核实；只读查找原批次，不重复补齐或执行", result.code);
+  return result.data;
+}
 export async function previewDownloadOrganization(token: string, input: DownloadCompletionInput): Promise<DownloadOrganizationReview> {
   const result = await readResponse<DownloadOrganizationReview>(await fetch("/api/v1/organization/downloads/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
   if (!result.success || result.code !== 0 || !result.data?.plans?.length || !/^[a-f0-9]{64}$/.test(result.data.fingerprint)) throw new ApiError(result.message || "下载整理范围无法核实", result.code);

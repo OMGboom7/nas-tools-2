@@ -16,6 +16,7 @@ type downloadBatchRequest struct {
 	actor string
 	downloadCompletionInput
 	Fingerprint                string `json:"fingerprint,omitempty"`
+	Reason                     string `json:"reason,omitempty"`
 	Confirm                    bool   `json:"confirm,omitempty"`
 	ConfirmOmitted             bool   `json:"confirmOmitted,omitempty"`
 	ConfirmOldExecutorsStopped bool   `json:"confirmOldExecutorsStopped,omitempty"`
@@ -199,7 +200,7 @@ func (api organizationAPI) serveDownloadBatchAction(w http.ResponseWriter, r *ht
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "result-review" && action != "finalize" && action != "reconcile-result" {
+	if action != "execute" && action != "reconcile" && action != "result-review" && action != "finalize" && action != "reconcile-result" && action != "reservation-review" && action != "recover-reservation" {
 		writeAPIError(w, 404, 404, "download batch action not found")
 		return
 	}
@@ -207,7 +208,7 @@ func (api organizationAPI) serveDownloadBatchAction(w http.ResponseWriter, r *ht
 	if !decodeOrganizationRequest(w, r, &input, "invalid download batch action") {
 		return
 	}
-	if action != "result-review" && !input.Confirm {
+	if action != "result-review" && action != "reservation-review" && !input.Confirm {
 		writeAPIError(w, 400, 400, "explicit action confirmation required")
 		return
 	}
@@ -236,6 +237,15 @@ func (api organizationAPI) serveDownloadBatchAction(w http.ResponseWriter, r *ht
 		return
 	}
 	switch action {
+	case "reservation-review":
+		var review downloadReservationReview
+		review, err = api.reviewDownloadReservation(ctx, b, input.actor, input.Reason)
+		if err == nil {
+			writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": review})
+			return
+		}
+	case "recover-reservation":
+		err = api.recoverDownloadReservation(ctx, b, input)
 	case "execute":
 		err = api.executeDownloadBatch(ctx, b, input)
 	case "reconcile":
