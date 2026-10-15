@@ -66,7 +66,8 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 	if workerContext != nil && cfg.DisableLegacy && runner.organizer != nil {
 		waitExisting := wait
 		waitSync := startSyncMonitorWorker(workerContext, runner.organizer)
-		wait = func() { waitExisting(); waitSync() }
+		waitDownloads := startDownloadMonitorWorker(workerContext, runner.organizer)
+		wait = func() { waitExisting(); waitSync(); waitDownloads() }
 	}
 	return handler, wait, nil
 }
@@ -308,6 +309,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, records: organizationRecords, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("POST /api/v1/organization/downloads/completion/review", organizer.serveDownloadCompletionReview)
+	mux.HandleFunc("GET /api/v1/organization/downloads/monitor", organizer.serveDownloadMonitorStatus)
+	mux.HandleFunc("POST /api/v1/organization/downloads/monitor/review", organizer.serveDownloadMonitorReview)
+	mux.HandleFunc("POST /api/v1/organization/downloads/monitor/activate", organizer.serveDownloadMonitorActivate)
+	mux.HandleFunc("POST /api/v1/organization/downloads/monitor/stop", organizer.serveDownloadMonitorStop)
+	mux.HandleFunc("POST /api/v1/organization/downloads/monitor/dismiss", organizer.serveDownloadMonitorDismiss)
 	mux.HandleFunc("POST /api/v1/organization/downloads/plan", organizer.serveDownloadPlan)
 	mux.HandleFunc("POST /api/v1/organization/downloads/batches", organizer.serveDownloadBatchSave)
 	mux.HandleFunc("GET /api/v1/organization/downloads/batches", organizer.serveDownloadBatchFind)

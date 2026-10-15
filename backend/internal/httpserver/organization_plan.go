@@ -18,13 +18,14 @@ import (
 )
 
 type organizationAPI struct {
-	monitorGeneration string
-	service           subscriptionService
-	auth              *nativeAuthentication
-	recognition       mediaNameAPI
-	jobs              *organization.Store
-	records           *organization.Store
-	pureGo            bool
+	downloadGeneration string
+	monitorGeneration  string
+	service            subscriptionService
+	auth               *nativeAuthentication
+	recognition        mediaNameAPI
+	jobs               *organization.Store
+	records            *organization.Store
+	pureGo             bool
 }
 type organizationRoot struct {
 	ID    string `json:"id"`

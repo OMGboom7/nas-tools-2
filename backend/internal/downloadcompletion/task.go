@@ -12,6 +12,24 @@ import (
 
 var ErrManifest = errors.New("invalid download completion manifest")
 
+func NormalizeIDs(kind string, ids []string) ([]string, error) {
+	if len(ids) > 1000 {
+		return nil, ErrManifest
+	}
+	result := []string{}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.ToLower(id)
+		if !ValidID(kind, id) || seen[id] {
+			return nil, ErrManifest
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
 func ValidID(kind, value string) bool {
 	switch kind {
 	case "qbittorrent":

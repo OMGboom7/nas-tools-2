@@ -298,7 +298,7 @@ func (api organizationAPI) executeDownloadBatch(ctx context.Context, b organizat
 	if mode == "move" && (!input.ConfirmSourceRemoval || !input.ConfirmTaskStopped) {
 		return organization.ErrState
 	}
-	if err := api.jobs.SetDownloadBatch(ctx, b.ID, "ready", "executing", "", ""); err != nil {
+	if err := api.setDownloadBatch(ctx, b.ID, "ready", "executing", "", ""); err != nil {
 		return err
 	}
 	for _, id := range b.Jobs {
@@ -308,6 +308,7 @@ func (api organizationAPI) executeDownloadBatch(ctx context.Context, b organizat
 			return err
 		}
 		job, err := api.jobs.Get(ctx, id)
+		job.DownloadGeneration = api.downloadGeneration
 		if err == nil && job.State != "completed" {
 			err = api.validateJob(ctx, job)
 			if err == nil {
@@ -328,12 +329,15 @@ func (api organizationAPI) executeDownloadBatch(ctx context.Context, b organizat
 		api.failDownloadBatch(b, "completion proofs require review; downloader result was not changed")
 		return err
 	}
-	return api.jobs.SetDownloadBatch(ctx, b.ID, "executing", "files_done", "", "")
+	return api.setDownloadBatch(ctx, b.ID, "executing", "files_done", "", "")
 }
 
 type downloadResultReview = organization.DownloadResultIntent
 
 func (api organizationAPI) reviewDownloadResult(ctx context.Context, b organization.DownloadBatch, actor string) (downloadResultReview, error) {
+	if err := api.downloadMonitorAuthorized(ctx); err != nil {
+		return downloadResultReview{}, err
+	}
 	if b.State != "files_done" {
 		return downloadResultReview{}, organization.ErrState
 	}
@@ -399,7 +403,7 @@ func (api organizationAPI) finalizeDownloadBatch(ctx context.Context, b organiza
 		return err
 	}
 	proof := string(raw)
-	if err := api.jobs.SetDownloadBatch(ctx, b.ID, "files_done", "result_pending", "result write intent persisted; ambiguous response requires readonly reconciliation", proof); err != nil {
+	if err := api.setDownloadBatch(ctx, b.ID, "files_done", "result_pending", "result write intent persisted; ambiguous response requires readonly reconciliation", proof); err != nil {
 		return err
 	}
 	if strings.HasPrefix(review.Operation, "remove-") {
@@ -479,5 +483,12 @@ func (api organizationAPI) reconcileDownloadResult(ctx context.Context, b organi
 			}
 		}
 	}
-	return api.jobs.SetDownloadBatch(ctx, b.ID, "result_pending", "completed", "", b.ResultProof)
+	return api.setDownloadBatch(ctx, b.ID, "result_pending", "completed", "", b.ResultProof)
+}
+
+func (api organizationAPI) setDownloadBatch(ctx context.Context, id, from, to, reason, proof string) error {
+	if err := api.downloadMonitorAuthorized(ctx); err != nil {
+		return err
+	}
+	return api.jobs.SetDownloadBatchAuthorized(ctx, id, from, to, reason, proof, api.downloadGeneration)
 }

@@ -707,6 +707,33 @@ export type SyncConfigReview = { action: string; actor: string; before: Organiza
 export type SyncConfigReceipt = { id: string; review: SyncConfigReview; after: OrganizationSyncRecord[]; created: string; restoreId?: string };
 export type SyncMonitorInput = { ids: string[]; includeExisting: boolean };
 export type DownloadCompletionInput = { downloaderId: string; taskId: string };
+export type DownloadMonitorInput = { ids: string[]; includeExisting: boolean; allowOmitted: boolean };
+export type DownloadMonitorReview = { lease: { ids: string[]; actor: string; includeExisting: boolean; allowOmitted: boolean }; sources: Array<{ id: string; name: string; type: string; mode: string; directories: string[] }>; candidates: Record<string, string[]>; needsSourceRemoval: boolean; needsPauseTasks: boolean; needsTaskRemoval: boolean; needsExclusiveLabels: boolean; fingerprint: string };
+export type DownloadMonitorConsent = { confirmOldExecutorsStopped: boolean; confirmSourceRemoval: boolean; confirmPauseTasks: boolean; confirmResultWrites: boolean; confirmTaskRemoval: boolean; confirmExclusiveLabels: boolean };
+export type DownloadMonitorStatus = { control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[] } }; events: Array<{ key: string; generation: string; downloaderId: string; taskId: string; state: string; firstSeen?: string; updated: string; batchId?: string; reason?: string }> };
+export async function reviewDownloadMonitor(token: string, input: DownloadMonitorInput): Promise<DownloadMonitorReview> {
+  const result = await readResponse<DownloadMonitorReview>(await fetch("/api/v1/organization/downloads/monitor/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  if (!result.success || result.code !== 0 || !result.data?.fingerprint) throw new ApiError(result.message || "下载完成监控范围无法核实", result.code); return result.data;
+}
+export async function getDownloadMonitor(token: string): Promise<DownloadMonitorStatus> {
+  const result = await readResponse<DownloadMonitorStatus>(await fetch("/api/v1/organization/downloads/monitor", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "监控状态无法核实", result.code); return result.data;
+}
+export async function activateDownloadMonitor(token: string, input: DownloadMonitorInput, fingerprint: string, confirmed: boolean, consent: DownloadMonitorConsent): Promise<void> {
+  if (!confirmed || !consent.confirmOldExecutorsStopped || !consent.confirmResultWrites || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("先审核范围并分别确认自动执行、旧执行器实际停止及结果回写", 400);
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/downloads/monitor/activate", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm: confirmed, ...consent }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "启用回执未核实，只读刷新，不自动重发", result.code);
+}
+export async function stopDownloadMonitor(token: string, confirm = false): Promise<void> {
+  if (!confirm) throw new ApiError("请求暂停须单独确认，正在运行的步骤仍需核对", 400);
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/downloads/monitor/stop", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "暂停响应未核实，请只读查询状态与活动回执", result.code);
+}
+export async function dismissDownloadMonitorEvent(token: string, key: string, reason: string, confirm = false): Promise<void> {
+  if (!confirm || !reason.trim()) throw new ApiError("须核对关联任务并填写事件忽略原因", 400);
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/downloads/monitor/dismiss", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ key, reason: reason.trim(), confirm }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "事件仍需核对，未自动重试或清理", result.code);
+}
 export type DownloadOrganizationOrigin = { batchId: string; downloaderId: string; downloaderName: string; downloaderType: string; actor: string; sourceRoot: string; task: DownloadCompletionReview["task"] };
 export type DownloadOrganizationReview = { completion: DownloadCompletionReview; plans: OrganizationPlan[]; omitted: DownloadCompletionReview["files"]; fingerprint: string };
 export type DownloadOrganizationBatch = { id: string; origin: DownloadOrganizationOrigin; fingerprint: string; state: string; reason?: string; jobs: string[]; omitted: DownloadCompletionReview["files"]; created: string; resultProof?: string; expected: number; mode: string };

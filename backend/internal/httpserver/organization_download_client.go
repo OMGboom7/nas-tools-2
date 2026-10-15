@@ -6,16 +6,19 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
 	"github.com/0xforee/nas-tools/backend/internal/downloadcompletion"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
 )
 
 type completionOrganizationClient struct {
-	read   func(context.Context, string) (downloadcompletion.Task, error)
-	has    func(context.Context, string) (bool, error)
-	mark   func(context.Context, string, []string) error
-	remove func(context.Context, string) error
+	completed func(context.Context) ([]string, error)
+	stop      func(context.Context, string) error
+	read      func(context.Context, string) (downloadcompletion.Task, error)
+	has       func(context.Context, string) (bool, error)
+	mark      func(context.Context, string, []string) error
+	remove    func(context.Context, string) error
 }
 
 func (api organizationAPI) completionOrganizationClient(ctx context.Context, o organization.DownloadOrigin) (completionOrganizationClient, error) {
@@ -35,18 +38,21 @@ func (api organizationAPI) completionOrganizationClient(ctx context.Context, o o
 	if organization.Digest(item) != o.ConfigDigest {
 		return completionOrganizationClient{}, organization.ErrState
 	}
+	return api.clientFromDownloader(item)
+}
+func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader) (completionOrganizationClient, error) {
 	var cfg map[string]any
 	if json.Unmarshal([]byte(item.Config), &cfg) != nil {
 		return completionOrganizationClient{}, organization.ErrState
 	}
-	switch o.DownloaderType {
+	switch item.Type {
 	case "qbittorrent":
 		c, err := qbittorrent.New(text(cfg["host"]), text(cfg["port"]), text(cfg["username"]), text(cfg["password"]), api.service.client.Transport)
 		if err != nil {
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return completionOrganizationClient{c.Completion, c.HasTorrent, c.MarkOrganized, c.RemoveOrganizationTask}, nil
+			return completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs, stop: c.StopForOrganization}, nil
 		}
 	case "transmission":
 		c, err := transmission.New(text(cfg["host"]), text(cfg["port"]), text(cfg["username"]), text(cfg["password"]), api.service.client.Transport)
@@ -54,7 +60,7 @@ func (api organizationAPI) completionOrganizationClient(ctx context.Context, o o
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return completionOrganizationClient{c.Completion, c.HasTorrent, c.MarkOrganized, c.RemoveOrganizationTask}, nil
+			return completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return c.Control(ctx, id, "stop") }}, nil
 		}
 	case "aria2":
 		c, err := aria2.New(text(cfg["host"]), text(cfg["port"]), text(cfg["secret"]), api.service.client.Transport)
@@ -62,7 +68,7 @@ func (api organizationAPI) completionOrganizationClient(ctx context.Context, o o
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return completionOrganizationClient{c.Completion, c.HasOrganizationTask, c.MarkOrganized, c.RemoveOrganizationTask}, nil
+			return completionOrganizationClient{read: c.Completion, has: c.HasOrganizationTask, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs}, nil
 		}
 	}
 	return completionOrganizationClient{}, organization.ErrState

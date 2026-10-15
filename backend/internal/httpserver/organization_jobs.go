@@ -126,6 +126,11 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 // Revalidate admin configuration before any write, not just the opaque root IDs
 // supplied by the browser. Stored destinations never come from client payloads.
 func (api organizationAPI) validateJob(ctx context.Context, job organization.Job) error {
+	if job.Download != nil {
+		if err := api.downloadMonitorAuthorized(ctx); err != nil {
+			return err
+		}
+	}
 	if api.monitorGeneration != "" {
 		if err := api.jobs.VerifyMonitorControl(ctx, api.monitorGeneration); err != nil {
 			return err

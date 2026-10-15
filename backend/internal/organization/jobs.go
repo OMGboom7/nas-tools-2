@@ -140,6 +140,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	DownloadGeneration   string                    `json:"-"`
 	Download             *DownloadOrigin           `json:"download,omitempty"`
 	AutomaticGeneration  string                    `json:"-"`
 	Sync                 *SyncOrigin               `json:"sync,omitempty"`
@@ -629,6 +630,11 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	}
 	if job.AutomaticGeneration != "" {
 		if err := verifyMonitorControl(ctx, tx, job.AutomaticGeneration); err != nil {
+			return err
+		}
+	}
+	if job.DownloadGeneration != "" {
+		if err := verifyDownloadMonitor(ctx, tx, job.DownloadGeneration); err != nil {
 			return err
 		}
 	}

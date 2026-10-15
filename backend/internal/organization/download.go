@@ -15,17 +15,19 @@ import (
 )
 
 type DownloadOrigin struct {
-	BatchID        string                  `json:"batchId"`
-	DownloaderID   string                  `json:"downloaderId"`
-	DownloaderName string                  `json:"downloaderName"`
-	DownloaderType string                  `json:"downloaderType"`
-	ConfigDigest   string                  `json:"configDigest"`
-	SourceRoot     string                  `json:"sourceRoot"`
-	SourceIdentity string                  `json:"sourceIdentity"`
-	SourceID       string                  `json:"sourceId"`
-	Actor          string                  `json:"actor"`
-	Task           downloadcompletion.Task `json:"task"`
-	Files          []File                  `json:"files"`
+	MonitorGeneration string                  `json:"monitorGeneration,omitempty"`
+	MonitorEvent      string                  `json:"monitorEvent,omitempty"`
+	BatchID           string                  `json:"batchId"`
+	DownloaderID      string                  `json:"downloaderId"`
+	DownloaderName    string                  `json:"downloaderName"`
+	DownloaderType    string                  `json:"downloaderType"`
+	ConfigDigest      string                  `json:"configDigest"`
+	SourceRoot        string                  `json:"sourceRoot"`
+	SourceIdentity    string                  `json:"sourceIdentity"`
+	SourceID          string                  `json:"sourceId"`
+	Actor             string                  `json:"actor"`
+	Task              downloadcompletion.Task `json:"task"`
+	Files             []File                  `json:"files"`
 }
 type DownloadBatch struct {
 	ID          string         `json:"id"`
@@ -149,6 +151,11 @@ func (s *Store) BeginDownloadBatch(ctx context.Context, fp string, origin Downlo
 		return DownloadBatch{}, nil, err
 	}
 	defer tx.Rollback()
+	if origin.MonitorGeneration != "" {
+		if err := verifyDownloadMonitor(ctx, tx, origin.MonitorGeneration); err != nil {
+			return DownloadBatch{}, nil, err
+		}
+	}
 	if err := verifyDownloadConfig(ctx, tx, origin); err != nil {
 		return DownloadBatch{}, nil, err
 	}
@@ -231,6 +238,9 @@ func (s *Store) GetDownloadBatch(ctx context.Context, id string) (DownloadBatch,
 	return b, rows.Err()
 }
 func (s *Store) SetDownloadBatch(ctx context.Context, id, from, to, reason, proof string) error {
+	return s.SetDownloadBatchAuthorized(ctx, id, from, to, reason, proof, "")
+}
+func (s *Store) SetDownloadBatchAuthorized(ctx context.Context, id, from, to, reason, proof, generation string) error {
 	allowed := map[string]bool{"ready": true, "executing": true, "needs_review": true, "files_done": true, "result_pending": true, "completed": true}
 	if !allowed[to] {
 		return ErrState
@@ -240,6 +250,11 @@ func (s *Store) SetDownloadBatch(ctx context.Context, id, from, to, reason, proo
 		return err
 	}
 	defer tx.Rollback()
+	if generation != "" {
+		if err := verifyDownloadMonitor(ctx, tx, generation); err != nil {
+			return err
+		}
+	}
 	if to == "result_pending" || to == "completed" {
 		var raw string
 		if err := tx.QueryRowContext(ctx, `SELECT DOCUMENT FROM GO_DOWNLOAD_ORGANIZATION_BATCHES WHERE ID=?`, id).Scan(&raw); err != nil {
