@@ -4,6 +4,19 @@ export type UserInfo = {
   userpris: string[];
 };
 
+export type BusinessDelivery = { id: string; eventId: string; channelId: number; channelName: string; channelType: string; state: string; reason?: string; actor?: string; updated: string };
+export type BusinessEvent = { id: string; kind: string; reference: string; title: string; text: string; created: string; deliveries: BusinessDelivery[] };
+export async function getBusinessEvents(token: string): Promise<BusinessEvent[]> {
+  const result = await readResponse<BusinessEvent[]>(await fetch("/api/v1/notifications/events", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !Array.isArray(result.data)) throw new ApiError(result.message || "业务通知回执不可用", result.code);
+  return result.data;
+}
+export async function dismissBusinessDelivery(token: string, id: string, reason: string, confirm = false): Promise<void> {
+  if (!confirm || !/^[a-f0-9]{64}$/.test(id) || !reason.trim() || reason.length > 1000) throw new ApiError("需明确确认及填写处置原因；不会重发消息", 400);
+  const result = await readResponse<unknown>(await fetch(`/api/v1/notifications/events/${encodeURIComponent(id)}/dismiss`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm, reason }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "处置响应未核实，请只读刷新，不自动重试", result.code);
+}
+
 export type AuthSession = {
   token: string;
   user: UserInfo;

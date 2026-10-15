@@ -710,6 +710,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='completed',REASON=? WHERE JOB_ID=? AND ORDINAL=?`, reason, job.ID, item.Index); err != nil {
 		return err
 	}
+	if err := emitOrganizationEvent(ctx, tx, job.ID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -769,7 +772,12 @@ func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p 
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode')='move')`, to, id, index, from, string(raw), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode')='move')`, to, id, index, from, string(raw), id)
 	if err != nil {
 		return err
 	}
@@ -777,5 +785,11 @@ func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p 
 	if err == nil && n != 1 {
 		return ErrState
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err := emitOrganizationEvent(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

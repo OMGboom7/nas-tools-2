@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, deleteNotification, getNotifications, testNotification, updateNotificationStatus, type AuthSession, type NotificationChannel, type NotificationsData, type NotificationTestResult } from "../api/client";
 import { NotificationEditor } from "../components/NotificationEditor";
+import { BusinessEventInbox } from "../components/BusinessEventInbox";
 import { CustomMessageComposer } from "../components/CustomMessageComposer";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 
@@ -118,6 +119,7 @@ export function NotificationsPage({ session, currentPath, onNavigate, onLogout, 
         <div className="services-heading__actions"><button className="secondary-button" type="button" onClick={() => void load(true)}>刷新</button><button className="secondary-button" type="button" onClick={() => setComposing(true)}>发送自定义消息</button><button className="primary-button" type="button" onClick={() => setEditing(null)}>新增通知渠道</button></div></header>
 
       {notice && <div className={notice.startsWith("错误：") ? "data-warning" : "data-success"} role="status">{notice}</div>}
+      <BusinessEventInbox token={session.token} onSessionExpired={onSessionExpired} />
       {state.kind === "loading" && <div className="notification-skeleton"><span /><span /><span /></div>}
       {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>通知渠道暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></section>}
       {state.kind === "ready" && <>

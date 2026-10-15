@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 )
 
 var errSubscriptionSubmissionConflict = errors.New("subscription submission conflicts with current state")
@@ -282,6 +284,9 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 		if _, err := tx.ExecContext(ctx, `INSERT INTO RSS_TORRENTS(TORRENT_NAME,ENCLOSURE,TYPE,TITLE,YEAR,SEASON,EPISODE) VALUES (?,?,?,?,?,?,?)`, candidate.Title, candidate.resource.DownloadURL, kind, plan.raw["NAME"], plan.raw["YEAR"], plan.raw["SEASON"], subscriptionEpisodeString(candidate.Episodes)); err != nil {
 			return err
 		}
+		if err := bus.Emit(ctx, tx, "download_start", key+":"+owner, "subscription:"+kind+":"+strconv.FormatInt(id, 10), text(plan.raw["NAME"])+" 开始下载", "来自：订阅；类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"；集："+subscriptionEpisodeString(candidate.Episodes)); err != nil {
+			return err
+		}
 	}
 	complete := plan.LibraryComplete || kind == "TV" && len(remaining) == 0 || kind == "MOV" && candidate != nil
 	if complete {
@@ -297,6 +302,10 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 			}
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+subscriptionTable(kind)+" WHERE ID=?", id); err != nil {
+			return err
+		}
+		reference := "subscription:" + kind + ":" + strconv.FormatInt(id, 10)
+		if err := bus.Emit(ctx, tx, "rss_finished", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, text(plan.raw["NAME"])+" 订阅完成", "类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"。此为订阅计划完成，不代表文件已入库。"); err != nil {
 			return err
 		}
 	} else if kind == "TV" {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 )
 
 func TestRecordDownloadWritesStatusAndHistoryAtomically(t *testing.T) {
@@ -43,5 +45,9 @@ func TestRecordDownloadWritesStatusAndHistoryAtomically(t *testing.T) {
 	}
 	if err := store.database.QueryRow(`SELECT COUNT(*) FROM USERRSS_TASK_HISTORY WHERE TASK_ID='999'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("missing history=%d err=%v", count, err)
+	}
+	events, err := bus.New(store.database).List(ctx)
+	if err != nil || len(events) != 1 || events[0].Kind != "download_start" || len(events[0].Deliveries) != 0 {
+		t.Fatal(events, err)
 	}
 }

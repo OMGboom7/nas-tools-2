@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/bus"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -232,7 +234,7 @@ func recordDownloadTx(ctx context.Context, transaction *sql.Tx, taskID int64, ti
 	if _, err := transaction.ExecContext(ctx, `INSERT INTO USERRSS_TASK_HISTORY (TASK_ID,TITLE,DOWNLOADER,DATE) VALUES (?,?,?,?)`, strconv.FormatInt(taskID, 10), title, downloaderName, time.Now().Format("2006-01-02 15:04:05")); err != nil {
 		return err
 	}
-	return nil
+	return bus.Emit(ctx, transaction, "download_start", bus.Hash([]any{taskID, enclosure, title}), "rss:"+strconv.FormatInt(taskID, 10), title+" 开始下载", "来自：自定义 RSS；下载器："+downloaderName+"；年份："+year)
 }
 
 type Article struct {

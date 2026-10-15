@@ -67,7 +67,8 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitExisting := wait
 		waitSync := startSyncMonitorWorker(workerContext, runner.organizer)
 		waitDownloads := startDownloadMonitorWorker(workerContext, runner.organizer)
-		wait = func() { waitExisting(); waitSync(); waitDownloads() }
+		waitNotifications := startBusinessNotificationWorker(workerContext, runner.notifications)
+		wait = func() { waitExisting(); waitSync(); waitDownloads(); waitNotifications() }
 	}
 	return handler, wait, nil
 }
@@ -428,6 +429,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/services/media/{id}", services.serveMediaConfig)
 	mux.HandleFunc("PUT /api/v1/services/media/{id}", services.updateMediaConfig)
 	notifications := notificationService{client: &http.Client{Transport: transport}, store: nativeNotifications, config: nativeConfig}
+	businessMessages := &businessNotifications{organizer: &organizer, service: notifications}
+	if organizationJobs != nil {
+		businessMessages.queue = organizationJobs.BusinessEvents()
+	}
+	rssRunner.notifications = businessMessages
+	mux.HandleFunc("GET /api/v1/notifications/events", businessMessages.list)
+	mux.HandleFunc("POST /api/v1/notifications/events/{id}/dismiss", businessMessages.dismiss)
 	if nativeNotifications != nil {
 		mux.HandleFunc("POST /api/v1/message/client/info", notifications.serveLegacyInfo)
 		mux.HandleFunc("POST /api/v1/message/client/options", notifications.serveLegacyOptions)

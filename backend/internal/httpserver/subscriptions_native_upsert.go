@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 )
 
 var errSubscriptionAlreadyExists = errors.New("subscription already exists")
@@ -196,6 +198,10 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 		}
 		id, err = result.LastInsertId()
 		if err != nil {
+			return 0, err
+		}
+		reference := "subscription:" + input.Type + ":" + strconv.FormatInt(id, 10)
+		if err := bus.Emit(ctx, transaction, "rss_added", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, name+" 已添加订阅", "类型："+input.Type+"；年份："+year+"；季："+season); err != nil {
 			return 0, err
 		}
 	}
