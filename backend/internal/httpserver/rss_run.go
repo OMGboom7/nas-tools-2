@@ -340,7 +340,8 @@ func (api *rssRunAPI) run(ctx context.Context, id int64) (rssRunResult, *recogni
 			}
 			tv = &rsstaskconfig.TVIdentity{ID: strconv.FormatInt(recognized.detail.ID, 10), Name: text(recognized.data["title"]), Season: season}
 		}
-		if err := api.preview.tasks.CompleteReservedDownload(ctx, id, article.Title, article.Year, article.Enclosure, downloader.Name, tv); err != nil {
+		fp := transmissionProfileFingerprint(downloader, newSubscriptionSubmissionProof(downloader, magnet, torrent).InfoHash, options)
+		if err := api.preview.tasks.CompleteReservedDownload(ctx, id, article.Title, article.Year, article.Enclosure, downloader.Name, tv, fp); err != nil {
 			result.Uncertain++
 			return fail(502, "RSS submission succeeded but persistence requires verification")
 		}

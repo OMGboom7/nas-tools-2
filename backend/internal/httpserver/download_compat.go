@@ -101,6 +101,9 @@ func (service downloadService) serveCompatControl(response http.ResponseWriter, 
 	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
 	defer cancel()
 	handled, err := service.nativeControl(ctx, id, action)
+	if manualSubmissionError(response, err) {
+		return
+	}
 	if !handled {
 		writeAPIError(response, http.StatusNotImplemented, 501, "downloader type is not migrated")
 		return

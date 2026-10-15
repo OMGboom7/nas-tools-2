@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 )
 
 type TVIdentity struct {
@@ -74,15 +76,18 @@ func (store *Store) ReserveDownload(ctx context.Context, taskID int64, enclosure
 
 // Complete all local effects atomically only after a confirmed submission.
 // If local persistence fails, the pending claim still prevents automatic retry.
-func (store *Store) CompleteReservedDownload(ctx context.Context, taskID int64, title, year, enclosure, downloader string, tv *TVIdentity) error {
-	return store.completeReservedDownload(ctx, taskID, title, year, enclosure, downloader, tv, true)
+func (store *Store) CompleteReservedDownload(ctx context.Context, taskID int64, title, year, enclosure, downloader string, tv *TVIdentity, profiles ...string) error {
+	return store.completeReservedDownload(ctx, taskID, title, year, enclosure, downloader, tv, true, profiles...)
 }
 
-func (store *Store) CompleteReservedManualDownload(ctx context.Context, taskID int64, title, year, enclosure, downloader string) error {
-	return store.completeReservedDownload(ctx, taskID, title, year, enclosure, downloader, nil, false)
+func (store *Store) CompleteReservedManualDownload(ctx context.Context, taskID int64, title, year, enclosure, downloader string, profiles ...string) error {
+	return store.completeReservedDownload(ctx, taskID, title, year, enclosure, downloader, nil, false, profiles...)
 }
 
-func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, title, year, enclosure, downloader string, tv *TVIdentity, updateCounter bool) error {
+func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, title, year, enclosure, downloader string, tv *TVIdentity, updateCounter bool, profiles ...string) error {
+	if len(profiles) > 1 {
+		return errors.New("invalid settings receipt")
+	}
 	if taskID <= 0 || enclosure == "" || strings.TrimSpace(title) == "" || strings.TrimSpace(downloader) == "" {
 		return errors.New("invalid RSS completion")
 	}
@@ -91,6 +96,11 @@ func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, 
 		return err
 	}
 	defer tx.Rollback()
+	for _, fp := range profiles {
+		if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, fp); err != nil {
+			return err
+		}
+	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND TASK_ID=? AND STATE='pending')`, claimKey(enclosure), taskID).Scan(&exists); err != nil {
 		return err
@@ -135,6 +145,11 @@ func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, 
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_RSS_DOWNLOAD_CLAIMS SET STATE='submitted', UPDATED_AT=? WHERE RESOURCE_KEY=? AND TASK_ID=? AND STATE='pending'`, time.Now().Format(time.RFC3339), claimKey(enclosure), taskID); err != nil {
 		return err
+	}
+	for _, fp := range profiles {
+		if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, fp); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

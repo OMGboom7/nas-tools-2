@@ -60,7 +60,22 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return c.Control(ctx, id, "stop") }}, nil
+			protect := func(ctx context.Context, id string, remove bool) error {
+				guard, err := api.jobs.AcquireJob(ctx, profileGuard(item.ID, id))
+				if err != nil {
+					return err
+				}
+				defer guard.Close()
+				d := downloadService{downloaders: api.service.downloaders}
+				if err := d.checkTransmissionProfileReady(ctx, item, id); err != nil {
+					return err
+				}
+				if remove {
+					return c.RemoveOrganizationTask(ctx, id)
+				}
+				return c.Control(ctx, id, "stop")
+			}
+			return completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}, nil
 		}
 	case "aria2":
 		c, err := aria2.New(text(cfg["host"]), text(cfg["port"]), text(cfg["secret"]), api.service.client.Transport)
@@ -80,6 +95,19 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 	o := job.Definition.Download
 	if o == nil {
 		return nil
+	}
+	if job.Mode == "move" && o.DownloaderType == "transmission" {
+		id, err := syncConfigID(o.DownloaderID)
+		if err != nil {
+			return err
+		}
+		item, err := api.service.downloaders.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := (downloadService{downloaders: api.service.downloaders}).checkTransmissionProfileReady(ctx, item, o.Task.ID); err != nil {
+			return err
+		}
 	}
 	c, err := api.completionOrganizationClient(ctx, *o)
 	if err != nil {

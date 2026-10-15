@@ -4,6 +4,28 @@ export type UserInfo = {
   userpris: string[];
 };
 
+export type TransmissionLimits = { uploadKB: number; downloadKB: number; ratio: number; idleMinutes: number };
+export type TransmissionProfile = { id: string; state: string; reason?: string; fingerprint: string; downloaderId: string; name: string; infoHash: string; options: { DownloadDir: string; Paused: boolean; Labels: string[] }; limits: TransmissionLimits; created: string; updated: string };
+export type TransmissionProfileReview = { profile: TransmissionProfile; current: { hash: string; directory: string; labels: string[]; status: number; uploadKB: number; downloadKB: number; uploadLimited: boolean; downloadLimited: boolean; ratio: number; ratioMode: number; idleMinutes: number; idleMode: number }; next: "configure" | "start" | "acknowledge"; actor: string; fingerprint: string };
+export async function getTransmissionProfiles(token: string, page = 1): Promise<TransmissionProfile[]> {
+  if (!Number.isInteger(page) || page < 1 || page > 10000) throw new ApiError("设置回执页码无效", 400);
+  const result = await readResponse<TransmissionProfile[]>(await fetch(`/api/v1/downloads/transmission-profiles?page=${page}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !Array.isArray(result.data)) throw new ApiError(result.message || "Transmission 设置回执不可用", result.code);
+  return result.data;
+}
+export async function reviewTransmissionProfile(token: string, id: string): Promise<TransmissionProfileReview> {
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new ApiError("设置回执 ID 无效", 400);
+  const result = await readResponse<TransmissionProfileReview>(await fetch(`/api/v1/downloads/transmission-profiles/${id}/review`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: "{}" }));
+  if (!result.success || result.code !== 0 || result.data?.profile?.id !== id || !/^[a-f0-9]{64}$/.test(result.data.fingerprint) || !["configure", "start", "acknowledge"].includes(result.data.next)) throw new ApiError(result.message || "任务身份或设置证据不能核实", result.code);
+  return result.data;
+}
+export async function recoverTransmissionProfile(token: string, review: TransmissionProfileReview, confirm = false, confirmSettings = false, confirmStart = false): Promise<TransmissionProfile> {
+  if (!confirm || !/^[a-f0-9]{32}$/.test(review.profile.id) || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.next === "configure" && !confirmSettings || review.next === "start" && !confirmStart) throw new ApiError("先重新审核，并分别确认设置写入或启动任务", 400);
+  const result = await readResponse<TransmissionProfile>(await fetch(`/api/v1/downloads/transmission-profiles/${review.profile.id}/recover`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm, fingerprint: review.fingerprint, confirmSettings, confirmStart }) }));
+  if (!result.success || result.code !== 0 || result.data?.id !== review.profile.id) throw new ApiError(result.message || "设置响应不确定，请只读刷新，不重放操作", result.code);
+  return result.data;
+}
+
 export type ManualDownloadReceipt = { id: string; state: string; taskId?: string; reason?: string; created: string; updated: string; downloaderId: string; downloaderName: string; downloaderType: string; infoHash: string; actor: string; title: string; source: string };
 export async function getManualDownloadReceipts(token: string, page = 1): Promise<ManualDownloadReceipt[]> {
   if (!Number.isInteger(page) || page < 1 || page > 10000) throw new ApiError("提交回执页码无效", 400);

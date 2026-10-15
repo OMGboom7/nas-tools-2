@@ -205,7 +205,8 @@ func TestSearchDownloadOptionsUnsupportedBeforeFetching(t *testing.T) {
 	}{
 		{"qbittorrent", downloadAddOptions{Category: "tv", Tags: []string{"tag"}, RatioLimit: 1}, true},
 		{"transmission", downloadAddOptions{SavePath: "/downloads", Tags: []string{"tag"}, Paused: true}, true},
-		{"transmission", downloadAddOptions{RatioLimit: 1}, false},
+		{"transmission", downloadAddOptions{RatioLimit: 1}, true},
+		{"transmission", downloadAddOptions{Category: "unsupported"}, false},
 		{"aria2", downloadAddOptions{SavePath: "/downloads", UploadLimitKB: 10}, true},
 		{"aria2", downloadAddOptions{Tags: []string{"tag"}}, false},
 		{"pan115", downloadAddOptions{}, true},

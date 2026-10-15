@@ -214,6 +214,9 @@ func (service downloadService) control(response http.ResponseWriter, request *ht
 	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
 	defer cancel()
 	if handled, err := service.nativeControl(ctx, id, action); handled {
+		if manualSubmissionError(response, err) {
+			return
+		}
 		if errors.Is(err, errDownloaderControlUnsupported) {
 			writeAPIError(response, http.StatusNotImplemented, 501, "downloader task control is not migrated")
 			return

@@ -170,7 +170,8 @@ func (api rssItemDownloadAPI) serveHTTP(response http.ResponseWriter, request *h
 			writeJSON(response, http.StatusOK, map[string]any{"code": 1})
 			return
 		}
-		if err := api.tasks.CompleteReservedManualDownload(ctx, taskID, article.Title, article.Year, article.Enclosure, downloader.Name); err != nil {
+		fp := transmissionProfileFingerprint(downloader, newSubscriptionSubmissionProof(downloader, magnet, torrent).InfoHash, options)
+		if err := api.tasks.CompleteReservedManualDownload(ctx, taskID, article.Title, article.Year, article.Enclosure, downloader.Name, fp); err != nil {
 			writeAPIError(response, http.StatusBadGateway, 502, "RSS download succeeded but history could not be saved")
 			return
 		}
@@ -191,7 +192,7 @@ func rssOptionsSupported(kind string, options downloadAddOptions) bool {
 	case "qbittorrent":
 		return true
 	case "transmission":
-		return options.Category == "" && options.UploadLimitKB == 0 && options.DownloadLimitKB == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
+		return options.Category == ""
 	case "aria2":
 		return options.Category == "" && len(options.Tags) == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
 	case "pan115":

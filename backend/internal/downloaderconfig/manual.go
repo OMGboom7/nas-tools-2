@@ -17,6 +17,7 @@ import (
 var ErrManualPending = errors.New("manual submission is pending or conflicts with its original scope")
 
 type ManualDefinition struct {
+	ProfileDigest                                               string `json:"profileDigest,omitempty"`
 	DownloaderID                                                int64
 	DownloaderName, DownloaderType, ConfigDigest, OptionsDigest string
 	InfoHash, Actor, Title, Source, SavePath                    string
@@ -186,6 +187,9 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 		return ErrManualPending
 	}
 	d := r.Definition
+	if err := VerifyTransmissionProfile(ctx, tx, d.ProfileDigest); err != nil {
+		return err
+	}
 	if err := verifyManualConfig(ctx, tx, d); err != nil {
 		return err
 	}
@@ -225,6 +229,9 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 		return err
 	}
 	if err := verifyManualConfig(ctx, tx, d); err != nil {
+		return err
+	}
+	if err := VerifyTransmissionProfile(ctx, tx, d.ProfileDigest); err != nil {
 		return err
 	}
 	return tx.Commit()

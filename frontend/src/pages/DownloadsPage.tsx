@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, addMagnetDownload, addSiteTorrentLink, addTorrentDownload, controlDownload, getDownloads, getSites, type AuthSession, type DownloadsData, type DownloadTask, type SiteSummary } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { ManualDownloadReceipts } from "../components/ManualDownloadReceipts";
+import { TransmissionProfiles } from "../components/TransmissionProfiles";
 
 type DownloadsPageProps = {
   session: AuthSession;
@@ -167,6 +168,7 @@ export function DownloadsPage({ session, currentPath, onNavigate, onLogout, onSe
         {actionError && <div className="data-warning" role="alert">{actionError}</div>}
         {actionNotice && <div className="data-notice" role="status">{actionNotice}</div>}
         <ManualDownloadReceipts token={session.token} onSessionExpired={onSessionExpired} />
+        <TransmissionProfiles token={session.token} onSessionExpired={onSessionExpired} />
         <form className="download-magnet-form" onSubmit={(event) => void handleMagnetSubmit(event)}>
           <label htmlFor="download-magnet">添加磁力链接</label>
           <div><input id="download-magnet" type="text" value={magnet} onChange={(event) => setMagnet(event.target.value)} placeholder="magnet:?xt=urn:btih:…" maxLength={4096} required />

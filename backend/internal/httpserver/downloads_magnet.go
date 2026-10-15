@@ -107,18 +107,19 @@ var errDownloadOptionsUnsupported = errors.New("downloader does not support thes
 // Only validation/authentication failures known to precede acceptance may be
 // retried. Connection errors and malformed replies remain ambiguous.
 func downloadDefinitelyNotSubmitted(handled bool, err error) bool {
-	return !handled || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration)
+	return !handled || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, transmission.ErrAuthentication) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration)
 }
 
 type downloadAddOptions struct {
-	SavePath         string
-	Category         string
-	Tags             []string
-	Paused           bool
-	UploadLimitKB    int
-	DownloadLimitKB  int
-	RatioLimit       float64
-	SeedingTimeLimit int
+	ApplyTransmissionLimits bool `json:"applyTransmissionLimits,omitempty"`
+	SavePath                string
+	Category                string
+	Tags                    []string
+	Paused                  bool
+	UploadLimitKB           int
+	DownloadLimitKB         int
+	RatioLimit              float64
+	SeedingTimeLimit        int
 }
 
 func (options downloadAddOptions) empty() bool {
@@ -181,8 +182,12 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		}
 		return magnetInfoHash(magnet), true, nil
 	case "transmission":
-		if options.UploadLimitKB != 0 || options.DownloadLimitKB != 0 || options.RatioLimit != 0 || options.SeedingTimeLimit != 0 || options.Category != "" {
+		if options.Category != "" {
 			return "", true, errDownloadOptionsUnsupported
+		}
+		if needsTransmissionProfile(item, options) {
+			id, err := service.submitTransmissionProfile(ctx, item, magnet, torrent, options)
+			return id, true, err
 		}
 		addOptions := transmission.AddOptions{DownloadDir: options.SavePath, Paused: options.Paused, Labels: options.Tags}
 		client, err := transmission.New(host, port, text(configuration["username"]), text(configuration["password"]), service.client.Transport)

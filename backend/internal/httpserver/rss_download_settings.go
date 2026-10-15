@@ -52,6 +52,7 @@ func rssDownloadSettings(ctx context.Context, task rsstaskconfig.Task, downloade
 	options.DownloadLimitKB = setting.DownloadLimit
 	options.RatioLimit = float64(setting.RatioLimit) / 100
 	options.SeedingTimeLimit = setting.SeedingTimeLimit
+	options.ApplyTransmissionLimits = true
 	if setting.Tags != "" {
 		options.Tags = strings.Split(setting.Tags, ";")
 	}

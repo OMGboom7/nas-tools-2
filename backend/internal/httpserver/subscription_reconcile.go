@@ -22,6 +22,7 @@ import (
 // Private durable evidence, never an HTTP response. No downloader credentials
 // are copied: a digest binds verification to the configuration used to submit.
 type subscriptionSubmissionProof struct {
+	ProfileDigest                        string `json:"profileDigest,omitempty"`
 	Version                              int
 	DownloaderID                         int64
 	DownloaderType, ConfigHash, InfoHash string
@@ -241,6 +242,11 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	configuration := map[string]any{}
 	if json.Unmarshal([]byte(item.Config), &configuration) != nil {
 		return fail(502, "submission downloader configuration is invalid")
+	}
+	if proof.ProfileDigest != "" {
+		if err := download.verifyTransmissionProfile(ctx, item, proof.InfoHash, proof.ProfileDigest); err != nil {
+			return fail(409, "original Transmission settings still require explicit review; no resubmission")
+		}
 	}
 	switch item.Type {
 	case "qbittorrent":

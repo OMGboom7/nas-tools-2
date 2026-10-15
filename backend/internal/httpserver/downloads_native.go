@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/pan115"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
@@ -294,54 +295,75 @@ func formatBytes(value int64) string {
 }
 
 func (service downloadService) nativeControl(ctx context.Context, id, action string) (bool, error) {
-	client, _, handled, err := service.nativeQbittorrent(ctx, "")
-	if err != nil {
-		return handled, err
-	}
-	if handled && client == nil {
-		return true, errors.New("default downloader is not configured")
-	}
-	if handled {
-		if !qbittorrent.ValidHash(id) {
-			return true, qbittorrent.ErrConfiguration
-		}
-		return true, client.Control(ctx, id, action)
-	}
-	transmissionClient, _, handled, err := service.nativeTransmission(ctx, "")
-	if err != nil {
-		return handled, err
-	}
-	if handled && transmissionClient == nil {
-		return true, errors.New("default downloader is not configured")
-	}
-	if handled {
-		if !transmission.ValidHash(id) {
-			return true, transmission.ErrConfiguration
-		}
-		return true, transmissionClient.Control(ctx, id, action)
-	}
-	panClient, _, handled, err := service.nativePan115(ctx, "")
-	if handled {
-		if err != nil {
-			return true, err
-		}
-		if action != "remove" {
-			return true, errDownloaderControlUnsupported
-		}
-		if panClient == nil {
-			return true, errors.New("default downloader is not configured")
-		}
-		return true, panClient.Delete(ctx, id)
-	}
-	ariaClient, _, handled, err := service.nativeAria2(ctx, "")
+	item, _, handled, err := service.configuredDownloader(ctx, "")
 	if !handled || err != nil {
 		return handled, err
 	}
-	if ariaClient == nil {
+	if item.ID == 0 {
 		return true, errors.New("default downloader is not configured")
 	}
-	if !aria2.ValidGID(id) {
-		return true, aria2.ErrConfiguration
+	var cfg map[string]any
+	if json.Unmarshal([]byte(item.Config), &cfg) != nil {
+		return true, errors.New("invalid downloader configuration")
 	}
-	return true, ariaClient.Control(ctx, id, action)
+	host, port := text(cfg["host"]), text(cfg["port"])
+	switch item.Type {
+	case "qbittorrent":
+		c, e := qbittorrent.New(host, port, text(cfg["username"]), text(cfg["password"]), service.client.Transport)
+		if e != nil {
+			return true, e
+		}
+		return true, c.Control(ctx, id, action)
+	case "transmission":
+		if !transmission.ValidHash(id) {
+			return true, transmission.ErrConfiguration
+		}
+		if service.manualGuards != nil && *service.manualGuards != nil {
+			guard, e := (*service.manualGuards).AcquireJob(ctx, profileGuard(item.ID, strings.ToLower(id)))
+			if e != nil {
+				return true, downloaderconfig.ErrProfilePending
+			}
+			defer guard.Close()
+		}
+		c, e := service.profileClient(item)
+		if e != nil {
+			return true, e
+		}
+		p, e := service.downloaders.FindTransmissionProfile(ctx, item.ID, id)
+		if e != nil && !errors.Is(e, downloaderconfig.ErrNotFound) {
+			return true, e
+		}
+		if e == nil {
+			if p.Definition.ConfigDigest != bus.Hash(item) {
+				return true, downloaderconfig.ErrProfilePending
+			}
+			if action == "start" {
+				if p.State != "ready" {
+					return true, downloaderconfig.ErrProfilePending
+				}
+				s, e := c.Profile(ctx, id)
+				if e != nil || !p.Owns(s) || !s.Matches(p.Definition.Limits) {
+					return true, downloaderconfig.ErrProfilePending
+				}
+			}
+		}
+		return true, c.Control(ctx, id, action)
+	case "pan115":
+		if action != "remove" {
+			return true, errDownloaderControlUnsupported
+		}
+		c, e := pan115.New(text(cfg["cookie"]), service.client.Transport)
+		if e != nil {
+			return true, e
+		}
+		return true, c.Delete(ctx, id)
+	case "aria2":
+		c, e := aria2.New(host, port, text(cfg["secret"]), service.client.Transport)
+		if e != nil {
+			return true, e
+		}
+		return true, c.Control(ctx, id, action)
+	default:
+		return false, nil
+	}
 }

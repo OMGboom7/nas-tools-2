@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 )
 
 var errSubscriptionSubmissionConflict = errors.New("subscription submission conflicts with current state")
@@ -219,6 +221,7 @@ func subscriptionEpisodeString(episodes []int) string {
 // the resource and, when complete, moves the subscription to legacy-compatible
 // history. Rollback leaves the durable pending claim intact after acceptance.
 func (service subscriptionService) persistSubscriptionSubmission(ctx context.Context, kind string, id int64, plan *subscriptionSearchPlan, candidate *subscriptionCandidate, owner string, guards ...subscriptionReconcileGuard) error {
+	profileDigest := ""
 	db, err := service.openNativeSubscriptionWriteDatabase()
 	if err != nil {
 		return err
@@ -281,6 +284,18 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 			return errSubscriptionSubmissionConflict
 		}
 		remaining = slices.DeleteFunc(remaining, func(n int) bool { return slices.Contains(candidate.Episodes, n) })
+		var proofBody string
+		if err := tx.QueryRowContext(ctx, `SELECT PAYLOAD FROM GO_SUBSCRIPTION_SUBMISSION_PROOFS WHERE RESOURCE_KEY=? AND OWNER=?`, key, owner).Scan(&proofBody); err != nil {
+			return err
+		}
+		var storedProof subscriptionSubmissionProof
+		if json.Unmarshal([]byte(proofBody), &storedProof) != nil {
+			return errSubscriptionSubmissionConflict
+		}
+		profileDigest = storedProof.ProfileDigest
+		if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, storedProof.ProfileDigest); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO RSS_TORRENTS(TORRENT_NAME,ENCLOSURE,TYPE,TITLE,YEAR,SEASON,EPISODE) VALUES (?,?,?,?,?,?,?)`, candidate.Title, candidate.resource.DownloadURL, kind, plan.raw["NAME"], plan.raw["YEAR"], plan.raw["SEASON"], subscriptionEpisodeString(candidate.Episodes)); err != nil {
 			return err
 		}
@@ -325,6 +340,9 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 		if _, err := tx.ExecContext(ctx, `UPDATE RSS_MOVIES SET STATE='R' WHERE ID=?`, id); err != nil {
 			return err
 		}
+	}
+	if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, profileDigest); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err

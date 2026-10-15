@@ -119,6 +119,7 @@ func (service downloadService) searchDownloadSettings(ctx context.Context, siteN
 	if !handled || downloader.ID == 0 || downloader.Enabled == 0 {
 		return downloader, options, errors.New("selected downloader is unavailable or disabled")
 	}
+	options.ApplyTransmissionLimits = id > 0 && downloader.Type == "transmission"
 	// The legacy preset labels supported clients with NASTOOL. Do not send a
 	// synthetic label to clients whose protocol has no label support.
 	if id == -1 && (downloader.Type == "qbittorrent" || downloader.Type == "transmission") {
@@ -154,7 +155,7 @@ func searchDownloadOptionsSupported(kind string, options downloadAddOptions) boo
 	case "qbittorrent":
 		return true
 	case "transmission":
-		return options.Category == "" && options.UploadLimitKB == 0 && options.DownloadLimitKB == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
+		return options.Category == ""
 	case "aria2":
 		return options.Category == "" && len(options.Tags) == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
 	case "pan115":
