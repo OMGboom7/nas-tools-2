@@ -44,6 +44,17 @@ type DownloadSetting struct {
 
 type TaskHistory struct{ Title, Year, SeasonEpisode, Poster string }
 
+// HasTrackedTask requires an actual downloader/task history row; an empty
+// presentation struct or an accepted submission is not proof of ownership.
+func (store *Store) HasTrackedTask(ctx context.Context, downloaderID, taskID string) (bool, error) {
+	var exists bool
+	if err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='DOWNLOAD_HISTORY')`).Scan(&exists); err != nil || !exists {
+		return false, err
+	}
+	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM DOWNLOAD_HISTORY WHERE DOWNLOADER=? AND DOWNLOAD_ID=?)`, downloaderID, taskID).Scan(&exists)
+	return exists, err
+}
+
 type DownloadHistory struct {
 	TMDBID, Title, MediaType, Year, Poster, Torrent, Date, Site string
 }
