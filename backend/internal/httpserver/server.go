@@ -253,7 +253,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		}
 	}
 	mux.HandleFunc("POST /api/v1/search/resources", search.serveHTTP)
+	var organizationJobs *organization.Store
 	downloads := downloadService{
+		manualGuards: &organizationJobs,
+		pureGo:       cfg.DisableLegacy,
 		legacyURL:    cfg.LegacyBackendURL,
 		client:       &http.Client{Transport: transport},
 		images:       images,
@@ -266,6 +269,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		siteLimits:   siteLimits,
 	}
 	mux.HandleFunc("GET /api/v1/downloads", downloads.serveList)
+	mux.HandleFunc("GET /api/v1/downloads/submissions", downloads.serveManualSubmissions)
+	mux.HandleFunc("POST /api/v1/downloads/submissions/{id}/reconcile", downloads.serveManualReconcile)
 	mux.HandleFunc("POST /api/v1/downloads/resource", downloads.addResource)
 	mux.HandleFunc("POST /api/v1/downloads/magnet", downloads.addMagnet)
 	mux.HandleFunc("POST /api/v1/downloads/torrent", downloads.addTorrent)
@@ -296,7 +301,6 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		words:        nativeWords,
 	}
 	mux.HandleFunc("GET /api/v1/subscriptions", subscriptions.serveList)
-	var organizationJobs *organization.Store
 	if cfg.DisableLegacy && nativeUserDatabasePath != "" {
 		organizationJobs, err = organization.OpenStore(nativeUserDatabasePath)
 		if err != nil {

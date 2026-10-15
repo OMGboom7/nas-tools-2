@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/pan115"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
@@ -36,9 +37,12 @@ func (service downloadService) addMagnet(response http.ResponseWriter, request *
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
 	defer cancel()
-	id, handled, err := service.nativeAddMagnet(ctx, input.Magnet)
+	id, handled, err := service.submitManual(ctx, request, input.Magnet, nil, nil, downloadAddOptions{}, "", "手动磁力")
 	if !handled {
 		writeAPIError(response, http.StatusNotImplemented, 501, "downloader type is not migrated")
+		return
+	}
+	if manualSubmissionError(response, err) {
 		return
 	}
 	if errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration) {
@@ -126,6 +130,11 @@ func (service downloadService) nativeAddDownloadWithOptions(ctx context.Context,
 	if !available || err != nil {
 		return "", available, err
 	}
+	return service.nativeAddConfiguredDownload(ctx, item, magnet, torrent, options)
+}
+
+// Dispatch from the exact verified row, never a second default/config lookup.
+func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, item downloaderconfig.Downloader, magnet string, torrent []byte, options downloadAddOptions) (string, bool, error) {
 	if item.ID == 0 {
 		return "", true, errors.New("default downloader is not configured")
 	}

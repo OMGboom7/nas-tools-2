@@ -13,6 +13,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/pan115"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
@@ -22,6 +23,8 @@ import (
 )
 
 type downloadService struct {
+	manualGuards **organization.Store
+	pureGo       bool
 	legacyURL    string
 	client       *http.Client
 	images       *mediaImageProxy

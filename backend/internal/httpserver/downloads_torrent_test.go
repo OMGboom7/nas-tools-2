@@ -84,7 +84,8 @@ func TestNativeTorrentUploadDoesNotCallPython(t *testing.T) {
 					if err != nil || !bytes.Equal(contents, testTorrent) {
 						t.Fatalf("Transmission torrent changed: %q %v", contents, err)
 					}
-					return jsonResponse(request, `{"jsonrpc":"2.0","result":{"torrent_added":{"hash_string":"0123456789abcdef0123456789abcdef01234567"}},"id":1}`), nil
+					hash := sha1.Sum([]byte("d4:name4:Teste"))
+					return jsonResponse(request, `{"jsonrpc":"2.0","result":{"torrent_added":{"hash_string":"`+hex.EncodeToString(hash[:])+`"}},"id":1}`), nil
 				case "aria2":
 					if request.URL.Path != "/jsonrpc" {
 						t.Fatalf("bad Aria2 path: %s", request.URL)

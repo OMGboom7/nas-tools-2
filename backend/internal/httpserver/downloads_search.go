@@ -69,14 +69,21 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
 		return
 	}
+	if resource.MinimumSeedTime != nil && *resource.MinimumSeedTime > 0 || resource.MinimumRatio != nil && *resource.MinimumRatio > 0 {
+		writeAPIError(response, 501, 501, "tracker minimum seeding policy is not migrated; no submission attempted")
+		return
+	}
 	magnet, torrent, err := service.prepareNativeSearchTorrent(ctx, resource)
 	if err != nil {
 		writeAPIError(response, 502, 502, "search torrent could not be retrieved")
 		return
 	}
-	_, handled, err := service.nativeAddDownloadWithOptions(ctx, magnet, torrent, strconv.FormatInt(downloader.ID, 10), options)
+	_, handled, err := service.submitManual(ctx, request, magnet, torrent, &downloader, options, resource.Title, "搜索下种")
 	if !handled {
 		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
+		return
+	}
+	if manualSubmissionError(response, err) {
 		return
 	}
 	if errors.Is(err, errDownloadOptionsUnsupported) {

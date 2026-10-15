@@ -53,9 +53,12 @@ func (service downloadService) addTorrent(response http.ResponseWriter, request 
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
 	defer cancel()
-	id, handled, err := service.nativeAddTorrent(ctx, contents)
+	id, handled, err := service.submitManual(ctx, request, "", contents, nil, downloadAddOptions{}, "", "上传种子")
 	if !handled {
 		writeAPIError(response, http.StatusNotImplemented, 501, "downloader type is not migrated")
+		return
+	}
+	if manualSubmissionError(response, err) {
 		return
 	}
 	if errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, aria2.ErrConfiguration) {

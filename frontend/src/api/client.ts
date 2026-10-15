@@ -4,6 +4,20 @@ export type UserInfo = {
   userpris: string[];
 };
 
+export type ManualDownloadReceipt = { id: string; state: string; taskId?: string; reason?: string; created: string; updated: string; downloaderId: string; downloaderName: string; downloaderType: string; infoHash: string; actor: string; title: string; source: string };
+export async function getManualDownloadReceipts(token: string, page = 1): Promise<ManualDownloadReceipt[]> {
+  if (!Number.isInteger(page) || page < 1 || page > 10000) throw new ApiError("提交回执页码无效", 400);
+  const result = await readResponse<ManualDownloadReceipt[]>(await fetch(`/api/v1/downloads/submissions?page=${page}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !Array.isArray(result.data)) throw new ApiError(result.message || "手动下载回执不可用", result.code);
+  return result.data;
+}
+export async function reconcileManualDownload(token: string, id: string, confirm = false): Promise<ManualDownloadReceipt> {
+  if (!confirm || !/^[a-f0-9]{32}$/.test(id)) throw new ApiError("需明确确认只读核实原下载器，不重新下种", 400);
+  const result = await readResponse<ManualDownloadReceipt>(await fetch(`/api/v1/downloads/submissions/${encodeURIComponent(id)}/reconcile`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm }) }));
+  if (!result.success || result.code !== 0 || result.data?.id !== id || result.data.state !== "submitted") throw new ApiError(result.message || "尚无正向任务证据，请保留待核实回执，不重试下种", result.code);
+  return result.data;
+}
+
 export type BusinessDelivery = { id: string; eventId: string; channelId: number; channelName: string; channelType: string; state: string; reason?: string; actor?: string; updated: string };
 export type BusinessEvent = { id: string; kind: string; reference: string; title: string; text: string; created: string; deliveries: BusinessDelivery[] };
 export async function getBusinessEvents(token: string): Promise<BusinessEvent[]> {

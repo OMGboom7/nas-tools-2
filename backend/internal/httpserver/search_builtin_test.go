@@ -115,6 +115,14 @@ func TestMixedBuiltinAndExternalSearchDownloadWithoutPython(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		response := nativeJSONRequest(handler, "POST", "/api/v1/downloads/resource", token, `{"resourceId":"`+resource.ID+`"}`)
+		if response.Code != 501 || downloads != 0 || !strings.Contains(response.Body.String(), "minimum seeding policy") {
+			t.Fatal(response.Code, response.Body.String())
+		}
+	}
+	// Keep the real submission assertion for a source without known positive
+	// requirements; known tracker constraints must not silently disappear.
+	for i := 0; i < 2; i++ {
+		response := nativeJSONRequest(handler, "POST", "/api/v1/downloads/resource", token, `{"resourceId":"`+external.ID+`"}`)
 		if response.Code != 200 {
 			t.Fatal(response.Code, response.Body.String())
 		}

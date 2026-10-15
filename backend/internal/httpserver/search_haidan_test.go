@@ -14,7 +14,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
-func TestHaiDanNativeSearchAPIUsesCatalog(t *testing.T) {
+func TestHaiDanNativeSearchAPIUsesCatalogAndRetainsUnsupportedSeedingPolicy(t *testing.T) {
 	adds, fetches := 0, 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Hostname() == "qb.local" {
@@ -77,13 +77,17 @@ func TestHaiDanNativeSearchAPIUsesCatalog(t *testing.T) {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	id := payload.Data.Items[0].Resources[0].ID
+	resource := payload.Data.Items[0].Resources[0]
+	if (resource.MinimumSeedTime == nil || *resource.MinimumSeedTime <= 0) && (resource.MinimumRatio == nil || *resource.MinimumRatio <= 0) {
+		t.Fatal("catalog seeding policy lost", resource)
+	}
 	for i := 0; i < 2; i++ {
 		response = nativeJSONRequest(handler, "POST", "/api/v1/downloads/resource", token, `{"resourceId":"`+id+`"}`)
-		if response.Code != 200 {
+		if response.Code != 501 || !strings.Contains(response.Body.String(), "minimum seeding policy") {
 			t.Fatal(response.Code, response.Body.String())
 		}
 	}
-	if adds != 1 || fetches != 1 {
+	if adds != 0 || fetches != 0 {
 		t.Fatal(adds, fetches)
 	}
 }

@@ -68,12 +68,15 @@ func (service downloadService) addSiteLink(response http.ResponseWriter, request
 	var id string
 	var handled bool
 	if validMagnet(string(contents)) {
-		id, handled, err = service.nativeAddMagnet(ctx, string(contents))
+		id, handled, err = service.submitManual(ctx, request, string(contents), nil, nil, downloadAddOptions{}, "", "站点链接")
 	} else {
-		id, handled, err = service.nativeAddTorrent(ctx, contents)
+		id, handled, err = service.submitManual(ctx, request, "", contents, nil, downloadAddOptions{}, "", "站点链接")
 	}
 	if !handled {
 		writeAPIError(response, http.StatusNotImplemented, 501, "downloader type is not migrated")
+		return
+	}
+	if manualSubmissionError(response, err) {
 		return
 	}
 	if errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, aria2.ErrConfiguration) {
