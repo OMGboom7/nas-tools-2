@@ -39,6 +39,7 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
+	Download              *organization.DownloadOrigin       `json:"-"`
 	Sync                  *organization.SyncOrigin           `json:"-"`
 	LegacyTargetOverride  bool                               `json:"-"`
 	LegacyRename          *organization.LegacyRenameOptions  `json:"-"`
@@ -320,7 +321,15 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if input.Sync != nil && input.Sync.Record.Rename == 1 {
 		scanner = organization.ScanDirectory
 	}
-	scan, err := scanner(ctx, source.Path, input.Path)
+	var scan organization.ScanResult
+	if input.Download != nil {
+		if input.Path != "." || input.Download.SourceRoot != sourcePath || input.Download.SourceID != source.ID {
+			return fail(422, "download completion source authority changed")
+		}
+		scan, err = organization.ScanSelected(ctx, sourcePath, input.Download.Files)
+	} else {
+		scan, err = scanner(ctx, source.Path, input.Path)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
@@ -358,7 +367,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	media := objectValue(snapshot["media"])
 	sourceInfo, e1 := os.Stat(sourcePath)
 	var syncRules directSyncRules
-	if input.Sync != nil {
+	if input.Sync != nil || input.Download != nil {
 		syncRules, err = compileDirectSyncRules(media)
 		if err != nil {
 			return fail(422, "invalid sync ignore rule")
@@ -371,6 +380,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
 	result.definition.Unknown = unknown
 	result.definition.Sync = input.Sync
+	result.definition.Download = input.Download
 	result.definition.LegacyTargetOverride = input.LegacyTargetOverride
 	result.definition.LegacyRename = input.LegacyRename
 	result.definition.LegacySelection = input.LegacySelection
@@ -409,8 +419,8 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			return fail(504, "organization preview was cancelled or timed out")
 		}
 		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Identity: file.Identity, Status: "unmatched"}
-		if input.Sync != nil {
-			ignored, err := syncRules.ignored(ctx, filepath.Join(input.Sync.Record.Source, file.Path))
+		if input.Sync != nil || input.Download != nil {
+			ignored, err := syncRules.ignored(ctx, filepath.Join(source.Path, file.Path))
 			if err != nil {
 				return fail(422, "sync ignore matching failed; no execution")
 			}

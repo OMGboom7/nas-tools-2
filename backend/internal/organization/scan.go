@@ -111,6 +111,41 @@ func ScanDirectory(ctx context.Context, base, selected string) (ScanResult, erro
 	return scan(ctx, base, selected, false, true)
 }
 
+// ScanSelected never walks the shared download directory. Even unsupported
+// side files remain bound to the reviewed snapshot, but are not guessed media.
+func ScanSelected(ctx context.Context, base string, expected []File) (ScanResult, error) {
+	result := ScanResult{Files: []File{}}
+	if len(expected) == 0 || len(expected) > 1000 {
+		return result, ErrLimit
+	}
+	seen := map[string]bool{}
+	for _, file := range expected {
+		if seen[file.Path] {
+			return ScanResult{}, ErrPath
+		}
+		seen[file.Path] = true
+		scan, err := ScanAll(ctx, base, file.Path)
+		if err != nil {
+			return ScanResult{}, err
+		}
+		if len(scan.Files) != 1 {
+			return ScanResult{}, ErrPath
+		}
+		actual := scan.Files[0]
+		if actual.Path != file.Path || actual.Identity != file.Identity || actual.Size != file.Size || actual.Modified != file.Modified {
+			return ScanResult{}, ErrPath
+		}
+		actual.Kind = FileKind(actual.Path)
+		if actual.Kind == "" {
+			result.Skipped++
+			continue
+		}
+		result.Files = append(result.Files, actual)
+	}
+	sort.Slice(result.Files, func(i, j int) bool { return result.Files[i].Path < result.Files[j].Path })
+	return result, nil
+}
+
 func scan(ctx context.Context, base, selected string, all, shallow bool) (ScanResult, error) {
 	result := ScanResult{Files: []File{}}
 	if ctx.Err() != nil {

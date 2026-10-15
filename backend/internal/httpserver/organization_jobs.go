@@ -134,6 +134,14 @@ func (api organizationAPI) validateJob(ctx context.Context, job organization.Job
 	if err := api.validateJobConfiguration(ctx, job); err != nil {
 		return err
 	}
+	if err := api.jobs.VerifyDownload(ctx, job); err != nil {
+		return err
+	}
+	if job.Definition.Download != nil {
+		if err := api.validateDownloadJob(ctx, job); err != nil {
+			return err
+		}
+	}
 	if err := api.jobs.VerifyUnknown(ctx, job); err != nil {
 		return err
 	}
@@ -235,6 +243,14 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	if job.Definition.Mode == "move" && (action == "execute" || action == "resume-move" || action == "resume-publication") && !input.ConfirmSourceRemoval {
 		writeAPIError(w, 400, 400, "separate source-removal confirmation is required for moving files")
 		return
+	}
+	if job.Download != nil {
+		batchGuard, err := api.jobs.AcquireJob(ctx, "download-completion:"+organization.DownloadTaskKey(job.Download.DownloaderID, job.Download.Task.ID))
+		if err != nil {
+			writeOrganizationError(w, err)
+			return
+		}
+		defer batchGuard.Close()
 	}
 	guard, err := api.jobs.AcquireJob(ctx, job.ID)
 	if err != nil {

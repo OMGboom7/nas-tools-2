@@ -92,6 +92,7 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	Download              *DownloadOrigin           `json:"download,omitempty"`
 	Sync                  *SyncOrigin               `json:"sync,omitempty"`
 	LegacyTargetOverride  bool                      `json:"legacyTargetOverride,omitempty"`
 	LegacyRename          *LegacyRenameOptions      `json:"legacyRename,omitempty"`
@@ -139,6 +140,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	Download             *DownloadOrigin           `json:"download,omitempty"`
 	AutomaticGeneration  string                    `json:"-"`
 	Sync                 *SyncOrigin               `json:"sync,omitempty"`
 	LegacyTargetOverride bool                      `json:"legacyTargetOverride,omitempty"`
@@ -259,6 +261,9 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 	if err := verifySyncRecord(ctx, tx, d); err != nil {
 		return "", err
 	}
+	if err := verifyDownloadDefinition(ctx, tx, d, true); err != nil {
+		return "", err
+	}
 	if d.Sync != nil && d.Sync.Record.Rename == 0 {
 		for _, entry := range d.Entries {
 			exists, err := syncRecorded(ctx, tx, d, entry.Source)
@@ -361,6 +366,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	job.LegacyRename = job.Definition.LegacyRename
 	job.LegacyTargetOverride = job.Definition.LegacyTargetOverride
 	job.Sync = job.Definition.Sync
+	job.Download = job.Definition.Download
 	if job.Definition.History != nil {
 		job.HistoryRecordID = job.Definition.History.ID
 	}
@@ -618,6 +624,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if err := verifySyncRecord(ctx, tx, job.Definition); err != nil {
 		return err
 	}
+	if err := verifyDownloadDefinition(ctx, tx, job.Definition, false); err != nil {
+		return err
+	}
 	if job.AutomaticGeneration != "" {
 		if err := verifyMonitorControl(ctx, tx, job.AutomaticGeneration); err != nil {
 			return err
@@ -669,6 +678,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 		}
 		source, target := filepath.Join(job.Definition.SourceRoot, item.Source), filepath.Join(job.Definition.TargetRoot, item.Target)
 		origin := "手动整理"
+		if job.Definition.Download != nil {
+			origin = "下载完成整理"
+		}
 		if job.Definition.Sync != nil {
 			origin = "目录同步"
 		}

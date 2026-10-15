@@ -707,6 +707,44 @@ export type SyncConfigReview = { action: string; actor: string; before: Organiza
 export type SyncConfigReceipt = { id: string; review: SyncConfigReview; after: OrganizationSyncRecord[]; created: string; restoreId?: string };
 export type SyncMonitorInput = { ids: string[]; includeExisting: boolean };
 export type DownloadCompletionInput = { downloaderId: string; taskId: string };
+export type DownloadOrganizationOrigin = { batchId: string; downloaderId: string; downloaderName: string; downloaderType: string; actor: string; sourceRoot: string; task: DownloadCompletionReview["task"] };
+export type DownloadOrganizationReview = { completion: DownloadCompletionReview; plans: OrganizationPlan[]; omitted: DownloadCompletionReview["files"]; fingerprint: string };
+export type DownloadOrganizationBatch = { id: string; origin: DownloadOrganizationOrigin; fingerprint: string; state: string; reason?: string; jobs: string[]; omitted: DownloadCompletionReview["files"]; created: string; resultProof?: string; expected: number; mode: string };
+export type DownloadResultReview = { batchId: string; actor: string; operation: string; beforeLabels: string[]; afterLabels: string[]; needsExclusiveLabels: boolean; fingerprint: string };
+export type DownloadBatchConsent = { confirmSourceRemoval?: boolean; confirmTaskStopped?: boolean; confirmTaskRemoval?: boolean; confirmExclusiveLabels?: boolean };
+export async function previewDownloadOrganization(token: string, input: DownloadCompletionInput): Promise<DownloadOrganizationReview> {
+  const result = await readResponse<DownloadOrganizationReview>(await fetch("/api/v1/organization/downloads/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  if (!result.success || result.code !== 0 || !result.data?.plans?.length || !/^[a-f0-9]{64}$/.test(result.data.fingerprint)) throw new ApiError(result.message || "下载整理范围无法核实", result.code);
+  return result.data;
+}
+export async function saveDownloadOrganization(token: string, input: DownloadCompletionInput, fingerprint: string, confirm = false, confirmOldExecutorsStopped = false, confirmOmitted = false): Promise<DownloadOrganizationBatch> {
+  if (!confirm || !confirmOldExecutorsStopped || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("先审核计划并确认旧执行器实际停止；保存不执行", 400);
+  const result = await readResponse<DownloadOrganizationBatch>(await fetch("/api/v1/organization/downloads/batches", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm, confirmOldExecutorsStopped, confirmOmitted }) }));
+  if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "保存响应未核实，请只读查询原批次，不重新保存或执行", result.code);
+  return result.data;
+}
+export async function findDownloadOrganization(token: string, input: DownloadCompletionInput): Promise<DownloadOrganizationBatch> {
+  const result = await readResponse<DownloadOrganizationBatch>(await fetch(`/api/v1/organization/downloads/batches?${new URLSearchParams(input)}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "未找到可核实的已保存批次", result.code);
+  return result.data;
+}
+export async function controlDownloadOrganization(token: string, id: string, action: "execute" | "reconcile" | "reconcile-result", confirm = false, consent: DownloadBatchConsent = {}): Promise<DownloadOrganizationBatch> {
+  if (!confirm) throw new ApiError("此操作需要单独确认", 400);
+  const result = await readResponse<DownloadOrganizationBatch>(await fetch(`/api/v1/organization/downloads/batches/${encodeURIComponent(id)}/${action}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm, ...consent }) }));
+  if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "操作响应未核实；只读刷新批次和任务，不自动重试", result.code);
+  return result.data;
+}
+export async function reviewDownloadOrganizationResult(token: string, id: string): Promise<DownloadResultReview> {
+  const result = await readResponse<DownloadResultReview>(await fetch(`/api/v1/organization/downloads/batches/${encodeURIComponent(id)}/result-review`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: "{}" }));
+  if (!result.success || result.code !== 0 || !result.data?.fingerprint) throw new ApiError(result.message || "结果回写范围无法核实", result.code);
+  return result.data;
+}
+export async function finalizeDownloadOrganization(token: string, id: string, fingerprint: string, confirm = false, consent: DownloadBatchConsent = {}): Promise<DownloadOrganizationBatch> {
+  if (!confirm || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("先审核结果回写，并单独确认标签或任务记录操作", 400);
+  const result = await readResponse<DownloadOrganizationBatch>(await fetch(`/api/v1/organization/downloads/batches/${encodeURIComponent(id)}/finalize`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm, fingerprint, ...consent }) }));
+  if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "结果回写未核实；只读查询或明确核对，不自动重发", result.code);
+  return result.data;
+}
 export type DownloadCompletionReview = { reviewOnly: true; downloaderId: string; downloaderName: string; downloaderType: string; mode: string; actor: string; task: { id: string; name: string; directory: string; state: string; complete: boolean; labelsKnown: boolean; labels: string[]; files: Array<{ path: string; size: number; selected: boolean; complete: boolean }> }; sourceRoot: string; rootIdentity: string; location: { root: string; directory: string; mapped: boolean }; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }>; eligible: boolean; reasons: string[]; fingerprint: string };
 export async function reviewDownloadCompletion(token: string, input: DownloadCompletionInput): Promise<DownloadCompletionReview> {
   const result = await readResponse<DownloadCompletionReview>(await fetch("/api/v1/organization/downloads/completion/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
@@ -715,7 +753,7 @@ export async function reviewDownloadCompletion(token: string, input: DownloadCom
 }
 export type SyncMonitorReview = { lease: { ids: string[]; actor: string; includeExisting: boolean }; records: OrganizationSyncRecord[]; snapshots: Array<{ configId: string; scope: string; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }> }>; fingerprint: string; needsSourceRemoval: boolean };
 export type SyncMonitorStatus = { control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[]; includeExisting?: boolean; sourceRemoval?: boolean } }; events: Array<{ key: string; generation: string; snapshot: { configId: string; scope: string }; firstSeen: string; state: string; jobs: string[]; reason?: string; updated: string }> };
-export type OrganizationJob = { id: string; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
+export type OrganizationJob = { id: string; download?: DownloadOrganizationOrigin; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 
 export async function getOrganizationHistory(token: string, page = 1, keyword = ""): Promise<OrganizationHistoryData> {
   const result = await readResponse<OrganizationHistoryData>(await fetch(`/api/v1/organization/history?${new URLSearchParams({ page: String(page), keyword })}`, { headers: { Authorization: token } }));

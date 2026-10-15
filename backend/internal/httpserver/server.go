@@ -308,6 +308,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, records: organizationRecords, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("POST /api/v1/organization/downloads/completion/review", organizer.serveDownloadCompletionReview)
+	mux.HandleFunc("POST /api/v1/organization/downloads/plan", organizer.serveDownloadPlan)
+	mux.HandleFunc("POST /api/v1/organization/downloads/batches", organizer.serveDownloadBatchSave)
+	mux.HandleFunc("GET /api/v1/organization/downloads/batches", organizer.serveDownloadBatchFind)
+	mux.HandleFunc("GET /api/v1/organization/downloads/batches/{id}", organizer.serveDownloadBatchGet)
+	mux.HandleFunc("POST /api/v1/organization/downloads/batches/{id}/{action}", organizer.serveDownloadBatchAction)
 	mux.HandleFunc("GET /api/v1/organization/sync", organizer.serveSyncRecords)
 	mux.HandleFunc("GET /api/v1/organization/sync/monitor", organizer.serveMonitorStatus)
 	mux.HandleFunc("POST /api/v1/organization/sync/monitor/review", organizer.serveMonitorReview)

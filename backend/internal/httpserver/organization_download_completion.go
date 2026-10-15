@@ -17,6 +17,7 @@ type downloadCompletionInput struct {
 	TaskID       string `json:"taskId"`
 }
 type downloadCompletionReview struct {
+	configDigest   string
 	ReviewOnly     bool                        `json:"reviewOnly"`
 	DownloaderID   string                      `json:"downloaderId"`
 	DownloaderName string                      `json:"downloaderName"`
@@ -204,6 +205,7 @@ func (api organizationAPI) reviewDownloadCompletion(ctx context.Context, input d
 		Review downloadCompletionReview
 		Config string
 	}{review, organization.Digest(item)})
+	review.configDigest = organization.Digest(item)
 	return review, nil
 }
 

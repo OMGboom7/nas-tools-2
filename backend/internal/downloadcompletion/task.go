@@ -67,7 +67,7 @@ func Relative(s string) bool {
 }
 func Normalize(task Task) (Task, error) {
 	task.Directory = strings.TrimRight(task.Directory, "/")
-	if task.ID == "" || !validText(task.ID, 128) || !validText(task.Name, 4096) || task.Name == "" || !Absolute(task.Directory) || !validText(task.State, 64) || task.State == "" || len(task.Files) == 0 || len(task.Files) > 1000 || len(task.Labels) > 64 {
+	if task.ID == "" || !validText(task.ID, 128) || !validText(task.Name, 4096) || task.Name == "" || !Absolute(task.Directory) || !validText(task.State, 64) || task.State == "" || len(task.Files) == 0 || len(task.Files) > 1000 || len(task.Labels) > 65 {
 		return Task{}, ErrManifest
 	}
 	task.ID = strings.ToLower(task.ID)
@@ -97,6 +97,9 @@ func Normalize(task Task) (Task, error) {
 		labels[label] = true
 	}
 	sort.Strings(task.Labels)
+	if len(task.Labels) == 65 && !labels["已整理"] {
+		return Task{}, ErrManifest
+	}
 	return task, nil
 }
 func (task Task) HasLabel(label string) bool {

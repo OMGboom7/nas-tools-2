@@ -17,14 +17,15 @@ const completionHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const completionGID = "0123456789abcdef"
 
 type completionTestOptions struct {
-	kind      string
-	modern    bool
-	labels    []string
-	state     string
-	directory string
-	filePath  string
-	size      int
-	readHook  func(int)
+	allowMetadata bool
+	kind          string
+	modern        bool
+	labels        []string
+	state         string
+	directory     string
+	filePath      string
+	size          int
+	readHook      func(int)
 }
 
 func completionHTTPFixture(t *testing.T, opts *completionTestOptions) (*subscriptionRunFixture, string, string) {
@@ -55,8 +56,12 @@ func completionHTTPFixture(t *testing.T, opts *completionTestOptions) (*subscrip
 		t.Fatal(err)
 	}
 	reads := 0
+	metadataTransport := f.transport
 	f.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Hostname() != "completion.test" {
+			if opts.allowMetadata {
+				return metadataTransport.RoundTrip(r)
+			}
 			t.Fatal("metadata/legacy request", r.URL)
 		}
 		if strings.HasSuffix(r.URL.Path, "/auth/login") {
@@ -117,7 +122,11 @@ func completionHTTPFixture(t *testing.T, opts *completionTestOptions) (*subscrip
 				}
 				return a
 			}
-			task := map[string]any{key("hashString", "hash_string"): completionHash, "name": "display-only", key("downloadDir", "download_dir"): opts.directory, key("percentDone", "percent_done"): 1, key("metadataPercentComplete", "metadata_percent_complete"): 1, key("leftUntilDone", "left_until_done"): 0, "status": 6, "error": 0, "labels": opts.labels, "files": []any{map[string]any{"name": opts.filePath, "length": opts.size, key("bytesCompleted", "bytes_completed"): opts.size}}, key("fileStats", "file_stats"): []any{map[string]any{"wanted": true, key("bytesCompleted", "bytes_completed"): opts.size}}}
+			state := 6
+			if opts.state == "stopped" {
+				state = 0
+			}
+			task := map[string]any{key("hashString", "hash_string"): completionHash, "name": "display-only", key("downloadDir", "download_dir"): opts.directory, key("percentDone", "percent_done"): 1, key("metadataPercentComplete", "metadata_percent_complete"): 1, key("leftUntilDone", "left_until_done"): 0, "status": state, "error": 0, "labels": opts.labels, "files": []any{map[string]any{"name": opts.filePath, "length": opts.size, key("bytesCompleted", "bytes_completed"): opts.size}}, key("fileStats", "file_stats"): []any{map[string]any{"wanted": true, key("bytesCompleted", "bytes_completed"): opts.size}}}
 			env := map[string]any{"result": "success", "arguments": map[string]any{"torrents": []any{task}}}
 			if opts.modern {
 				env = map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"torrents": []any{task}}}

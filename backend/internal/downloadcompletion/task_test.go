@@ -105,3 +105,22 @@ func TestCompletionIDValidation(t *testing.T) {
 		t.Fatal("ID width")
 	}
 }
+
+func TestOrganizedMarkerHasReservedLabelBudget(t *testing.T) {
+	v := validTask()
+	v.Labels = nil
+	for i := 0; i < 64; i++ {
+		v.Labels = append(v.Labels, strings.Repeat("x", i+1))
+	}
+	if _, err := Normalize(v); err != nil {
+		t.Fatal(err)
+	}
+	v.Labels = append(v.Labels, "已整理")
+	if _, err := Normalize(v); err != nil {
+		t.Fatal("cannot verify just-written marker", err)
+	}
+	v.Labels[64] = "extra-user-label"
+	if _, err := Normalize(v); err == nil {
+		t.Fatal("label bound bypass")
+	}
+}

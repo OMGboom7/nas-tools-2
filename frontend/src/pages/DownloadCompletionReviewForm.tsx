@@ -24,6 +24,6 @@ export function DownloadCompletionReviewForm({ token, enabled, onSessionExpired 
     <fieldset disabled={!enabled || busy}><label>下载器配置 ID<input value={downloaderId} inputMode="numeric" maxLength={20} onChange={(e) => { invalidate(); setDownloaderID(e.target.value); }} /></label><label>任务完整 Hash／GID<input value={taskId} maxLength={128} onChange={(e) => { invalidate(); setTaskID(e.target.value); }} /></label><button type="button" disabled={!downloaderId || !taskId} onClick={() => void inspect()}>只读核验完成任务</button></fieldset>
     {error && <p role="alert">{error}</p>}
     {review && <div><p>{review.downloaderName} · {review.downloaderType} · {review.task.name} · {review.task.state} · 原方式 {review.mode}</p><p>{review.eligible ? "本次完成证据及本地静默检查可用，但不是执行授权。" : "尚不满足整理条件。"} 这是单次快照，不证明后续文件不变，也不证明媒体已入库。</p><ul>{review.reasons.map((reason, i) => <li key={i}>{reason}</li>)}</ul><p>任务保存目录 {review.task.directory} → 本地 {review.location.directory}（{review.location.mapped ? "已按配置映射" : "未替换，仍限定在配置内本地根"}）；实际来源根 {review.sourceRoot}。只核对该任务明确选中的 {review.files.length} 个文件，不扫描同目录其他任务。</p><ul>{review.files.map((file) => <li key={file.path}>{file.path} · {file.kind} · {file.size} 字节</li>)}</ul></div>}
-    <p>此入口不建整理任务、不搬文件、不改下载器标签、不停种或删种。完成证据接入持久整理、结果回执与后台调度仍在迁移中；不会因审核或刷新自动执行。</p>
+    <p>此证据入口只读，不建任务或执行。实际整理请使用独立的“下载完成 → 持久整理”入口，后台完成调度仍在迁移中；不会因审核或刷新自动执行。</p>
   </section>;
 }
