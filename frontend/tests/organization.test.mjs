@@ -5,7 +5,52 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/api/client.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord, previewRecordRename, executeRecordRename, OrganizationRenameError, getDirectSyncRecords, previewDirectSync, createDirectSync } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationUnknown, getOrganizationHistory, getOrganizationJob, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, reviewUnknownDelete, deleteUnknownRecord, getUnknownDeletions, restoreUnknownRecord, previewRecordRename, executeRecordRename, OrganizationRenameError, getDirectSyncRecords, previewDirectSync, createDirectSync, reviewSyncConfig, applySyncConfig, getSyncConfigReceipts } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+
+test("sync config review is readonly and keeps large IDs and separate job invalidation", async (t) => {
+  const input = { action: "status", id: "9223372036854775807", patch: { enabled: false } }; let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++; assert.equal(options.headers.Authorization, "token");
+    assert.equal(path, calls === 1 ? "/api/v1/organization/sync/config/review" : "/api/v1/organization/sync/config/apply");
+    assert.deepEqual(JSON.parse(options.body), calls === 1 ? input : { ...input, fingerprint: "a".repeat(64), confirm: true, confirmInvalidateJobs: true });
+    return new Response(JSON.stringify({ code: 0, success: true, data: calls === 1 ? { fingerprint: "a".repeat(64), jobs: [{ id: "pending" }] } : { id: "receipt" } }));
+  });
+  assert.equal((await reviewSyncConfig("token", input)).jobs[0].id, "pending");
+  await assert.rejects(applySyncConfig("token", input, "a".repeat(64)));
+  assert.equal(calls, 1);
+  assert.equal((await applySyncConfig("token", input, "a".repeat(64), true, true)).id, "receipt");
+  assert.equal(calls, 2);
+});
+
+test("sync config errors never repeat mutations or automatically undo or execute files", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path) => { calls++; assert.equal(path, "/api/v1/organization/sync/config/apply"); return new Response(JSON.stringify({ code: 409, success: false, message: "changed" }), { status: 409 }); });
+  await assert.rejects(applySyncConfig("token", { action: "delete", id: "7" }, "b".repeat(64), true));
+  assert.equal(calls, 1);
+});
+
+test("sync config undo starts with review and receipt listing only reads", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    calls++;
+    if (calls === 1) { assert.equal(path, "/api/v1/organization/sync/config/receipts"); assert.equal(options.method, undefined); return new Response(JSON.stringify({ code: 0, success: true, data: [{ id: "saved" }] })); }
+    assert.equal(path, "/api/v1/organization/sync/config/review"); assert.deepEqual(JSON.parse(options.body), { action: "restore", restoreId: "saved" });
+    return new Response(JSON.stringify({ code: 0, success: true, data: { fingerprint: "c".repeat(64), jobs: [] } }));
+  });
+  assert.equal((await getSyncConfigReceipts("token"))[0].id, "saved");
+  await reviewSyncConfig("token", { action: "restore", restoreId: "saved" });
+  assert.equal(calls, 2);
+});
+
+const syncState = ts.transpileModule(readFileSync(new URL("../src/pages/syncConfigState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+const { buildSyncConfigPatch } = await import(`data:text/javascript;base64,${Buffer.from(syncState.outputText).toString("base64")}`);
+test("sync config edits send only changed fields and preserve untouched NULL/legacy modes", () => {
+  const original = { id: "7", source: "/source", dest: "/target", unknown: "", mode: "复制", note: "", enabled: 1, rename: 0, compatibility: 0, locating: 0, nullFields: ["note", "compatibility"] };
+  const draft = { source: original.source, dest: original.dest, unknown: "", mode: original.mode, note: "", enabled: true, rename: false, compatibility: false, locating: false };
+  assert.deepEqual(buildSyncConfigPatch(original, draft), {});
+  assert.deepEqual(buildSyncConfigPatch(original, { ...draft, enabled: false }), { enabled: false });
+  assert.deepEqual(buildSyncConfigPatch(original, { ...draft, note: "new" }), { note: "new" });
+});
 
 test("direct sync reads exact configuration IDs then previews and saves without execution", async (t) => {
   const id = "9223372036854775807"; const fingerprint = "f".repeat(64); let calls = 0;

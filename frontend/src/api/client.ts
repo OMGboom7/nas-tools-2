@@ -701,6 +701,10 @@ export type OrganizationLegacySelection = OrganizationEpisodeRule & { kind?: str
 export type OrganizationLegacyRenameOptions = { expandedScope?: boolean; preserveUnknown?: boolean };
 export type OrganizationSyncRecord = { id: string; source: string; dest: string; unknown: string; mode: string; compatibility: number; rename: number; enabled: number; locating: number; note: string; nullFields?: string[] };
 export type OrganizationSyncOrigin = { record: OrganizationSyncRecord; scope: string; scopeIdentity: string; graphDigest: string; actor: string };
+export type SyncConfigPatch = Partial<Pick<OrganizationSyncRecord, "source" | "dest" | "unknown" | "mode" | "note">> & { enabled?: boolean; rename?: boolean; compatibility?: boolean; locating?: boolean };
+export type SyncConfigInput = { action: "create" | "update" | "delete" | "status" | "restore"; id?: string; patch?: SyncConfigPatch; restoreId?: string };
+export type SyncConfigReview = { action: string; actor: string; before: OrganizationSyncRecord[]; after: OrganizationSyncRecord[]; jobs: Array<{ id: string; configId: string; mode: string }>; fingerprint: string; restoreId?: string };
+export type SyncConfigReceipt = { id: string; review: SyncConfigReview; after: OrganizationSyncRecord[]; created: string; restoreId?: string };
 export type OrganizationJob = { id: string; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 
 export async function getOrganizationHistory(token: string, page = 1, keyword = ""): Promise<OrganizationHistoryData> {
@@ -1091,6 +1095,22 @@ export async function getDirectSyncRecords(token: string): Promise<OrganizationS
   const result = await readResponse<{ items: OrganizationSyncRecord[] }>(await fetch("/api/v1/organization/sync", { headers: { Authorization: token } }));
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "同步配置读取失败", result.code);
   return result.data.items;
+}
+export async function reviewSyncConfig(token: string, input: SyncConfigInput): Promise<SyncConfigReview> {
+  const result = await readResponse<SyncConfigReview>(await fetch("/api/v1/organization/sync/config/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  if (!result.success || result.code !== 0 || !result.data?.fingerprint) throw new ApiError(result.message || "同步配置审核失败", result.code);
+  return result.data;
+}
+export async function applySyncConfig(token: string, input: SyncConfigInput, fingerprint: string, confirmed = false, confirmInvalidateJobs = false): Promise<SyncConfigReceipt> {
+  if (!confirmed || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("须先审核并明确确认配置变化", 400);
+  const result = await readResponse<SyncConfigReceipt>(await fetch("/api/v1/organization/sync/config/apply", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm: true, confirmInvalidateJobs }) }));
+  if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "配置保存回执未核实，请只刷新回执，不自动重发", result.code);
+  return result.data;
+}
+export async function getSyncConfigReceipts(token: string): Promise<SyncConfigReceipt[]> {
+  const result = await readResponse<SyncConfigReceipt[]>(await fetch("/api/v1/organization/sync/config/receipts", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "配置回执读取失败", result.code);
+  return result.data;
 }
 export async function previewDirectSync(token: string, id: string, path = "."): Promise<OrganizationPlan> {
   const result = await readResponse<OrganizationPlan>(await fetch("/api/v1/organization/sync/plan", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ id, path }) }));
