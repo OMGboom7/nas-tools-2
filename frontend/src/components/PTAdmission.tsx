@@ -33,8 +33,8 @@ export function PTAdmission({ token, onSessionExpired }: { token: string; onSess
       if (action === "apply") { try { const next = await getPTAdmission(token, target); if (current === generation.current) setStatus(next); } catch { /* never repeat consent or downloader actions */ } }
     } finally { if (current === generation.current) { inFlight.current = false; setBusy(false); } }
   }
-  return <section aria-label="Transmission PT 自动接管授权"><h2>Transmission PT 自动接管授权（管理员）</h2>
-    <p>默认关闭，按准确下载器配置启用。覆盖搜索下种、订阅搜索与订阅 RSS 中带正值最低要求的新任务。qBittorrent 和不携带这些元数据的其他来源仍未开放；此操作本身不向下载器发送写入。</p>
+  return <section aria-label="PT 自动接管授权"><h2>qBittorrent / Transmission PT 自动接管授权（管理员）</h2>
+    <p>默认关闭，按准确下载器配置启用。覆盖搜索下种、订阅搜索与订阅 RSS 中带正值最低要求的新任务。不携带这些元数据的其他来源不会因此获得此类接管能力；此操作本身不向下载器发送写入。</p>
     <fieldset disabled={busy}><label>准确下载器 ID<input inputMode="numeric" value={id} onChange={(e) => { setId(e.target.value); setStatus(null); reset(); }} /></label>
       <label><input type="checkbox" checked={enabled} onChange={(e) => { setEnabled(e.target.checked); reset(); }} />本次目标：启用接管（取消勾选表示撤销后续接管）</label>
       <button type="button" onClick={() => void operate("read")}>只读刷新接管授权</button><button type="button" onClick={() => void operate("review")}>只读审核本次变更</button>
@@ -45,8 +45,8 @@ export function PTAdmission({ token, onSessionExpired }: { token: string; onSess
       <label><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />确认本次审核的准确下载器配置与变更范围</label>
       {review.enabled && <><label><input type="checkbox" checked={oldStopped} onChange={(e) => setOldStopped(e.target.checked)} />已实际停止旧 Go / Python 执行器</label>
         <label><input type="checkbox" checked={hold} onChange={(e) => setHold(e.target.checked)} />另行确认未知最低要求或 HR 会持续拦截停止、删除、移动，当前没有解除接口</label>
-        <label><input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />另行授权这类新任务禁用分享率及空闲自动停种上限；所选上限必须为 0，否则拒绝，不会静默覆盖</label></>}
-      <button type="button" disabled={!confirm || review.enabled && (review.type !== "transmission" || !oldStopped || !hold || !unlimited)} onClick={() => void operate("apply")}>确认仅更新接管授权</button>
+        <label><input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />另行授权这类新任务禁用自动做种上限（qB：分享率、累计与空闲时间；TR：分享率与空闲时间）；所选上限必须为 0，否则拒绝，不会静默覆盖</label></>}
+      <button type="button" disabled={!confirm || review.enabled && (review.type !== "transmission" && review.type !== "qbittorrent" || !oldStopped || !hold || !unlimited)} onClick={() => void operate("apply")}>确认仅更新接管授权</button>
     </fieldset>}
   </section>;
 }

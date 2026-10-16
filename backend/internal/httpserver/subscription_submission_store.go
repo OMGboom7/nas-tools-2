@@ -293,7 +293,7 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 			return errSubscriptionSubmissionConflict
 		}
 		profileDigest = storedProof.ProfileDigest
-		if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, storedProof.ProfileDigest); err != nil {
+		if err := downloaderconfig.VerifyDownloadProfile(ctx, tx, storedProof.ProfileDigest); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO RSS_TORRENTS(TORRENT_NAME,ENCLOSURE,TYPE,TITLE,YEAR,SEASON,EPISODE) VALUES (?,?,?,?,?,?,?)`, candidate.Title, candidate.resource.DownloadURL, kind, plan.raw["NAME"], plan.raw["YEAR"], plan.raw["SEASON"], subscriptionEpisodeString(candidate.Episodes)); err != nil {
@@ -341,7 +341,7 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 			return err
 		}
 	}
-	if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, profileDigest); err != nil {
+	if err := downloaderconfig.VerifyDownloadProfile(ctx, tx, profileDigest); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

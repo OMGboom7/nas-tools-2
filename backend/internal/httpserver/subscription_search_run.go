@@ -133,14 +133,14 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		}
 		options, err = download.preparePTSource(ctx, downloader, candidate.resource, options)
 		if err != nil {
-			return fail(501, "PT subscription source requires a configuration-scoped Transmission grant, no HR marker and zero automatic stop limits")
+			return fail(501, "PT subscription source requires a configuration-scoped qBittorrent/Transmission grant, no HR marker and zero automatic stop limits")
 		}
 		magnet, torrent, err := download.prepareSubscriptionTorrent(ctx, candidate)
 		if err != nil {
 			return fail(502, "subscription torrent could not be retrieved")
 		}
 		proof := newSubscriptionSubmissionProof(downloader, magnet, torrent)
-		proof.ProfileDigest = transmissionProfileFingerprint(downloader, proof.InfoHash, options)
+		proof.ProfileDigest = downloadProfileFingerprint(downloader, proof.InfoHash, options)
 		owner, err := service.reserveSubscriptionSubmission(ctx, kind, id, plan, candidate, proof)
 		if err != nil {
 			return fail(409, "subscription changed or resource is reserved; verify pending downloads before retrying")

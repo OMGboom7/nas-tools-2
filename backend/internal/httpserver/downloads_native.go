@@ -302,15 +302,17 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 	if item.ID == 0 {
 		return true, errors.New("default downloader is not configured")
 	}
-	if action == "stop" || action == "remove" {
+	if action == "stop" || action == "remove" || action == "start" && (item.Type == "qbittorrent" || item.Type == "transmission") {
 		guarded, close, e := service.seedingGuard(ctx, item.ID, id)
 		if e != nil {
 			return true, e
 		}
 		defer close()
 		ctx = guarded
-		if e := service.checkSeedingPolicy(ctx, item, id); e != nil {
-			return true, e
+		if action != "start" {
+			if e := service.checkSeedingPolicy(ctx, item, id); e != nil {
+				return true, e
+			}
 		}
 	}
 	var cfg map[string]any
@@ -320,9 +322,35 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 	host, port := text(cfg["host"]), text(cfg["port"])
 	switch item.Type {
 	case "qbittorrent":
+		if !qbittorrent.ValidHash(id) {
+			return true, qbittorrent.ErrConfiguration
+		}
+		if service.manualGuards != nil && *service.manualGuards != nil {
+			guard, e := (*service.manualGuards).AcquireJob(ctx, qbProfileGuard(item.ID, id))
+			if e != nil {
+				return true, downloaderconfig.ErrQbProfilePending
+			}
+			defer guard.Close()
+		}
 		c, e := qbittorrent.New(host, port, text(cfg["username"]), text(cfg["password"]), service.client.Transport)
 		if e != nil {
 			return true, e
+		}
+		p, e := service.downloaders.FindQbProfile(ctx, item.ID, id)
+		if e != nil && !errors.Is(e, downloaderconfig.ErrNotFound) {
+			return true, e
+		}
+		if e == nil {
+			if err := service.checkQbProfileReady(ctx, item, id); err != nil {
+				return true, err
+			}
+			if action == "start" {
+				state, e := c.Profile(ctx, id)
+				if e != nil || !p.Matches(state) {
+					return true, downloaderconfig.ErrQbProfilePending
+				}
+				return true, c.StartProfile(ctx, id)
+			}
 		}
 		return true, c.Control(ctx, id, action)
 	case "transmission":

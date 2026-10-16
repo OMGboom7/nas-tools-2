@@ -126,6 +126,26 @@ export type AuthSession = {
 };
 
 export type SeedingScope = { downloaderId: number; taskId: string };
+export type QbProfile = { id: string; fingerprint: string; state: string; created: string; updated: string; downloaderId: number; name: string; infoHash: string; seedingPolicyId: string; options: { SavePath: string; Category: string; Tags: string[]; Paused: boolean; UploadLimitKB: number; DownloadLimitKB: number } };
+export type QbProfileReview = { profile: QbProfile; current: { hash: string; version: string; state: string; directory: string; category: string; tags: string[]; ratioLimit: number; seedLimit: number; idleLimit: number; effectiveRatio: number; effectiveSeed: number; effectiveIdle: number; shareAction: string }; next: "configure" | "start" | "acknowledge"; actor: string; fingerprint: string };
+export async function getQbProfiles(token: string, page = 1): Promise<QbProfile[]> {
+  if (!Number.isInteger(page) || page < 1 || page > 10000) throw new ApiError("qB 回执页码无效", 400);
+  const result = await readResponse<QbProfile[]>(await fetch(`/api/v1/downloads/qbittorrent-profiles?page=${page}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !Array.isArray(result.data)) throw new ApiError(result.message || "qB 设置回执不可用", result.code);
+  return result.data;
+}
+export async function reviewQbProfile(token: string, id: string): Promise<QbProfileReview> {
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new ApiError("qB 回执身份无效", 400);
+  const result = await readResponse<QbProfileReview>(await fetch(`/api/v1/downloads/qbittorrent-profiles/${id}/review`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: "{}" }));
+  const data = result.data;
+  if (!result.success || result.code !== 0 || data?.profile?.id !== id || !/^qb:[a-f0-9]{64}$/.test(data.profile.fingerprint) || !/^[a-f0-9]{64}$/.test(data.profile.seedingPolicyId) || !/^[a-f0-9]{64}$/.test(data.fingerprint) || data.current?.hash !== data.profile.infoHash || !["configure", "start", "acknowledge"].includes(data.next)) throw new ApiError(result.message || "qB 原任务审核范围不可核实", result.code);
+  return data;
+}
+export async function recoverQbProfile(token: string, review: QbProfileReview, confirm = false, confirmSettings = false, confirmStart = false): Promise<void> {
+  if (!confirm || !/^[a-f0-9]{32}$/.test(review.profile.id) || !/^[a-f0-9]{64}$/.test(review.fingerprint) || !["configure", "start", "acknowledge"].includes(review.next) || review.next === "configure" && !confirmSettings || review.next === "start" && !confirmStart) throw new ApiError("需明确确认当前审核范围及设置/启动下一步", 400);
+  const result = await readResponse<QbProfile>(await fetch(`/api/v1/downloads/qbittorrent-profiles/${review.profile.id}/recover`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm, fingerprint: review.fingerprint, confirmSettings, confirmStart }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "qB 恢复响应不确定，请只读刷新，不重发或重新添加任务", result.code);
+}
 export type PTAdmissionGrant = { id: string; downloaderId: number; actor: string; created: string; enabled: boolean };
 export type PTAdmissionReview = { downloaderId: number; name: string; type: string; grant: PTAdmissionGrant | null; active: boolean; enabled: boolean; fingerprint: string; warning: string };
 function validatePTAdmissionId(id: number) { if (!Number.isSafeInteger(id) || id < 1) throw new ApiError("需准确下载器 ID", 400); }
@@ -143,7 +163,7 @@ export async function reviewPTAdmission(token: string, id: number, enabled: bool
 }
 export async function applyPTAdmission(token: string, review: PTAdmissionReview, confirm = false, confirmOldExecutorsStopped = false, confirmUnknownHold = false, confirmUnlimitedSeeding = false): Promise<void> {
   validatePTAdmissionId(review.downloaderId);
-  if (!confirm || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.enabled && (review.type !== "transmission" || !confirmOldExecutorsStopped || !confirmUnknownHold || !confirmUnlimitedSeeding)) throw new ApiError("需独立确认原范围、旧执行器停止、未知约束持续拦截及禁用自动停种上限", 400);
+  if (!confirm || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.enabled && (review.type !== "transmission" && review.type !== "qbittorrent" || !confirmOldExecutorsStopped || !confirmUnknownHold || !confirmUnlimitedSeeding)) throw new ApiError("需独立确认原范围、旧执行器停止、未知约束持续拦截及禁用自动停种上限", 400);
   const result = await readResponse<PTAdmissionGrant>(await fetch("/api/v1/downloads/pt-admission/apply", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ downloaderId: review.downloaderId, enabled: review.enabled, fingerprint: review.fingerprint, confirm, confirmOldExecutorsStopped, confirmUnknownHold, confirmUnlimitedSeeding }) }));
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "接管授权响应不确定；只读刷新，不自动重发", result.code);
 }

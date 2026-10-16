@@ -78,7 +78,7 @@ func TestPTAdmissionGrantIsConfigurationScopedCASRevocableAndPrivate(t *testing.
 	if loaded.ConfigDigest == bus.Hash(item) {
 		t.Fatal("grant rebound automatically")
 	}
-	item.Type = "qbittorrent"
+	item.Type = "aria2"
 	if _, err := s.Upsert(ctx, item); err != nil {
 		t.Fatal(err)
 	}

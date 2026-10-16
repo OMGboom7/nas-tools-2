@@ -71,7 +71,7 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 	}
 	options, err = service.preparePTSource(ctx, downloader, resource, options)
 	if err != nil {
-		writeAPIError(response, 501, 501, "tracker minimum seeding policy requires an enabled configuration-scoped Transmission grant, no HR marker and zero automatic stop limits; no submission attempted")
+		writeAPIError(response, 501, 501, "tracker minimum seeding policy requires an enabled configuration-scoped qBittorrent/Transmission grant, no HR marker and zero automatic stop limits; no submission attempted")
 		return
 	}
 	magnet, torrent, err := service.prepareNativeSearchTorrent(ctx, resource)

@@ -244,7 +244,7 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 		return fail(502, "submission downloader configuration is invalid")
 	}
 	if proof.ProfileDigest != "" {
-		if err := download.verifyTransmissionProfile(ctx, item, proof.InfoHash, proof.ProfileDigest); err != nil {
+		if err := download.verifyDownloadProfile(ctx, item, proof.InfoHash, proof.ProfileDigest); err != nil {
 			return fail(409, "original Transmission settings still require explicit review; no resubmission")
 		}
 	}

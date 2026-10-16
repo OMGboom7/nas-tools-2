@@ -32,6 +32,7 @@ type Client struct {
 
 // AddOptions applies per-torrent settings without changing client-wide defaults.
 type AddOptions struct {
+	ManagedPT        bool `json:"managedPT,omitempty"`
 	SavePath         string
 	Category         string
 	Tags             []string
@@ -249,6 +250,11 @@ func (client *Client) AddMagnetWithOptions(ctx context.Context, magnet string, o
 	if err := client.login(ctx); err != nil {
 		return err
 	}
+	if options.ManagedPT {
+		if err := client.preparePTForm(ctx, form); err != nil {
+			return err
+		}
+	}
 	contents, err := client.request(ctx, http.MethodPost, "torrents/add", form)
 	if err != nil {
 		return err
@@ -273,6 +279,11 @@ func (client *Client) AddTorrentWithOptions(ctx context.Context, torrent []byte,
 	}
 	if err := client.login(ctx); err != nil {
 		return err
+	}
+	if options.ManagedPT {
+		if err := client.preparePTForm(ctx, form); err != nil {
+			return err
+		}
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -322,6 +333,9 @@ func (client *Client) AddTorrentWithOptions(ctx context.Context, torrent []byte,
 }
 
 func (options AddOptions) values() (url.Values, error) {
+	if options.ManagedPT && (options.RatioLimit != 0 || options.SeedingTimeLimit != 0) {
+		return nil, ErrConfiguration
+	}
 	if len(options.SavePath) > 4096 || len(options.Category) > 256 || len(options.Tags) > 32 || options.UploadLimitKB < 0 || options.DownloadLimitKB < 0 || options.UploadLimitKB > 1<<30 || options.DownloadLimitKB > 1<<30 || options.RatioLimit < 0 || math.IsNaN(options.RatioLimit) || math.IsInf(options.RatioLimit, 0) || options.SeedingTimeLimit < 0 {
 		return nil, ErrConfiguration
 	}

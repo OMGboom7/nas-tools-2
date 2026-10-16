@@ -170,7 +170,7 @@ func (api rssItemDownloadAPI) serveHTTP(response http.ResponseWriter, request *h
 			writeJSON(response, http.StatusOK, map[string]any{"code": 1})
 			return
 		}
-		fp := transmissionProfileFingerprint(downloader, newSubscriptionSubmissionProof(downloader, magnet, torrent).InfoHash, options)
+		fp := downloadProfileFingerprint(downloader, newSubscriptionSubmissionProof(downloader, magnet, torrent).InfoHash, options)
 		if err := api.tasks.CompleteReservedManualDownload(ctx, taskID, article.Title, article.Year, article.Enclosure, downloader.Name, fp); err != nil {
 			writeAPIError(response, http.StatusBadGateway, 502, "RSS download succeeded but history could not be saved")
 			return

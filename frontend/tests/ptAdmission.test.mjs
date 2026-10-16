@@ -24,7 +24,7 @@ test("PT admission enabling requires independent scope, executor, unknown hold a
   await assert.rejects(applyPTAdmission("token", review, true));
   await assert.rejects(applyPTAdmission("token", review, true, true));
   await assert.rejects(applyPTAdmission("token", review, true, true, true));
-  await assert.rejects(applyPTAdmission("token", { ...review, type: "qbittorrent" }, true, true, true, true));
+  await assert.rejects(applyPTAdmission("token", { ...review, type: "aria2" }, true, true, true, true));
   assert.equal(calls, 0); await applyPTAdmission("token", review, true, true, true, true); assert.equal(calls, 1);
 });
 test("PT withdrawal only carries explicit future-admission revocation, never task removal", async (t) => {

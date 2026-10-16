@@ -42,7 +42,7 @@ func (s downloadService) preparePTSource(ctx context.Context, item downloadercon
 	if (r.MinimumSeedTime == nil || *r.MinimumSeedTime <= 0) && (r.MinimumRatio == nil || *r.MinimumRatio <= 0) {
 		return o, nil
 	}
-	if item.Type != "transmission" || !s.pureGo || s.downloaders == nil || s.manualGuards == nil || *s.manualGuards == nil || o.RatioLimit != 0 || o.SeedingTimeLimit != 0 {
+	if item.Type != "transmission" && item.Type != "qbittorrent" || !s.pureGo || s.downloaders == nil || s.manualGuards == nil || *s.manualGuards == nil || o.RatioLimit != 0 || o.SeedingTimeLimit != 0 {
 		return o, errPTAdmissionBlocked
 	}
 	grant, err := s.downloaders.SeedingAdmission(ctx, item.ID)
@@ -62,7 +62,7 @@ func (s downloadService) preparePTSource(ctx context.Context, item downloadercon
 		rules.HR = &v
 	}
 	o.Seeding = &sourceSeedingConstraint{Requirements: rules, SourceDigest: bus.Hash([]any{r, grant.ID}), AdmissionID: grant.ID, Title: bus.Bounded(r.Title, 600), Source: bus.Bounded(r.Indexer, 160), Actor: grant.Actor}
-	o.ApplyTransmissionLimits = true
+	o.ApplyTransmissionLimits = item.Type == "transmission"
 	if !o.Seeding.Requirements.Valid() {
 		return o, errPTAdmissionBlocked
 	}
@@ -74,7 +74,7 @@ func (s downloadService) validatePTAdmission(ctx context.Context, item downloade
 		return nil
 	}
 	p := o.Seeding
-	if item.Type != "transmission" || item.Enabled == 0 || !s.pureGo || s.downloaders == nil || s.manualGuards == nil || *s.manualGuards == nil || !o.ApplyTransmissionLimits || o.RatioLimit != 0 || o.SeedingTimeLimit != 0 || !p.Requirements.Valid() || p.Requirements.HR != nil && *p.Requirements.HR || len(p.SourceDigest) != 64 || !seeding.ValidHash(p.SourceDigest) {
+	if item.Type != "transmission" && item.Type != "qbittorrent" || item.Enabled == 0 || !s.pureGo || s.downloaders == nil || s.manualGuards == nil || *s.manualGuards == nil || item.Type == "transmission" && !o.ApplyTransmissionLimits || o.RatioLimit != 0 || o.SeedingTimeLimit != 0 || !p.Requirements.Valid() || p.Requirements.HR != nil && *p.Requirements.HR || len(p.SourceDigest) != 64 || !seeding.ValidHash(p.SourceDigest) {
 		return errPTAdmissionBlocked
 	}
 	grant, err := s.downloaders.SeedingAdmission(ctx, item.ID)
@@ -129,8 +129,8 @@ func (s downloadService) reviewPTAdmission(ctx context.Context, actor string, id
 	r.Name = item.Name
 	r.Type = item.Type
 	r.Grant = grant
-	r.Active = grant != nil && grant.Enabled && grant.ConfigDigest == bus.Hash(item) && item.Enabled != 0 && item.Type == "transmission"
-	r.Warning = "仅允许此配置的 Transmission 搜索/订阅及订阅 RSS 新任务接管正值最低要求。先记录来源约束，再暂停添加、禁用并验证该任务分享率/空闲停种上限，最后按原选择启动；所选停种上限必须为 0，不会静默覆盖。HR 标记拒绝下种，未知要求持续拦截停止/删除/移动，当前无解除接口。撤销仅阻止新接管，不取消进行中的请求、不停止任务或清除原约束。其他外部客户端和其他来源不在此授权内。"
+	r.Active = grant != nil && grant.Enabled && grant.ConfigDigest == bus.Hash(item) && item.Enabled != 0 && (item.Type == "transmission" || item.Type == "qbittorrent")
+	r.Warning = "仅允许此配置的 qBittorrent/Transmission 搜索、订阅搜索及订阅 RSS 新任务接管正值最低要求。先记录来源约束，再暂停添加、禁用并验证自动做种上限（qB 为分享率、累计及空闲时间，TR 为分享率和空闲时间），最后按原选择启动；所选停种上限必须为 0，不会静默覆盖。HR 标记拒绝下种，未知要求持续拦截停止/删除/移动，当前无解除接口。撤销仅阻止新接管，不取消进行中的请求、不停止任务或清除原约束。其他客户端和来源不在此授权内。"
 	r.Fingerprint = bus.Hash([]any{actor, id, bus.Hash(item), grant, enabled})
 	return r, nil
 }
@@ -182,7 +182,7 @@ func (s downloadService) servePTAdmission(w http.ResponseWriter, req *http.Reque
 		writeAPIError(w, 404, 404, "unknown PT admission action")
 		return
 	}
-	if !in.Confirm || in.Fingerprint != r.Fingerprint || in.Enabled && (!in.ConfirmOldExecutorsStopped || !in.ConfirmUnknownHold || !in.ConfirmUnlimitedSeeding || r.item.Type != "transmission" || r.item.Enabled == 0) {
+	if !in.Confirm || in.Fingerprint != r.Fingerprint || in.Enabled && (!in.ConfirmOldExecutorsStopped || !in.ConfirmUnknownHold || !in.ConfirmUnlimitedSeeding || r.item.Type != "transmission" && r.item.Type != "qbittorrent" || r.item.Enabled == 0) {
 		writeAPIError(w, 409, 409, "fresh review and separate PT scope, old-executor, unknown hold and unlimited-seeding consents required")
 		return
 	}

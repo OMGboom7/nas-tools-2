@@ -5,6 +5,7 @@ import { ManualDownloadReceipts } from "../components/ManualDownloadReceipts";
 import { TransmissionProfiles } from "../components/TransmissionProfiles";
 import { SeedingPolicies } from "../components/SeedingPolicies";
 import { PTAdmission } from "../components/PTAdmission";
+import { QbProfiles } from "../components/QbProfiles";
 
 type DownloadsPageProps = {
   session: AuthSession;
@@ -171,6 +172,7 @@ export function DownloadsPage({ session, currentPath, onNavigate, onLogout, onSe
         {actionNotice && <div className="data-notice" role="status">{actionNotice}</div>}
         <ManualDownloadReceipts token={session.token} onSessionExpired={onSessionExpired} />
         <TransmissionProfiles token={session.token} onSessionExpired={onSessionExpired} />
+        {String(session.user.userid) === "0" && <QbProfiles key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         {String(session.user.userid) === "0" && <PTAdmission key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         {String(session.user.userid) === "0" && <SeedingPolicies key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         <form className="download-magnet-form" onSubmit={(event) => void handleMagnetSubmit(event)}>

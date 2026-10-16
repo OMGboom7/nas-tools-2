@@ -97,7 +97,7 @@ func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, 
 	}
 	defer tx.Rollback()
 	for _, fp := range profiles {
-		if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, fp); err != nil {
+		if err := downloaderconfig.VerifyDownloadProfile(ctx, tx, fp); err != nil {
 			return err
 		}
 	}
@@ -147,7 +147,7 @@ func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, 
 		return err
 	}
 	for _, fp := range profiles {
-		if err := downloaderconfig.VerifyTransmissionProfile(ctx, tx, fp); err != nil {
+		if err := downloaderconfig.VerifyDownloadProfile(ctx, tx, fp); err != nil {
 			return err
 		}
 	}

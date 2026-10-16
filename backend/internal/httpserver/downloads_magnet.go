@@ -186,6 +186,10 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		id, err := client.AddMagnet(ctx, magnet)
 		return id, true, err
 	case "qbittorrent":
+		if options.Seeding != nil {
+			id, err := service.submitQbProfile(ctx, item, magnet, torrent, options)
+			return id, true, err
+		}
 		addOptions := qbittorrent.AddOptions{SavePath: options.SavePath, Category: options.Category, Tags: options.Tags, Paused: options.Paused, UploadLimitKB: options.UploadLimitKB, DownloadLimitKB: options.DownloadLimitKB, RatioLimit: options.RatioLimit, SeedingTimeLimit: options.SeedingTimeLimit}
 		client, err := qbittorrent.New(host, port, text(configuration["username"]), text(configuration["password"]), service.client.Transport)
 		if err != nil {

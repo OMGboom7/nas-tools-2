@@ -187,7 +187,7 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 		return ErrManualPending
 	}
 	d := r.Definition
-	if err := VerifyTransmissionProfile(ctx, tx, d.ProfileDigest); err != nil {
+	if err := VerifyDownloadProfile(ctx, tx, d.ProfileDigest); err != nil {
 		return err
 	}
 	if err := verifyManualConfig(ctx, tx, d); err != nil {
@@ -231,7 +231,7 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 	if err := verifyManualConfig(ctx, tx, d); err != nil {
 		return err
 	}
-	if err := VerifyTransmissionProfile(ctx, tx, d.ProfileDigest); err != nil {
+	if err := VerifyDownloadProfile(ctx, tx, d.ProfileDigest); err != nil {
 		return err
 	}
 	return tx.Commit()

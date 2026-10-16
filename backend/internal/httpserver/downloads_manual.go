@@ -49,6 +49,8 @@ func manualSubmissionError(w http.ResponseWriter, err error) bool {
 		writeAPIError(w, 409, 409, "manual submission pending or scope changed; read its receipt and verify the original downloader, do not resubmit")
 	case errors.Is(err, downloaderconfig.ErrProfilePending):
 		writeAPIError(w, 409, 409, "Transmission settings require explicit review before starting or acknowledging this task")
+	case errors.Is(err, downloaderconfig.ErrQbProfilePending):
+		writeAPIError(w, 409, 409, "qBittorrent PT setting receipt requires explicit review before starting or acknowledging this task; never resubmit")
 	case errors.Is(err, downloaderconfig.ErrSeedingPolicy):
 		writeAPIError(w, 409, 409, "PT seeding requirements are unmet, unknown, changed or busy; no stop, removal or move authorized")
 	case errors.Is(err, errPTAdmissionBlocked):
@@ -112,7 +114,7 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 	}
 	title = bus.Bounded(title, 600)
 	d := downloaderconfig.ManualDefinition{DownloaderID: item.ID, DownloaderName: item.Name, DownloaderType: item.Type, ConfigDigest: bus.Hash(item), OptionsDigest: bus.Hash(options), InfoHash: hash, Actor: actor, Title: title, Source: source, SavePath: options.SavePath}
-	d.ProfileDigest = transmissionProfileFingerprint(item, hash, options)
+	d.ProfileDigest = downloadProfileFingerprint(item, hash, options)
 	receipt, created, err := service.downloaders.ReserveManual(ctx, d)
 	if err != nil {
 		return "", true, err
@@ -267,8 +269,8 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 		return
 	}
 	if d.ProfileDigest != "" {
-		if err := service.verifyTransmissionProfile(ctx, item, d.InfoHash, d.ProfileDigest); err != nil {
-			writeAPIError(w, 409, 409, "complete the original Transmission setting receipt first; no resubmission")
+		if err := service.verifyDownloadProfile(ctx, item, d.InfoHash, d.ProfileDigest); err != nil {
+			writeAPIError(w, 409, 409, "complete the original downloader setting receipt first; no resubmission")
 			return
 		}
 	}

@@ -52,7 +52,7 @@ func (s *Store) SeedingAdmission(ctx context.Context, id int64) (*SeedingAdmissi
 }
 
 func (s *Store) SetSeedingAdmission(ctx context.Context, item Downloader, actor string, enabled bool, expected string) (*SeedingAdmission, error) {
-	if item.ID < 1 || actor == "" || len(actor) > 256 || enabled && (item.Type != "transmission" || item.Enabled == 0) {
+	if item.ID < 1 || actor == "" || len(actor) > 256 || enabled && (item.Type != "transmission" && item.Type != "qbittorrent" || item.Enabled == 0) {
 		return nil, ErrSeedingPolicy
 	}
 	tx, err := s.database.BeginTx(ctx, nil)

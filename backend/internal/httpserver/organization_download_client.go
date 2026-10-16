@@ -52,7 +52,23 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs, stop: c.StopForOrganization}), nil
+			protect := func(ctx context.Context, id string, remove bool) error {
+				if api.jobs != nil {
+					guard, err := api.jobs.AcquireJob(ctx, qbProfileGuard(item.ID, id))
+					if err != nil {
+						return err
+					}
+					defer guard.Close()
+				}
+				if err := (downloadService{downloaders: api.service.downloaders}).checkQbProfileReady(ctx, item, id); err != nil {
+					return err
+				}
+				if remove {
+					return c.RemoveOrganizationTask(ctx, id)
+				}
+				return c.StopForOrganization(ctx, id)
+			}
+			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}), nil
 		}
 	case "transmission":
 		c, err := transmission.New(text(cfg["host"]), text(cfg["port"]), text(cfg["username"]), text(cfg["password"]), api.service.client.Transport)
@@ -120,6 +136,19 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 			return err
 		}
 		if err := (downloadService{downloaders: api.service.downloaders}).checkTransmissionProfileReady(ctx, item, o.Task.ID); err != nil {
+			return err
+		}
+	}
+	if job.Mode == "move" && o.DownloaderType == "qbittorrent" {
+		id, err := syncConfigID(o.DownloaderID)
+		if err != nil {
+			return err
+		}
+		item, err := api.service.downloaders.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := (downloadService{downloaders: api.service.downloaders}).checkQbProfileReady(ctx, item, o.Task.ID); err != nil {
 			return err
 		}
 	}
