@@ -69,8 +69,9 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
 		return
 	}
-	if resource.MinimumSeedTime != nil && *resource.MinimumSeedTime > 0 || resource.MinimumRatio != nil && *resource.MinimumRatio > 0 {
-		writeAPIError(response, 501, 501, "tracker minimum seeding policy is not migrated; no submission attempted")
+	options, err = service.preparePTSource(ctx, downloader, resource, options)
+	if err != nil {
+		writeAPIError(response, 501, 501, "tracker minimum seeding policy requires an enabled configuration-scoped Transmission grant, no HR marker and zero automatic stop limits; no submission attempted")
 		return
 	}
 	magnet, torrent, err := service.prepareNativeSearchTorrent(ctx, resource)

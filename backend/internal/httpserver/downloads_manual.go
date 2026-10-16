@@ -51,6 +51,8 @@ func manualSubmissionError(w http.ResponseWriter, err error) bool {
 		writeAPIError(w, 409, 409, "Transmission settings require explicit review before starting or acknowledging this task")
 	case errors.Is(err, downloaderconfig.ErrSeedingPolicy):
 		writeAPIError(w, 409, 409, "PT seeding requirements are unmet, unknown, changed or busy; no stop, removal or move authorized")
+	case errors.Is(err, errPTAdmissionBlocked):
+		writeAPIError(w, 409, 409, "PT source admission unavailable or scope changed; configuration-scoped consent and zero automatic stop limits required; no submission attempted")
 	default:
 		return false
 	}

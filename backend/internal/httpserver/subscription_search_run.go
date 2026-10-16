@@ -119,9 +119,6 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		if ctx.Err() != nil {
 			return fail(504, "subscription execution was cancelled or timed out")
 		}
-		if candidate.resource.MinimumSeedTime != nil && *candidate.resource.MinimumSeedTime > 0 || candidate.resource.MinimumRatio != nil && *candidate.resource.MinimumRatio > 0 {
-			return fail(501, "subscription tracker minimum seeding policy is not migrated")
-		}
 		download := api.planner.runner.download.service
 		item := normalizeNativeSubscriptionRow(plan.raw)
 		downloader, options, err := download.searchDownloadSettings(ctx, candidate.resource.Indexer, addResourceRequest{Setting: text(item["download_setting"]), Directory: text(item["save_path"])})
@@ -134,6 +131,10 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		if err != nil {
 			return fail(503, "subscription download settings are unavailable or unsupported")
 		}
+		options, err = download.preparePTSource(ctx, downloader, candidate.resource, options)
+		if err != nil {
+			return fail(501, "PT subscription source requires a configuration-scoped Transmission grant, no HR marker and zero automatic stop limits")
+		}
 		magnet, torrent, err := download.prepareSubscriptionTorrent(ctx, candidate)
 		if err != nil {
 			return fail(502, "subscription torrent could not be retrieved")
@@ -144,7 +145,7 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		if err != nil {
 			return fail(409, "subscription changed or resource is reserved; verify pending downloads before retrying")
 		}
-		_, handled, err := download.nativeAddDownloadWithOptions(ctx, magnet, torrent, strconv.FormatInt(downloader.ID, 10), options)
+		_, handled, err := download.nativeAddConfiguredDownload(ctx, downloader, magnet, torrent, options)
 		if err != nil || !handled {
 			if downloadDefinitelyNotSubmitted(handled, err) {
 				cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

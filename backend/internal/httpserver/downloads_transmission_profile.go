@@ -16,10 +16,14 @@ import (
 )
 
 func needsTransmissionProfile(item downloaderconfig.Downloader, o downloadAddOptions) bool {
-	return item.Type == "transmission" && (o.ApplyTransmissionLimits || o.UploadLimitKB != 0 || o.DownloadLimitKB != 0 || o.RatioLimit != 0 || o.SeedingTimeLimit != 0)
+	return item.Type == "transmission" && (o.Seeding != nil || o.ApplyTransmissionLimits || o.UploadLimitKB != 0 || o.DownloadLimitKB != 0 || o.RatioLimit != 0 || o.SeedingTimeLimit != 0)
 }
 func transmissionDefinition(item downloaderconfig.Downloader, hash string, o downloadAddOptions) downloaderconfig.TransmissionProfileDefinition {
-	return downloaderconfig.TransmissionProfileDefinition{DownloaderID: item.ID, Name: item.Name, ConfigDigest: bus.Hash(item), InfoHash: hash, Options: transmission.AddOptions{DownloadDir: o.SavePath, Paused: o.Paused, Labels: o.Tags}, Limits: transmission.Limits{UploadKB: o.UploadLimitKB, DownloadKB: o.DownloadLimitKB, Ratio: o.RatioLimit, IdleMinutes: o.SeedingTimeLimit}}
+	d := downloaderconfig.TransmissionProfileDefinition{DownloaderID: item.ID, Name: item.Name, ConfigDigest: bus.Hash(item), InfoHash: hash, Options: transmission.AddOptions{DownloadDir: o.SavePath, Paused: o.Paused, Labels: o.Tags}, Limits: transmission.Limits{UploadKB: o.UploadLimitKB, DownloadKB: o.DownloadLimitKB, Ratio: o.RatioLimit, IdleMinutes: o.SeedingTimeLimit}}
+	if o.Seeding != nil {
+		d.SeedingPolicyID = downloaderconfig.SeedingPolicyIdentity(o.Seeding.policy(item, hash))
+	}
+	return d
 }
 func transmissionProfileFingerprint(item downloaderconfig.Downloader, hash string, o downloadAddOptions) string {
 	if !needsTransmissionProfile(item, o) {
@@ -58,6 +62,17 @@ func (service downloadService) submitTransmissionProfile(ctx context.Context, it
 	if err != nil {
 		return "", err
 	}
+	if o.Seeding != nil {
+		if err := service.validatePTAdmission(ctx, item, o); err != nil {
+			return "", err
+		}
+		guarded, close, err := service.seedingGuard(ctx, item.ID, hash)
+		if err != nil {
+			return "", errPTAdmissionBlocked
+		}
+		defer close()
+		ctx = guarded
+	}
 	if service.manualGuards != nil && *service.manualGuards != nil {
 		guard, err := (*service.manualGuards).AcquireJob(ctx, profileGuard(item.ID, hash))
 		if err != nil {
@@ -65,9 +80,26 @@ func (service downloadService) submitTransmissionProfile(ctx context.Context, it
 		}
 		defer guard.Close()
 	}
+	if o.Seeding != nil {
+		_, err := service.downloaders.FindTransmissionProfile(ctx, item.ID, hash)
+		if errors.Is(err, downloaderconfig.ErrNotFound) {
+			exists, err := c.HasTorrent(ctx, hash)
+			if err != nil || exists {
+				return "", errPTAdmissionBlocked
+			}
+		} else if err != nil {
+			return "", downloaderconfig.ErrProfilePending
+		}
+	}
 	p, created, err := service.downloaders.ReserveTransmissionProfile(ctx, d)
 	if err != nil {
 		return "", downloaderconfig.ErrProfilePending
+	}
+	if err := service.bindAdmissionSource(ctx, item, hash, o); err != nil {
+		return "", downloaderconfig.ErrProfilePending
+	}
+	if err := service.downloaders.VerifyProfileSeeding(ctx, p.Definition); err != nil {
+		return "", err
 	}
 	if !created {
 		if p.State != "ready" {
@@ -82,6 +114,9 @@ func (service downloadService) submitTransmissionProfile(ctx context.Context, it
 	options := d.Options
 	options.Paused = true
 	options.Labels = append(append([]string{}, options.Labels...), p.Marker())
+	if err := service.validatePTAdmission(ctx, item, o); err != nil {
+		return "", downloaderconfig.ErrProfilePending
+	}
 	var id string
 	if torrent != nil {
 		id, err = c.AddTorrentWithOptions(ctx, torrent, options)
@@ -154,21 +189,22 @@ func (service downloadService) checkTransmissionProfileReady(ctx context.Context
 	if p.State != "ready" || p.Definition.ConfigDigest != bus.Hash(item) {
 		return downloaderconfig.ErrProfilePending
 	}
-	return nil
+	return service.downloaders.VerifyProfileSeeding(ctx, p.Definition)
 }
 
 type transmissionProfilePublic struct {
 	downloaderconfig.TransmissionProfile
-	DownloaderID string                  `json:"downloaderId"`
-	Name         string                  `json:"name"`
-	InfoHash     string                  `json:"infoHash"`
-	Options      transmission.AddOptions `json:"options"`
-	Limits       transmission.Limits     `json:"limits"`
+	DownloaderID    string                  `json:"downloaderId"`
+	Name            string                  `json:"name"`
+	InfoHash        string                  `json:"infoHash"`
+	Options         transmission.AddOptions `json:"options"`
+	Limits          transmission.Limits     `json:"limits"`
+	SeedingPolicyID string                  `json:"seedingPolicyId,omitempty"`
 }
 
 func publicProfile(p downloaderconfig.TransmissionProfile) transmissionProfilePublic {
 	d := p.Definition
-	return transmissionProfilePublic{p, strconv.FormatInt(d.DownloaderID, 10), d.Name, d.InfoHash, d.Options, d.Limits}
+	return transmissionProfilePublic{p, strconv.FormatInt(d.DownloaderID, 10), d.Name, d.InfoHash, d.Options, d.Limits, d.SeedingPolicyID}
 }
 
 type transmissionProfileReview struct {
@@ -187,6 +223,9 @@ func (service downloadService) reviewTransmissionProfile(ctx context.Context, p 
 	item, err := service.downloaders.Get(ctx, p.Definition.DownloaderID)
 	if err != nil || item.Enabled == 0 || item.Type != "transmission" || bus.Hash(item) != p.Definition.ConfigDigest {
 		return r, downloaderconfig.ErrProfilePending
+	}
+	if err := service.downloaders.VerifyProfileSeeding(ctx, p.Definition); err != nil {
+		return r, err
 	}
 	c, err := service.profileClient(item)
 	if err != nil {
@@ -219,6 +258,9 @@ func (service downloadService) verifyTransmissionProfile(ctx context.Context, it
 	p, err := service.downloaders.FindTransmissionProfile(ctx, item.ID, hash)
 	if err != nil || p.State != "ready" || p.Fingerprint != fp || p.Definition.ConfigDigest != bus.Hash(item) {
 		return downloaderconfig.ErrProfilePending
+	}
+	if err := service.downloaders.VerifyProfileSeeding(ctx, p.Definition); err != nil {
+		return err
 	}
 	c, err := service.profileClient(item)
 	if err != nil {

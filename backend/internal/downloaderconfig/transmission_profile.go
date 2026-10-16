@@ -17,15 +17,19 @@ import (
 var ErrProfilePending = errors.New("Transmission profile requires explicit review")
 
 type TransmissionProfileDefinition struct {
-	DownloaderID int64                   `json:"downloaderId"`
-	Name         string                  `json:"name"`
-	ConfigDigest string                  `json:"configDigest"`
-	InfoHash     string                  `json:"infoHash"`
-	Options      transmission.AddOptions `json:"options"`
-	Limits       transmission.Limits     `json:"limits"`
+	SeedingPolicyID string                  `json:"seedingPolicyId,omitempty"`
+	DownloaderID    int64                   `json:"downloaderId"`
+	Name            string                  `json:"name"`
+	ConfigDigest    string                  `json:"configDigest"`
+	InfoHash        string                  `json:"infoHash"`
+	Options         transmission.AddOptions `json:"options"`
+	Limits          transmission.Limits     `json:"limits"`
 }
 
 func NormalizeTransmissionProfile(d TransmissionProfileDefinition) (TransmissionProfileDefinition, error) {
+	if d.SeedingPolicyID != "" && !validSeedingDigest(d.SeedingPolicyID) {
+		return d, ErrProfilePending
+	}
 	if d.DownloaderID < 1 || len(d.ConfigDigest) != 64 || !transmission.ValidHash(d.InfoHash) || !d.Limits.Valid() || len(d.Options.DownloadDir) > 4096 || len(d.Options.Labels) > 31 {
 		return d, ErrProfilePending
 	}
@@ -227,6 +231,9 @@ func (s *Store) AdvanceTransmissionProfile(ctx context.Context, p TransmissionPr
 		if err := verifyManualConfig(ctx, tx, ManualDefinition{DownloaderID: p.Definition.DownloaderID, DownloaderType: "transmission", ConfigDigest: p.Definition.ConfigDigest}); err != nil {
 			return err
 		}
+		if err := verifyProfileSeeding(ctx, tx, p.Definition); err != nil {
+			return err
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE GO_TRANSMISSION_PROFILES SET STATE=?,REASON=?,UPDATED=? WHERE ID=? AND STATE=? AND FINGERPRINT=?`, to, reason, time.Now().UTC().Format(time.RFC3339Nano), p.ID, p.State, p.Fingerprint)
 	if err != nil {
@@ -254,6 +261,9 @@ func (s *Store) AdvanceTransmissionProfile(ctx context.Context, p TransmissionPr
 		if err := verifyManualConfig(ctx, tx, ManualDefinition{DownloaderID: p.Definition.DownloaderID, DownloaderType: "transmission", ConfigDigest: p.Definition.ConfigDigest}); err != nil {
 			return err
 		}
+		if err := verifyProfileSeeding(ctx, tx, p.Definition); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -268,6 +278,9 @@ func VerifyTransmissionProfile(ctx context.Context, tx *sql.Tx, fp string) error
 	var d TransmissionProfileDefinition
 	if json.Unmarshal([]byte(raw), &d) != nil || bus.Hash(d) != fp {
 		return ErrProfilePending
+	}
+	if err := verifyProfileSeeding(ctx, tx, d); err != nil {
+		return err
 	}
 	return verifyManualConfig(ctx, tx, ManualDefinition{DownloaderID: d.DownloaderID, DownloaderType: "transmission", ConfigDigest: d.ConfigDigest})
 }

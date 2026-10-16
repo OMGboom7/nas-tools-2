@@ -107,11 +107,12 @@ var errDownloadOptionsUnsupported = errors.New("downloader does not support thes
 // Only validation/authentication failures known to precede acceptance may be
 // retried. Connection errors and malformed replies remain ambiguous.
 func downloadDefinitelyNotSubmitted(handled bool, err error) bool {
-	return !handled || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, transmission.ErrAuthentication) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration)
+	return !handled || errors.Is(err, errPTAdmissionBlocked) || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, transmission.ErrAuthentication) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration)
 }
 
 type downloadAddOptions struct {
-	ApplyTransmissionLimits bool `json:"applyTransmissionLimits,omitempty"`
+	Seeding                 *sourceSeedingConstraint `json:"seeding,omitempty"`
+	ApplyTransmissionLimits bool                     `json:"applyTransmissionLimits,omitempty"`
 	SavePath                string
 	Category                string
 	Tags                    []string
@@ -123,7 +124,7 @@ type downloadAddOptions struct {
 }
 
 func (options downloadAddOptions) empty() bool {
-	return options.SavePath == "" && options.Category == "" && len(options.Tags) == 0 && !options.Paused && options.UploadLimitKB == 0 && options.DownloadLimitKB == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
+	return options.Seeding == nil && options.SavePath == "" && options.Category == "" && len(options.Tags) == 0 && !options.Paused && options.UploadLimitKB == 0 && options.DownloadLimitKB == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
 }
 
 func (service downloadService) nativeAddDownloadWithOptions(ctx context.Context, magnet string, torrent []byte, downloaderID string, options downloadAddOptions) (string, bool, error) {
@@ -144,6 +145,29 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 	}
 	if item.Type == "pan115" && torrent != nil {
 		return "", false, nil
+	}
+	hash := magnetInfoHash(magnet)
+	if torrent != nil {
+		metadata, err := torrentmeta.Parse(torrent)
+		if err != nil {
+			return "", true, err
+		}
+		hash = metadata.InfoHash
+	}
+	if hash != "" && service.downloaders != nil {
+		guarded, close, err := service.seedingGuard(ctx, item.ID, hash)
+		if err != nil {
+			return "", true, errPTAdmissionBlocked
+		}
+		defer close()
+		ctx = guarded
+		policies, _, err := service.downloaders.SeedingPolicies(ctx, item.ID, hash)
+		if err != nil || len(policies) > 0 && options.Seeding == nil {
+			return "", true, errPTAdmissionBlocked
+		}
+	}
+	if err := service.validatePTAdmission(ctx, item, options); err != nil {
+		return "", true, err
 	}
 	var configuration map[string]any
 	if json.Unmarshal([]byte(item.Config), &configuration) != nil {

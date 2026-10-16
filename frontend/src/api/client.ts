@@ -72,7 +72,7 @@ export async function synchronizeMediaLibraries(token: string, catalog: MediaSyn
 }
 
 export type TransmissionLimits = { uploadKB: number; downloadKB: number; ratio: number; idleMinutes: number };
-export type TransmissionProfile = { id: string; state: string; reason?: string; fingerprint: string; downloaderId: string; name: string; infoHash: string; options: { DownloadDir: string; Paused: boolean; Labels: string[] }; limits: TransmissionLimits; created: string; updated: string };
+export type TransmissionProfile = { id: string; state: string; reason?: string; fingerprint: string; downloaderId: string; name: string; infoHash: string; options: { DownloadDir: string; Paused: boolean; Labels: string[] }; limits: TransmissionLimits; seedingPolicyId?: string; created: string; updated: string };
 export type TransmissionProfileReview = { profile: TransmissionProfile; current: { hash: string; directory: string; labels: string[]; status: number; uploadKB: number; downloadKB: number; uploadLimited: boolean; downloadLimited: boolean; ratio: number; ratioMode: number; idleMinutes: number; idleMode: number }; next: "configure" | "start" | "acknowledge"; actor: string; fingerprint: string };
 export async function getTransmissionProfiles(token: string, page = 1): Promise<TransmissionProfile[]> {
   if (!Number.isInteger(page) || page < 1 || page > 10000) throw new ApiError("设置回执页码无效", 400);
@@ -126,6 +126,27 @@ export type AuthSession = {
 };
 
 export type SeedingScope = { downloaderId: number; taskId: string };
+export type PTAdmissionGrant = { id: string; downloaderId: number; actor: string; created: string; enabled: boolean };
+export type PTAdmissionReview = { downloaderId: number; name: string; type: string; grant: PTAdmissionGrant | null; active: boolean; enabled: boolean; fingerprint: string; warning: string };
+function validatePTAdmissionId(id: number) { if (!Number.isSafeInteger(id) || id < 1) throw new ApiError("需准确下载器 ID", 400); }
+export async function getPTAdmission(token: string, id: number): Promise<PTAdmissionReview> {
+  validatePTAdmissionId(id);
+  const result = await readResponse<PTAdmissionReview>(await fetch(`/api/v1/downloads/pt-admission?downloaderId=${id}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || result.data?.downloaderId !== id) throw new ApiError(result.message || "PT 接管授权无法核实", result.code);
+  return result.data;
+}
+export async function reviewPTAdmission(token: string, id: number, enabled: boolean): Promise<PTAdmissionReview> {
+  validatePTAdmissionId(id);
+  const result = await readResponse<PTAdmissionReview>(await fetch("/api/v1/downloads/pt-admission/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ downloaderId: id, enabled }) }));
+  if (!result.success || result.code !== 0 || result.data?.downloaderId !== id || result.data.enabled !== enabled || !/^[a-f0-9]{64}$/.test(result.data.fingerprint)) throw new ApiError(result.message || "PT 接管审核范围无法核实", result.code);
+  return result.data;
+}
+export async function applyPTAdmission(token: string, review: PTAdmissionReview, confirm = false, confirmOldExecutorsStopped = false, confirmUnknownHold = false, confirmUnlimitedSeeding = false): Promise<void> {
+  validatePTAdmissionId(review.downloaderId);
+  if (!confirm || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.enabled && (review.type !== "transmission" || !confirmOldExecutorsStopped || !confirmUnknownHold || !confirmUnlimitedSeeding)) throw new ApiError("需独立确认原范围、旧执行器停止、未知约束持续拦截及禁用自动停种上限", 400);
+  const result = await readResponse<PTAdmissionGrant>(await fetch("/api/v1/downloads/pt-admission/apply", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ downloaderId: review.downloaderId, enabled: review.enabled, fingerprint: review.fingerprint, confirm, confirmOldExecutorsStopped, confirmUnknownHold, confirmUnlimitedSeeding }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "接管授权响应不确定；只读刷新，不自动重发", result.code);
+}
 export type SeedingRequirements = { seconds: number | null; ratio: number | null; hr: boolean | null };
 export type SeedingPolicy = { id: string; downloaderId: number; downloaderName: string; downloaderType: string; infoHash: string; title: string; source: string; requirements: SeedingRequirements; actor: string; created: string };
 export type SeedingEvidence = { hash: string; state: string; complete: boolean | null; seconds: number | null; ratio: number | null };

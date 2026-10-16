@@ -348,6 +348,9 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 			if p.Definition.ConfigDigest != bus.Hash(item) {
 				return true, downloaderconfig.ErrProfilePending
 			}
+			if e := service.downloaders.VerifyProfileSeeding(ctx, p.Definition); e != nil {
+				return true, e
+			}
 			if action == "start" {
 				if p.State != "ready" {
 					return true, downloaderconfig.ErrProfilePending
