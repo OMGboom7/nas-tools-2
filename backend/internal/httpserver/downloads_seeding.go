@@ -69,40 +69,48 @@ func (s downloadService) seedingEvidence(ctx context.Context, item downloadercon
 }
 
 func (s downloadService) checkSeedingPolicy(ctx context.Context, item downloaderconfig.Downloader, hash string) error {
+	return s.checkSeedingAction(ctx, item, hash, "")
+}
+func (s downloadService) checkSeedingAction(ctx context.Context, item downloaderconfig.Downloader, hash, action string) error {
 	if s.downloaders == nil {
 		return nil
 	}
-	policies, _, err := s.downloaders.SeedingPolicies(ctx, item.ID, hash)
+	policies, digest, err := s.downloaders.SeedingPolicies(ctx, item.ID, hash)
 	if err != nil {
 		return downloaderconfig.ErrSeedingPolicy
 	}
 	if len(policies) == 0 {
+		state, err := s.downloaders.PTVerification(ctx, item.ID, hash)
+		if err != nil || state.Record != nil {
+			return downloaderconfig.ErrSeedingPolicy
+		}
 		return nil
 	} // Unregistered is not evidence of no tracker obligations.
 	current, err := s.downloaders.Get(ctx, item.ID)
 	if err != nil || bus.Hash(current) != bus.Hash(item) || current.Enabled == 0 {
 		return downloaderconfig.ErrSeedingPolicy
 	}
-	rules := make([]seeding.Requirements, 0, len(policies))
-	for _, p := range policies {
-		if p.ConfigDigest != bus.Hash(current) {
-			return downloaderconfig.ErrSeedingPolicy
-		}
-		rules = append(rules, p.Requirements)
-	}
 	e, err := s.seedingEvidence(ctx, current, hash)
-	if err != nil || !seeding.Evaluate(hash, rules, e).Allowed {
+	if err != nil {
+		return downloaderconfig.ErrSeedingPolicy
+	}
+	fresh, err := s.downloaders.Get(ctx, item.ID)
+	if err != nil || bus.Hash(fresh) != bus.Hash(current) {
+		return downloaderconfig.ErrSeedingPolicy
+	}
+	state, err := s.downloaders.PTVerification(ctx, item.ID, hash)
+	if err != nil || !s.seedingActionDecision(ctx, current, hash, action, digest, policies, e, state).Allowed {
 		return downloaderconfig.ErrSeedingPolicy
 	}
 	return nil
 }
 
 func (api organizationAPI) seedingService() downloadService {
-	return downloadService{downloaders: api.service.downloaders, client: api.service.client, manualGuards: &api.jobs}
+	return downloadService{downloaders: api.service.downloaders, client: api.service.client, manualGuards: &api.jobs, auth: api.auth}
 }
 
 func (api organizationAPI) protectSeedingClient(item downloaderconfig.Downloader, c completionOrganizationClient) completionOrganizationClient {
-	wrap := func(action func(context.Context, string) error) func(context.Context, string) error {
+	wrap := func(action func(context.Context, string) error, kind string) func(context.Context, string) error {
 		if action == nil {
 			return nil
 		}
@@ -113,13 +121,13 @@ func (api organizationAPI) protectSeedingClient(item downloaderconfig.Downloader
 				return err
 			}
 			defer close()
-			if err := s.checkSeedingPolicy(ctx, item, hash); err != nil {
+			if err := s.checkSeedingAction(ctx, item, hash, kind); err != nil {
 				return err
 			}
 			return action(ctx, hash)
 		}
 	}
-	c.stop, c.remove = wrap(c.stop), wrap(c.remove)
+	c.stop, c.remove = wrap(c.stop, "stop"), wrap(c.remove, "remove")
 	return c
 }
 
@@ -139,7 +147,7 @@ func (api organizationAPI) guardSeedingMove(ctx context.Context, job organizatio
 	}
 	item, err := s.downloaders.Get(ctx, id)
 	if err == nil {
-		err = s.checkSeedingPolicy(ctx, item, o.Task.ID)
+		err = s.checkSeedingAction(ctx, item, o.Task.ID, "move")
 	}
 	if err != nil {
 		close()
@@ -298,7 +306,7 @@ func (s downloadService) serveSeedingEvidence(w http.ResponseWriter, req *http.R
 		writeAPIError(w, 404, 404, "downloader unavailable")
 		return
 	}
-	policies, _, err := s.downloaders.SeedingPolicies(ctx, id, hash)
+	policies, digest, err := s.downloaders.SeedingPolicies(ctx, id, hash)
 	if err != nil {
 		writeAPIError(w, 503, 503, "saved policies unavailable")
 		return
@@ -319,5 +327,18 @@ func (s downloadService) serveSeedingEvidence(w http.ResponseWriter, req *http.R
 		decision.Allowed = false
 		decision.Reasons = append(decision.Reasons, "downloader configuration changed")
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"policies": policies, "evidence": e, "decision": decision, "registered": len(policies) > 0, "warning": "未登记不代表没有 PT 义务；只读结果不是后续操作授权，执行时会重新检查。"}})
+	verification, err := s.downloaders.PTVerification(ctx, id, hash)
+	if err != nil {
+		writeAPIError(w, 503, 503, "PT verification state unavailable")
+		return
+	}
+	actions := map[string]seeding.Decision{}
+	for _, action := range []string{"stop", "remove", "move"} {
+		d := s.seedingActionDecision(ctx, item, hash, action, digest, policies, e, verification)
+		if len(policies) == 0 && verification.Record != nil {
+			d = seeding.Decision{Allowed: false, Reasons: []string{"verification policy set is missing"}}
+		}
+		actions[action] = d
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"policies": policies, "evidence": e, "decision": decision, "actions": actions, "manualVerification": verification, "registered": len(policies) > 0, "warning": "未登记不代表没有 PT 义务；管理员核实不等于站点自动验证。只读结果不是后续操作授权，执行时会重新检查。"}})
 }

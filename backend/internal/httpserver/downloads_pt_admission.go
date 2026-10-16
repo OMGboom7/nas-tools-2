@@ -130,7 +130,7 @@ func (s downloadService) reviewPTAdmission(ctx context.Context, actor string, id
 	r.Type = item.Type
 	r.Grant = grant
 	r.Active = grant != nil && grant.Enabled && grant.ConfigDigest == bus.Hash(item) && item.Enabled != 0 && (item.Type == "transmission" || item.Type == "qbittorrent")
-	r.Warning = "仅允许此配置的 qBittorrent/Transmission 搜索、订阅搜索及订阅 RSS 新任务接管正值最低要求。先记录来源约束，再暂停添加、禁用并验证自动做种上限（qB 为分享率、累计及空闲时间，TR 为分享率和空闲时间），最后按原选择启动；所选停种上限必须为 0，不会静默覆盖。HR 标记拒绝下种，未知要求持续拦截停止/删除/移动，当前无解除接口。撤销仅阻止新接管，不取消进行中的请求、不停止任务或清除原约束。其他客户端和来源不在此授权内。"
+	r.Warning = "仅允许此配置的 qBittorrent/Transmission 搜索、订阅搜索及订阅 RSS 新任务接管正值最低要求。先记录来源约束，再暂停添加、禁用并验证自动做种上限（qB 为分享率、累计及空闲时间，TR 为分享率和空闲时间），最后按原选择启动；所选停种上限必须为 0，不会静默覆盖。HR 标记拒绝下种，未知要求默认拦截停止/删除/移动；原约束不删改，限时人工核实须另行审核。撤销仅阻止新接管，不取消进行中的请求、不停止任务或清除原约束。其他客户端和来源不在此授权内。"
 	r.Fingerprint = bus.Hash([]any{actor, id, bus.Hash(item), grant, enabled})
 	return r, nil
 }

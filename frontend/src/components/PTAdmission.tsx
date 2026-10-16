@@ -44,7 +44,7 @@ export function PTAdmission({ token, onSessionExpired }: { token: string; onSess
     {review && <fieldset disabled={busy}><legend>{review.enabled ? "启用当前配置的新任务接管" : "撤销后续接管"}</legend><p>{review.name} · {review.type}。{review.warning}</p>
       <label><input type="checkbox" checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />确认本次审核的准确下载器配置与变更范围</label>
       {review.enabled && <><label><input type="checkbox" checked={oldStopped} onChange={(e) => setOldStopped(e.target.checked)} />已实际停止旧 Go / Python 执行器</label>
-        <label><input type="checkbox" checked={hold} onChange={(e) => setHold(e.target.checked)} />另行确认未知最低要求或 HR 会持续拦截停止、删除、移动，当前没有解除接口</label>
+        <label><input type="checkbox" checked={hold} onChange={(e) => setHold(e.target.checked)} />另行确认未知最低要求或 HR 会持续拦截停止、删除、移动；限时人工核实须另行审核，不会删改原约束</label>
         <label><input type="checkbox" checked={unlimited} onChange={(e) => setUnlimited(e.target.checked)} />另行授权这类新任务禁用自动做种上限（qB：分享率、累计与空闲时间；TR：分享率与空闲时间）；所选上限必须为 0，否则拒绝，不会静默覆盖</label></>}
       <button type="button" disabled={!confirm || review.enabled && (review.type !== "transmission" && review.type !== "qbittorrent" || !oldStopped || !hold || !unlimited)} onClick={() => void operate("apply")}>确认仅更新接管授权</button>
     </fieldset>}

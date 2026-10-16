@@ -32,6 +32,7 @@ func (c *Client) SeedingEvidence(ctx context.Context, hash string) (seeding.Evid
 		Left     *int64   `json:"amount_left"`
 		Seconds  *int64   `json:"seeding_time"`
 		Ratio    *float64 `json:"ratio"`
+		AddedAt  *int64   `json:"added_on"`
 	}
 	if json.Unmarshal(raw, &rows) != nil || len(rows) != 1 || !strings.EqualFold(rows[0].Hash, hash) || rows[0].State == "" {
 		return e, ErrResponse
@@ -39,6 +40,9 @@ func (c *Client) SeedingEvidence(ctx context.Context, hash string) (seeding.Evid
 	r := rows[0]
 	e.Hash = strings.ToLower(r.Hash)
 	e.State = r.State
+	if r.AddedAt != nil && *r.AddedAt > 0 {
+		e.AddedAt = r.AddedAt
+	}
 	if r.Progress != nil && r.Left != nil {
 		if math.IsNaN(*r.Progress) || math.IsInf(*r.Progress, 0) || *r.Progress < 0 || *r.Progress > 1 || *r.Left < 0 {
 			return e, ErrResponse

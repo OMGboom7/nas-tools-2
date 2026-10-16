@@ -277,6 +277,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/downloads/qbittorrent-profiles", downloads.serveQbProfiles)
 	mux.HandleFunc("POST /api/v1/downloads/qbittorrent-profiles/{id}/{action}", downloads.serveQbProfileAction)
 	mux.HandleFunc("GET /api/v1/downloads/seeding", downloads.serveSeedingEvidence)
+	mux.HandleFunc("GET /api/v1/downloads/pt-verification", downloads.servePTVerification)
+	mux.HandleFunc("POST /api/v1/downloads/pt-verification/{action}", downloads.servePTVerification)
 	mux.HandleFunc("GET /api/v1/downloads/pt-admission", downloads.servePTAdmission)
 	mux.HandleFunc("POST /api/v1/downloads/pt-admission/{action}", downloads.servePTAdmission)
 	mux.HandleFunc("POST /api/v1/downloads/seeding/{action}", downloads.serveSeedingPolicy)

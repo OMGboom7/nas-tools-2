@@ -169,9 +169,35 @@ export async function applyPTAdmission(token: string, review: PTAdmissionReview,
 }
 export type SeedingRequirements = { seconds: number | null; ratio: number | null; hr: boolean | null };
 export type SeedingPolicy = { id: string; downloaderId: number; downloaderName: string; downloaderType: string; infoHash: string; title: string; source: string; requirements: SeedingRequirements; actor: string; created: string };
-export type SeedingEvidence = { hash: string; state: string; complete: boolean | null; seconds: number | null; ratio: number | null };
-export type SeedingDecision = { allowed: boolean; reasons: string[] };
-export type SeedingPolicyStatus = { registered: boolean; policies: SeedingPolicy[]; evidence: SeedingEvidence; decision: SeedingDecision; warning: string };
+export type SeedingEvidence = { hash: string; state: string; complete: boolean | null; seconds: number | null; ratio: number | null; addedAt?: number | null };
+export type SeedingDecision = { allowed: boolean; reasons: string[]; basis?: "operator-attestation" };
+export type SeedingPolicyStatus = { registered: boolean; policies: SeedingPolicy[]; evidence: SeedingEvidence; decision: SeedingDecision; actions?: Record<"stop" | "remove" | "move", SeedingDecision>; manualVerification?: PTVerificationState; warning: string };
+export type VerificationActions = { stop: boolean; remove: boolean; move: boolean };
+export type PTVerification = { id: string; kind: "operator-attestation"; downloaderId: number; infoHash: string; policyDigest: string; policyIds: string[]; actor: string; note: string; actions: VerificationActions; observed: SeedingEvidence; created: string; expires: string };
+export type PTVerificationState = { record: PTVerification | null; revoked: boolean; revokedBy?: string; revokedAt?: string };
+export type PTVerificationInput = SeedingScope & { mode: "attest" | "revoke"; minutes: number; note: string; actions: VerificationActions };
+export type PTVerificationReview = PTVerificationInput & { name: string; policies: SeedingPolicy[]; evidence: SeedingEvidence | null; current: PTVerificationState; fingerprint: string; reviewExpires: string; warning: string };
+export async function getPTVerification(token: string, scope: SeedingScope): Promise<PTVerificationState> {
+  validateSeedingScope(scope);
+  const result = await readResponse<PTVerificationState>(await fetch(`/api/v1/downloads/pt-verification?downloaderId=${scope.downloaderId}&taskId=${encodeURIComponent(scope.taskId)}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data || result.data.record && (result.data.record.downloaderId !== scope.downloaderId || result.data.record.infoHash !== scope.taskId.toLowerCase() || result.data.record.kind !== "operator-attestation")) throw new ApiError(result.message || "限时人工核实记录不可核实", result.code);
+  return result.data;
+}
+export async function reviewPTVerification(token: string, input: PTVerificationInput): Promise<PTVerificationReview> {
+  validateSeedingScope(input);
+  if (!["attest", "revoke"].includes(input.mode) || input.mode === "attest" && (!Number.isInteger(input.minutes) || input.minutes < 1 || input.minutes > 30 || !input.note.trim() || !Object.values(input.actions).some(Boolean))) throw new ApiError("需选择准确范围、有效期、动作及核实说明", 400);
+  const result = await readResponse<PTVerificationReview>(await fetch("/api/v1/downloads/pt-verification/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
+  const data = result.data;
+  if (!result.success || result.code !== 0 || !data || data.downloaderId !== input.downloaderId || data.taskId !== input.taskId.toLowerCase() || data.mode !== input.mode || data.minutes !== input.minutes || data.note !== input.note.trim() || !(["stop", "remove", "move"] as const).every((key) => data.actions?.[key] === input.actions[key]) || !/^[a-f0-9]{64}$/.test(data.fingerprint) || !Number.isFinite(Date.parse(data.reviewExpires)) || input.mode === "attest" && (data.evidence?.hash !== input.taskId.toLowerCase() || !Number.isSafeInteger(data.evidence.addedAt) || (data.evidence.addedAt ?? 0) < 1)) throw new ApiError(result.message || "人工核实审核的准确范围不可建立", result.code);
+  return data;
+}
+export async function applyPTVerification(token: string, review: PTVerificationReview, confirm = false, confirmAccountReviewed = false, confirmAutomationScope = false, confirmOldExecutorsStopped = false): Promise<void> {
+  validateSeedingScope(review);
+  if (!confirm || !/^[a-f0-9]{64}$/.test(review.fingerprint) || !Number.isFinite(Date.parse(review.reviewExpires)) || Date.parse(review.reviewExpires) <= Date.now() || !["attest", "revoke"].includes(review.mode) || review.mode === "attest" && (!confirmAccountReviewed || !confirmAutomationScope || !confirmOldExecutorsStopped)) throw new ApiError("需有效审核及独立确认账户核实、自动流程影响与旧执行器停止", 400);
+  const { downloaderId, taskId, mode, minutes, note, actions, fingerprint } = review;
+  const result = await readResponse<unknown>(await fetch(`/api/v1/downloads/pt-verification/${mode === "attest" ? "record" : "revoke"}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ downloaderId, taskId, mode, minutes, note, actions, fingerprint, confirm, confirmAccountReviewed, confirmAutomationScope, confirmOldExecutorsStopped }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "声明响应不确定，请只读刷新，不自动重发或执行任务", result.code);
+}
 export type SeedingPolicyReview = { policy: SeedingPolicy; policies: SeedingPolicy[]; evidence: SeedingEvidence; decision: SeedingDecision; fingerprint: string; needsUnknownHold: boolean; warning: string };
 function validateSeedingScope(scope: SeedingScope) {
   if (!Number.isSafeInteger(scope.downloaderId) || scope.downloaderId < 1 || !/^[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?$/.test(scope.taskId)) throw new ApiError("需准确的下载器 ID 和完整任务 hash", 400);

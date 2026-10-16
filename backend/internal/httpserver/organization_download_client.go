@@ -122,7 +122,7 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 		if err != nil {
 			return err
 		}
-		if err := s.checkSeedingPolicy(ctx, item, o.Task.ID); err != nil {
+		if err := s.checkSeedingAction(ctx, item, o.Task.ID, "move"); err != nil {
 			return err
 		}
 	}

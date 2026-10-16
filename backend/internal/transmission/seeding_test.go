@@ -47,7 +47,7 @@ func TestSeedingEvidenceBothVersionsUsesOnlyDaemonCounters(t *testing.T) {
 					var ids, fields []string
 					_ = json.Unmarshal(args["ids"], &ids)
 					_ = json.Unmarshal(args["fields"], &fields)
-					if p.Method != method || len(ids) != 1 || ids[0] != hash || len(fields) != 8 {
+					if p.Method != method || len(ids) != 1 || ids[0] != hash || len(fields) != 9 {
 						t.Fatal(p)
 					}
 					row := map[string]any{hashKey: hash, "status": test.status, progressKey: 1, leftKey: 0, metaKey: 1, "error": 0, "doneDate": 1}

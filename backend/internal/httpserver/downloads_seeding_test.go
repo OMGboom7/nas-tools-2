@@ -24,12 +24,13 @@ type seedingFixture struct {
 	seconds         int64
 	ratio           float64
 	mutations       int
+	addedAt         int64
 	unknown, absent bool
 }
 
 func newSeedingFixture(t *testing.T) *seedingFixture {
 	t.Helper()
-	w := &seedingFixture{f: manualHTTPFixture(t, "qbittorrent", false), seconds: 900, ratio: 1.5}
+	w := &seedingFixture{f: manualHTTPFixture(t, "qbittorrent", false), seconds: 900, ratio: 1.5, addedAt: 1700000000}
 	original := w.f.transport
 	w.f.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Hostname() != "client.local" {
@@ -38,6 +39,9 @@ func newSeedingFixture(t *testing.T) *seedingFixture {
 		if strings.HasSuffix(r.URL.Path, "auth/login") {
 			return jsonResponse(r, "Ok."), nil
 		}
+		if strings.HasSuffix(r.URL.Path, "app/version") {
+			return jsonResponse(r, "v4.6.7"), nil
+		}
 		if strings.HasSuffix(r.URL.Path, "torrents/info") {
 			if r.Method != "GET" || r.URL.Query().Get("hashes") != w.f.hash || r.URL.Query().Get("filter") != "all" {
 				t.Fatal("widened source", r.URL)
@@ -45,7 +49,7 @@ func newSeedingFixture(t *testing.T) *seedingFixture {
 			if w.absent {
 				return jsonResponse(r, `[]`), nil
 			}
-			row := map[string]any{"hash": w.f.hash, "state": "pausedUP", "progress": 1, "amount_left": 0, "completion_on": 1}
+			row := map[string]any{"hash": w.f.hash, "state": "pausedUP", "progress": 1, "amount_left": 0, "completion_on": 1, "added_on": w.addedAt}
 			if !w.unknown {
 				row["seeding_time"] = w.seconds
 				row["ratio"] = w.ratio

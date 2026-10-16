@@ -310,7 +310,7 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 		defer close()
 		ctx = guarded
 		if action != "start" {
-			if e := service.checkSeedingPolicy(ctx, item, id); e != nil {
+			if e := service.checkSeedingAction(ctx, item, id, action); e != nil {
 				return true, e
 			}
 		}
@@ -350,6 +350,15 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 					return true, downloaderconfig.ErrQbProfilePending
 				}
 				return true, c.StartProfile(ctx, id)
+			}
+		}
+		if action == "stop" {
+			policies, _, e := service.downloaders.SeedingPolicies(ctx, item.ID, id)
+			if e != nil {
+				return true, e
+			}
+			if len(policies) > 0 {
+				return true, c.StopForOrganization(ctx, id)
 			}
 		}
 		return true, c.Control(ctx, id, action)

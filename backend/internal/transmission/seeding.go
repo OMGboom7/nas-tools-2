@@ -14,8 +14,8 @@ func (c *Client) SeedingEvidence(ctx context.Context, hash string) (seeding.Evid
 	if !ValidHash(hash) {
 		return e, ErrConfiguration
 	}
-	oldFields := []string{"hashString", "status", "percentDone", "leftUntilDone", "metadataPercentComplete", "error", "secondsSeeding", "uploadRatio"}
-	newFields := []string{"hash_string", "status", "percent_done", "left_until_done", "metadata_percent_complete", "error", "seconds_seeding", "upload_ratio"}
+	oldFields := []string{"hashString", "status", "percentDone", "leftUntilDone", "metadataPercentComplete", "error", "secondsSeeding", "uploadRatio", "addedDate"}
+	newFields := []string{"hash_string", "status", "percent_done", "left_until_done", "metadata_percent_complete", "error", "seconds_seeding", "upload_ratio", "added_date"}
 	old, _ := json.Marshal(map[string]any{"method": "torrent-get", "arguments": map[string]any{"ids": []string{hash}, "fields": oldFields}})
 	modern, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "torrent_get", "params": map[string]any{"ids": []string{hash}, "fields": newFields}})
 	raw, isModern, err := c.exchange(ctx, old, modern)
@@ -71,6 +71,13 @@ func (c *Client) SeedingEvidence(ctx context.Context, hash string) (seeding.Evid
 	var left, seconds *int64
 	var ratio *float64
 	var taskError *int
+	var addedAt *int64
+	if !read(key("addedDate", "added_date"), &addedAt) {
+		return e, ErrResponse
+	}
+	if addedAt != nil && *addedAt > 0 {
+		e.AddedAt = addedAt
+	}
 	if !read(key("percentDone", "percent_done"), &progress) || !read(key("metadataPercentComplete", "metadata_percent_complete"), &metadata) || !read(key("leftUntilDone", "left_until_done"), &left) || !read("error", &taskError) || !read(key("secondsSeeding", "seconds_seeding"), &seconds) || !read(key("uploadRatio", "upload_ratio"), &ratio) {
 		return e, ErrResponse
 	}

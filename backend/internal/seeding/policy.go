@@ -11,13 +11,50 @@ type Requirements struct {
 	HR      *bool    `json:"hr"`
 }
 type Evidence struct {
+	AddedAt  *int64   `json:"addedAt"`
 	Hash     string   `json:"hash"`
 	State    string   `json:"state"`
 	Complete *bool    `json:"complete"`
 	Seconds  *int64   `json:"seconds"`
 	Ratio    *float64 `json:"ratio"`
 }
+
+// An operator attestation is NOT automatic tracker evidence. Callers must
+// independently validate its actor, exact policy set, scope and short expiry.
+// Known minima cannot be waived, and a reset/re-added task invalidates it.
+func EvaluateAttested(hash string, rules []Requirements, current, observed Evidence) Decision {
+	deny := func(reason string) Decision { return Decision{Allowed: false, Reasons: []string{reason}} }
+	if !ValidHash(hash) || !strings.EqualFold(current.Hash, hash) || !strings.EqualFold(observed.Hash, hash) || current.AddedAt == nil || observed.AddedAt == nil || *current.AddedAt < 1 || *current.AddedAt != *observed.AddedAt {
+		return deny("attested task identity changed or is unknown")
+	}
+	if current.Complete == nil || !*current.Complete || observed.Complete == nil || !*observed.Complete {
+		return deny("attested task completion is unknown or changed")
+	}
+	valid := func(e Evidence) bool {
+		return e.Seconds != nil && *e.Seconds >= 0 && e.Ratio != nil && *e.Ratio >= 0 && !math.IsNaN(*e.Ratio) && !math.IsInf(*e.Ratio, 0)
+	}
+	if !valid(current) || !valid(observed) {
+		return deny("attested counters are unknown")
+	}
+	if *current.Seconds < *observed.Seconds || *current.Ratio < *observed.Ratio {
+		return deny("attested task counters regressed")
+	}
+	for _, r := range rules {
+		if !r.Valid() {
+			return deny("stored requirements are invalid")
+		}
+		if r.Seconds != nil && *current.Seconds < *r.Seconds {
+			return deny("known minimum seed time has not been reached")
+		}
+		if r.Ratio != nil && *current.Ratio < *r.Ratio {
+			return deny("known minimum ratio has not been reached")
+		}
+	}
+	return Decision{Allowed: true, Reasons: []string{}}
+}
+
 type Decision struct {
+	Basis   string   `json:"basis,omitempty"`
 	Allowed bool     `json:"allowed"`
 	Reasons []string `json:"reasons"`
 }
