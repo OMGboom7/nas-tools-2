@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 )
 
@@ -21,6 +22,10 @@ func (api organizationAPI) jobsAuthorized(w http.ResponseWriter, r *http.Request
 	return true
 }
 func writeOrganizationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, downloaderconfig.ErrSeedingPolicy) {
+		manualSubmissionError(w, err)
+		return
+	}
 	status, message := 503, "organization operation failed; inspect the saved job state"
 	if errors.Is(err, organization.ErrNotFound) {
 		status, message = 404, "organization job not found"
@@ -316,6 +321,11 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 }
 
 func (api organizationAPI) runJob(ctx context.Context, job organization.Job, reconcile bool) error {
+	ctx, close, err := api.guardSeedingMove(ctx, job)
+	if err != nil {
+		return err
+	}
+	defer close()
 	if !organization.SupportedMode(job.Definition.Mode) || job.State == "cancelled" {
 		return organization.ErrState
 	}
@@ -407,6 +417,11 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 }
 
 func (api organizationAPI) finishMove(ctx context.Context, job organization.Job, item organization.JobItem) error {
+	ctx, close, err := api.guardSeedingMove(ctx, job)
+	if err != nil {
+		return err
+	}
+	defer close()
 	if err := api.validateJob(ctx, job); err != nil {
 		return err
 	}
@@ -447,6 +462,11 @@ func (api organizationAPI) finishMove(ctx context.Context, job organization.Job,
 }
 
 func (api organizationAPI) cleanupMove(ctx context.Context, job organization.Job, item organization.JobItem) error {
+	ctx, close, err := api.guardSeedingMove(ctx, job)
+	if err != nil {
+		return err
+	}
+	defer close()
 	if item.State != "completed" {
 		return organization.ErrState
 	}
@@ -503,6 +523,11 @@ func (api organizationAPI) resumeMove(ctx context.Context, job organization.Job)
 }
 
 func (api organizationAPI) resumePublication(ctx context.Context, job organization.Job) error {
+	ctx, close, err := api.guardSeedingMove(ctx, job)
+	if err != nil {
+		return err
+	}
+	defer close()
 	if !organization.SupportedMode(job.Definition.Mode) || job.State == "cancelled" {
 		return organization.ErrState
 	}

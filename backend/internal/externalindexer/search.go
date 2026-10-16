@@ -31,6 +31,7 @@ type Resource struct {
 	// Nil is unknown; explicit zero is a declared zero requirement.
 	MinimumSeedTime *int64
 	MinimumRatio    *float64
+	HitAndRun       *bool
 }
 
 func validRemoteID(kind, id string) bool {

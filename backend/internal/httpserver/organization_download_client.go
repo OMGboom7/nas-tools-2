@@ -52,7 +52,7 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs, stop: c.StopForOrganization}, nil
+			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs, stop: c.StopForOrganization}), nil
 		}
 	case "transmission":
 		c, err := transmission.New(text(cfg["host"]), text(cfg["port"]), text(cfg["username"]), text(cfg["password"]), api.service.client.Transport)
@@ -75,7 +75,7 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 				}
 				return c.Control(ctx, id, "stop")
 			}
-			return completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}, nil
+			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}), nil
 		}
 	case "aria2":
 		c, err := aria2.New(text(cfg["host"]), text(cfg["port"]), text(cfg["secret"]), api.service.client.Transport)
@@ -83,7 +83,7 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 			return completionOrganizationClient{}, err
 		}
 		if c != nil {
-			return completionOrganizationClient{read: c.Completion, has: c.HasOrganizationTask, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs}, nil
+			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasOrganizationTask, mark: c.MarkOrganized, remove: c.RemoveOrganizationTask, completed: c.CompletedIDs}), nil
 		}
 	}
 	return completionOrganizationClient{}, organization.ErrState
@@ -95,6 +95,20 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 	o := job.Definition.Download
 	if o == nil {
 		return nil
+	}
+	if job.Mode == "move" {
+		id, err := syncConfigID(o.DownloaderID)
+		if err != nil {
+			return err
+		}
+		s := api.seedingService()
+		item, err := s.downloaders.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.checkSeedingPolicy(ctx, item, o.Task.ID); err != nil {
+			return err
+		}
 	}
 	if job.Mode == "move" && o.DownloaderType == "transmission" {
 		id, err := syncConfigID(o.DownloaderID)

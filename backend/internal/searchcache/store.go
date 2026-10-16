@@ -67,7 +67,24 @@ func clone(resource externalindexer.Resource) externalindexer.Resource {
 		v := *resource.MinimumRatio
 		resource.MinimumRatio = &v
 	}
+	if resource.HitAndRun != nil {
+		v := *resource.HitAndRun
+		resource.HitAndRun = &v
+	}
 	return resource
+}
+
+// Read returns an actor-bound immutable copy without claiming a download.
+func (store *Store) Read(owner, id string) (externalindexer.Resource, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := store.now()
+	store.prune(now)
+	item := store.entries[id]
+	if item == nil || item.owner != owner || !now.Before(item.expires) {
+		return externalindexer.Resource{}, ErrMissing
+	}
+	return clone(item.resource), nil
 }
 
 func (store *Store) prune(now time.Time) {

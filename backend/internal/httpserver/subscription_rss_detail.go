@@ -87,6 +87,9 @@ func subscriptionDetailXML(ctx context.Context, source *html.Node) (*xmlquery.No
 }
 
 func parseSubscriptionDetail(ctx context.Context, body []byte, title string, rules map[string]json.RawMessage, resource externalindexer.Resource) (externalindexer.Resource, error) {
+	return parseSubscriptionDetailPolicy(ctx, body, title, rules, resource, true)
+}
+func parseSubscriptionDetailPolicy(ctx context.Context, body []byte, title string, rules map[string]json.RawMessage, resource externalindexer.Resource, rejectHR bool) (externalindexer.Resource, error) {
 	doc, err := builtinindexer.ParseDocument(ctx, body)
 	if err != nil {
 		return resource, err
@@ -146,7 +149,15 @@ func parseSubscriptionDetail(ctx context.Context, body []byte, title string, rul
 	if err != nil {
 		return resource, err
 	}
-	if len(hr) > 0 {
+	var hrPaths []string
+	if json.Unmarshal(rules["HR"], &hrPaths) != nil {
+		return resource, errSubscriptionRSSUnsupported
+	}
+	if len(hrPaths) > 0 {
+		marked := len(hr) > 0
+		resource.HitAndRun = &marked
+	}
+	if len(hr) > 0 && rejectHR {
 		return resource, errSubscriptionRSSUnsupported
 	}
 	free, err := match("FREE")

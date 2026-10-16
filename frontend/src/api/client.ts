@@ -125,6 +125,36 @@ export type AuthSession = {
   user: UserInfo;
 };
 
+export type SeedingScope = { downloaderId: number; taskId: string };
+export type SeedingRequirements = { seconds: number | null; ratio: number | null; hr: boolean | null };
+export type SeedingPolicy = { id: string; downloaderId: number; downloaderName: string; downloaderType: string; infoHash: string; title: string; source: string; requirements: SeedingRequirements; actor: string; created: string };
+export type SeedingEvidence = { hash: string; state: string; complete: boolean | null; seconds: number | null; ratio: number | null };
+export type SeedingDecision = { allowed: boolean; reasons: string[] };
+export type SeedingPolicyStatus = { registered: boolean; policies: SeedingPolicy[]; evidence: SeedingEvidence; decision: SeedingDecision; warning: string };
+export type SeedingPolicyReview = { policy: SeedingPolicy; policies: SeedingPolicy[]; evidence: SeedingEvidence; decision: SeedingDecision; fingerprint: string; needsUnknownHold: boolean; warning: string };
+function validateSeedingScope(scope: SeedingScope) {
+  if (!Number.isSafeInteger(scope.downloaderId) || scope.downloaderId < 1 || !/^[a-fA-F0-9]{40}(?:[a-fA-F0-9]{24})?$/.test(scope.taskId)) throw new ApiError("需准确的下载器 ID 和完整任务 hash", 400);
+}
+export async function getSeedingEvidence(token: string, scope: SeedingScope): Promise<SeedingPolicyStatus> {
+  validateSeedingScope(scope);
+  const result = await readResponse<SeedingPolicyStatus>(await fetch(`/api/v1/downloads/seeding?downloaderId=${scope.downloaderId}&taskId=${encodeURIComponent(scope.taskId)}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !Array.isArray(result.data?.policies) || result.data.evidence?.hash !== scope.taskId.toLowerCase()) throw new ApiError(result.message || "做种证据不可用；不会授权任务操作", result.code);
+  return result.data;
+}
+export async function reviewSeedingPolicy(token: string, scope: SeedingScope & { resourceId: string }): Promise<SeedingPolicyReview> {
+  validateSeedingScope(scope);
+  if (!/^go-search-[a-f0-9]{32}$/.test(scope.resourceId)) throw new ApiError("需当前用户未过期的搜索资源", 400);
+  const result = await readResponse<SeedingPolicyReview>(await fetch("/api/v1/downloads/seeding/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(scope) }));
+  if (!result.success || result.code !== 0 || !result.data || !/^[a-f0-9]{64}$/.test(result.data.fingerprint) || result.data.policy?.downloaderId !== scope.downloaderId || result.data.policy.infoHash !== scope.taskId.toLowerCase() || typeof result.data.needsUnknownHold !== "boolean") throw new ApiError(result.message || "接管审核范围无法核实", result.code);
+  return result.data;
+}
+export async function bindSeedingPolicy(token: string, scope: SeedingScope & { resourceId: string }, review: SeedingPolicyReview, confirm = false, confirmOldExecutorsStopped = false, confirmUnknownHold = false): Promise<void> {
+  validateSeedingScope(scope);
+  if (!/^go-search-[a-f0-9]{32}$/.test(scope.resourceId) || !confirm || !confirmOldExecutorsStopped || review.needsUnknownHold && !confirmUnknownHold || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.policy.downloaderId !== scope.downloaderId || review.policy.infoHash !== scope.taskId.toLowerCase()) throw new ApiError("需新审核及不可降低、旧执行器停止、未知 HR 持续拦截的分别确认", 400);
+  const result = await readResponse<SeedingPolicy>(await fetch("/api/v1/downloads/seeding/bind", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...scope, fingerprint: review.fingerprint, confirm, confirmOldExecutorsStopped, confirmUnknownHold }) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "登记响应不确定；只读刷新原任务，不自动重发", result.code);
+}
+
 export type ResumeItem = {
   id: string | number;
   name: string;

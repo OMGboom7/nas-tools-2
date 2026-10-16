@@ -3,6 +3,7 @@ import { addSearchResource, ApiError, searchResources, type AuthSession, type Se
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { seedingRequirements } from "../utils/seedingRequirements";
 import { mediaDetailPath } from "../utils/mediaDetail";
+import { SeedingPolicies } from "../components/SeedingPolicies";
 
 type SearchPageProps = {
   session: AuthSession;
@@ -27,6 +28,7 @@ export function SearchPage({ session, currentPath, onNavigate, onLogout, onSessi
   const [site, setSite] = useState("");
   const [resolution, setResolution] = useState("");
   const [downloads, setDownloads] = useState<Record<string, DownloadStatus>>({});
+  const [policyResource, setPolicyResource] = useState("");
 
   const filters = useMemo(() => {
     if (state.kind !== "ready") return { sites: [] as string[], resolutions: [] as string[] };
@@ -44,6 +46,7 @@ export function SearchPage({ session, currentPath, onNavigate, onLogout, onSessi
     setSite("");
     setResolution("");
     setDownloads({});
+    setPolicyResource("");
     setState({ kind: "loading" });
     try {
       const data = await searchResources(session.token, value, quick);
@@ -146,7 +149,8 @@ export function SearchPage({ session, currentPath, onNavigate, onLogout, onSessi
                         {resources.length === 0 ? <div className="resource-empty">当前筛选条件下没有资源</div> : resources.map((resource) => (
                           <ResourceRow resource={resource} key={resource.id}
                             canDownload={session.user.userpris.includes("下载管理")}
-                            status={downloads[resource.id]} onDownload={() => handleDownload(resource)} />
+                            status={downloads[resource.id]} onDownload={() => handleDownload(resource)}
+                            onPolicy={String(session.user.userid) === "0" && resource.id.startsWith("go-search-") ? () => setPolicyResource(resource.id) : undefined} />
                         ))}
                       </div>
                     </article>
@@ -156,16 +160,18 @@ export function SearchPage({ session, currentPath, onNavigate, onLogout, onSessi
             )}
           </section>
         )}
+        {policyResource && String(session.user.userid) === "0" && <SeedingPolicies key={session.token + policyResource} token={session.token} resourceId={policyResource} onSessionExpired={onSessionExpired} />}
       </div>
     </WorkspaceLayout>
   );
 }
 
-function ResourceRow({ resource, canDownload, status, onDownload }: {
+function ResourceRow({ resource, canDownload, status, onDownload, onPolicy }: {
   resource: SearchResource;
   canDownload: boolean;
   status?: DownloadStatus;
   onDownload: () => void;
+  onPolicy?: () => void;
 }) {
   const promotion = resource.promotionKnown === false ? "促销未知" : resource.downloadFactor === 0 ? "FREE" : resource.downloadFactor < 1 ? `${resource.downloadFactor * 100}% DL` : "";
   return (
@@ -189,6 +195,7 @@ function ResourceRow({ resource, canDownload, status, onDownload }: {
         </div>
       </div>
       <div className="resource-row__meta">
+        {onPolicy && <button type="button" onClick={onPolicy}>接管现有任务的 PT 约束</button>}
         <strong>{resource.size || "—"}</strong><span>{resource.seedersKnown === false ? "未知" : resource.seeders} 做种</span><small>{resource.releaseGroup || "未知发布组"}</small>
         {canDownload && <button type="button" className={`download-resource ${status?.kind === "success" ? "is-success" : ""}`}
           onClick={onDownload} disabled={status?.kind === "loading" || status?.kind === "success"}

@@ -302,6 +302,17 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 	if item.ID == 0 {
 		return true, errors.New("default downloader is not configured")
 	}
+	if action == "stop" || action == "remove" {
+		guarded, close, e := service.seedingGuard(ctx, item.ID, id)
+		if e != nil {
+			return true, e
+		}
+		defer close()
+		ctx = guarded
+		if e := service.checkSeedingPolicy(ctx, item, id); e != nil {
+			return true, e
+		}
+	}
 	var cfg map[string]any
 	if json.Unmarshal([]byte(item.Config), &cfg) != nil {
 		return true, errors.New("invalid downloader configuration")

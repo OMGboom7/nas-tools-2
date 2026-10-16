@@ -10,6 +10,40 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 )
 
+func TestReadonlyPolicySourcePreservesOwnershipExpiryAndClaimState(t *testing.T) {
+	s := New()
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	hr := true
+	ids, err := s.Put("admin", []externalindexer.Resource{{Title: "Immutable", HitAndRun: &hr}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hr = false
+	r, err := s.Read("admin", ids[0])
+	if err != nil || r.HitAndRun == nil || !*r.HitAndRun {
+		t.Fatal(r, err)
+	}
+	*r.HitAndRun = false
+	if _, err := s.Read("other", ids[0]); !errors.Is(err, ErrMissing) {
+		t.Fatal(err)
+	}
+	r, done, err := s.Claim("admin", ids[0])
+	if err != nil || done || !*r.HitAndRun {
+		t.Fatal(r, done, err)
+	}
+	if _, err := s.Read("admin", ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Claim("admin", ids[0]); !errors.Is(err, ErrBusy) {
+		t.Fatal("read altered claim", err)
+	}
+	now = now.Add(30 * time.Minute)
+	if _, err := s.Read("admin", ids[0]); !errors.Is(err, ErrMissing) {
+		t.Fatal("expired busy source accepted", err)
+	}
+}
+
 func TestPrivateResourcesOwnershipExpiryAndRetry(t *testing.T) {
 	store := New()
 	now := time.Now()

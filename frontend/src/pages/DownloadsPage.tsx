@@ -3,6 +3,7 @@ import { ApiError, addMagnetDownload, addSiteTorrentLink, addTorrentDownload, co
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { ManualDownloadReceipts } from "../components/ManualDownloadReceipts";
 import { TransmissionProfiles } from "../components/TransmissionProfiles";
+import { SeedingPolicies } from "../components/SeedingPolicies";
 
 type DownloadsPageProps = {
   session: AuthSession;
@@ -169,6 +170,7 @@ export function DownloadsPage({ session, currentPath, onNavigate, onLogout, onSe
         {actionNotice && <div className="data-notice" role="status">{actionNotice}</div>}
         <ManualDownloadReceipts token={session.token} onSessionExpired={onSessionExpired} />
         <TransmissionProfiles token={session.token} onSessionExpired={onSessionExpired} />
+        {String(session.user.userid) === "0" && <SeedingPolicies key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         <form className="download-magnet-form" onSubmit={(event) => void handleMagnetSubmit(event)}>
           <label htmlFor="download-magnet">添加磁力链接</label>
           <div><input id="download-magnet" type="text" value={magnet} onChange={(event) => setMagnet(event.target.value)} placeholder="magnet:?xt=urn:btih:…" maxLength={4096} required />

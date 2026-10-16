@@ -203,7 +203,14 @@ func (authentication nativeAuthentication) protectAPI(next http.Handler) http.Ha
 				return
 			}
 		}
+		requiredPermission := ""
 		if requiresSubscriptionPermission(request) {
+			requiredPermission = "订阅管理"
+		}
+		if requiresDownloadPermission(request) {
+			requiredPermission = "下载管理"
+		}
+		if requiredPermission != "" {
 			claims, err := authentication.service.VerifyToken(token)
 			if err != nil {
 				writeAPIError(response, 401, 401, "登录状态无效或已过期")
@@ -215,15 +222,15 @@ func (authentication nativeAuthentication) protectAPI(next http.Handler) http.Ha
 				if errors.Is(err, auth.ErrUserNotFound) {
 					status = 401
 				}
-				writeAPIError(response, status, status, "无法核实当前订阅管理权限")
+				writeAPIError(response, status, status, "无法核实当前"+requiredPermission+"权限")
 				return
 			}
 			allowed := false
 			for _, permission := range user.Permissions {
-				allowed = allowed || permission == "订阅管理"
+				allowed = allowed || permission == requiredPermission
 			}
 			if !allowed {
-				writeAPIError(response, 403, 403, "需要订阅管理权限")
+				writeAPIError(response, 403, 403, "需要"+requiredPermission+"权限")
 				return
 			}
 		}
@@ -247,6 +254,21 @@ func requiresSubscriptionPermission(request *http.Request) bool {
 			if path == "/api/v1/subscribe/"+action {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func requiresDownloadPermission(request *http.Request) bool {
+	if request.Method != "POST" && request.Method != "PUT" && request.Method != "DELETE" {
+		return false
+	}
+	if strings.HasPrefix(request.URL.Path, "/api/v1/downloads/") {
+		return true
+	}
+	for _, action := range []string{"start", "stop", "remove", "search", "magnet", "torrent", "link"} {
+		if request.URL.Path == "/api/v1/download/"+action {
+			return true
 		}
 	}
 	return false

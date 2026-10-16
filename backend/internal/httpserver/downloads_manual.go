@@ -49,6 +49,8 @@ func manualSubmissionError(w http.ResponseWriter, err error) bool {
 		writeAPIError(w, 409, 409, "manual submission pending or scope changed; read its receipt and verify the original downloader, do not resubmit")
 	case errors.Is(err, downloaderconfig.ErrProfilePending):
 		writeAPIError(w, 409, 409, "Transmission settings require explicit review before starting or acknowledging this task")
+	case errors.Is(err, downloaderconfig.ErrSeedingPolicy):
+		writeAPIError(w, 409, 409, "PT seeding requirements are unmet, unknown, changed or busy; no stop, removal or move authorized")
 	default:
 		return false
 	}
