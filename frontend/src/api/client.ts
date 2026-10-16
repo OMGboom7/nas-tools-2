@@ -4,6 +4,28 @@ export type UserInfo = {
   userpris: string[];
 };
 
+export type MediaSyncLibrary = { id: string; name: string; type: "movie" | "show" };
+export type MediaSyncCatalog = { server: string; fingerprint: string; libraries: MediaSyncLibrary[] };
+export type MediaSyncSnapshot = { server: string; generation: string; configDigest: string; libraries: string[]; actor: string; updated: string; total: number; movies: number; series: number; page: number; items: { id: string; library: string; title: string; type: string; year?: string; tmdbid?: string; episodes: { season_num: number; episode_num: number }[] }[] };
+export type MediaSyncStatus = { snapshot: MediaSyncSnapshot; current: boolean; displayOnly: true };
+export async function getMediaSyncStatus(token: string, page = 1): Promise<MediaSyncStatus> {
+  if (!Number.isInteger(page) || page < 1 || page > 1000) throw new ApiError("媒体快照页码无效", 400);
+  const result = await readResponse<MediaSyncStatus>(await fetch(`/api/v1/library/sync?page=${page}`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || result.data?.displayOnly !== true || !Array.isArray(result.data.snapshot?.items)) throw new ApiError(result.message || "媒体快照不可用", result.code);
+  return result.data;
+}
+export async function getMediaSyncLibraries(token: string): Promise<MediaSyncCatalog> {
+  const result = await readResponse<MediaSyncCatalog>(await fetch("/api/v1/library/sync/libraries", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !/^[a-f0-9]{64}$/.test(result.data?.fingerprint || "") || !Array.isArray(result.data?.libraries)) throw new ApiError(result.message || "媒体库列表不可用", result.code);
+  return result.data;
+}
+export async function synchronizeMediaLibraries(token: string, catalog: MediaSyncCatalog, libraries: string[], confirm = false, legacyStopped = false): Promise<MediaSyncSnapshot> {
+  if (!confirm || !legacyStopped || !/^[a-f0-9]{64}$/.test(catalog.fingerprint) || !libraries.length || libraries.length > 100 || new Set(libraries).size !== libraries.length || libraries.some((id) => !catalog.libraries.some((library) => library.id === id))) throw new ApiError("请选择媒体库，确认停止旧同步任务并确认替换展示快照", 400);
+  const result = await readResponse<MediaSyncSnapshot>(await fetch("/api/v1/library/sync", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ libraries, confirm, legacyStopped, fingerprint: catalog.fingerprint }) }));
+  if (!result.success || result.code !== 0 || result.data?.server !== catalog.server || !/^[a-f0-9]{32}$/.test(result.data?.generation || "") || result.data.configDigest !== catalog.fingerprint) throw new ApiError(result.message || "同步响应未核实，请只读刷新快照", result.code);
+  return result.data;
+}
+
 export type TransmissionLimits = { uploadKB: number; downloadKB: number; ratio: number; idleMinutes: number };
 export type TransmissionProfile = { id: string; state: string; reason?: string; fingerprint: string; downloaderId: string; name: string; infoHash: string; options: { DownloadDir: string; Paused: boolean; Labels: string[] }; limits: TransmissionLimits; created: string; updated: string };
 export type TransmissionProfileReview = { profile: TransmissionProfile; current: { hash: string; directory: string; labels: string[]; status: number; uploadKB: number; downloadKB: number; uploadLimited: boolean; downloadLimited: boolean; ratio: number; ratioMode: number; idleMinutes: number; idleMode: number }; next: "configure" | "start" | "acknowledge"; actor: string; fingerprint: string };

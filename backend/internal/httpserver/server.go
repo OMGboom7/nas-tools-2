@@ -18,6 +18,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
+	"github.com/0xforee/nas-tools/backend/internal/mediasync"
 	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/rssparserconfig"
@@ -310,6 +311,17 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		}
 	}
 	organizationRecords := organizationJobs
+	var mediaSnapshots *mediasync.Store
+	if cfg.DisableLegacy && nativeUserDatabasePath != "" {
+		mediaSnapshots, err = mediasync.Open(filepath.Join(filepath.Dir(nativeUserDatabasePath), "media.db"))
+		if err != nil {
+			return nil, fmt.Errorf("open native media snapshots: %w", err)
+		}
+	}
+	mediaSync := mediaSyncAPI{auth: nativeAuth, config: nativeConfig, store: mediaSnapshots, guards: organizationRecords, transport: transport, pureGo: cfg.DisableLegacy}
+	mux.HandleFunc("GET /api/v1/library/sync", mediaSync.status)
+	mux.HandleFunc("GET /api/v1/library/sync/libraries", mediaSync.catalog)
+	mux.HandleFunc("POST /api/v1/library/sync", mediaSync.synchronize)
 	if !organization.CopySupported {
 		organizationJobs = nil
 	}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, getDashboard, type AuthSession, type DashboardData, type ResumeItem } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
+import { MediaSync } from "../components/MediaSync";
 
 type DashboardPageProps = {
   session: AuthSession;
@@ -56,11 +57,12 @@ export function DashboardPage({ session, currentPath, onNavigate, onLogout, onSe
             <section className="empty-state">
               <span className="empty-state__mark">!</span>
               <h2>媒体库暂时不可用</h2>
-              <p>{state.message}。请确认旧 Flask 服务和媒体服务器正在运行。</p>
+              <p>{state.message}。请确认媒体服务器配置及连接正常。</p>
               <button className="secondary-button" type="button" onClick={load}>重新加载</button>
             </section>
           )}
           {state.kind === "ready" && <DashboardContent data={state.data} />}
+          <MediaSync token={session.token} onSessionExpired={onSessionExpired} />
       </div>
     </WorkspaceLayout>
   );
