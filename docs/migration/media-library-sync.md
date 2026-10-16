@@ -18,7 +18,7 @@
 - `GET /api/v1/library/sync/libraries`：只读查询当前影视库并返回配置指纹，API key/token 仅放请求头，不进入 URL/响应。
 - `POST /api/v1/library/sync`：明确 `libraries`、`fingerprint`、`confirm=true`、`legacyStopped=true` 后完整同步，纯 Go 模式且管理员才可执行；混合运行返回 501，不代理给旧服务。
 - 快照配置摘要不匹配时仍明确标识旧配置，不能显示成当前服务器实时状态。同一配置的快照也只代表上次读取时刻，不是远端事务快照；远端数量未变但内容替换等并发变化无法由本地分页彻底排除。
-- 不更改旧 `SyncLibrary` 设置，不开启旧或新后台调度；所选范围保存在新快照元数据。兼容旧页面 `start_mediasync` 动作、旧媒体卡片“已存在”标记、同步进度轮询及 `mediasync_interval` 定时执行仍需后续迁移。
+- 手动接口不更改旧 `SyncLibrary` 设置、不启动定时计划；所选范围保存在新快照元数据。后续同日已接入 [独立授权的 Go 定时同步](media-library-schedule.md)，与手动接口共用采集/发布底座。兼容旧页面 `start_mediasync` 动作、旧媒体卡片“已存在”标记和同步进度轮询仍需后续迁移。
 - **下载/订阅的实时 `Inventory` 查重保持原实现，绝不使用这份缓存证明资源缺失或决定下种。**
 
 ## 验证与后续
@@ -27,6 +27,6 @@
 
 本批集中验证已通过：`go test ./...`、`go vet ./...`、CGO 禁用的 Linux amd64 构建；mediaserver / mediasync / httpserver 的 Snapshot、MediaSync、Inventory、Coverage、Dashboard 相关 `-race` 测试；前端 92 项测试与 TypeScript/Vite 构建。退出检查仍为 360 个 Python 文件、13 处 Go 显式旧接口调用、75 处旧代理/运行时引用、45 处容器 Python 引用，最终退出门禁尚未达标。
 
-下一批接入默认关闭、明确授权的定时媒体库同步，复用同一采集/原子发布逻辑并处理重启、配置变化与授权失效；再迁移旧展示标记/进度接口。全局进度继续粗估 50–60%，不按本批新增接口数量提高完成率。
+定时同步已在后续批次复用同一采集/原子发布逻辑，处理重启、配置变化与授权失效；下一批继续旧展示标记/进度接口。全局进度继续粗估 50–60%，不按本批新增接口数量提高完成率。
 
 协议对照：仓库 `app/mediaserver/client/{emby,jellyfin,plex}.py` 与 [Plex 官方 API](https://developer.plex.tv/pms/)。

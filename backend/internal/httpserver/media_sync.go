@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
@@ -17,12 +18,13 @@ import (
 )
 
 type mediaSyncAPI struct {
-	auth      *nativeAuthentication
-	config    *config.Store
-	store     *mediasync.Store
-	guards    *organization.Store
-	transport http.RoundTripper
-	pureGo    bool
+	auth          *nativeAuthentication
+	config        *config.Store
+	store         *mediasync.Store
+	guards        *organization.Store
+	transport     http.RoundTripper
+	pureGo        bool
+	workerRunning *atomic.Bool
 }
 
 func (api mediaSyncAPI) authorize(w http.ResponseWriter, r *http.Request) (string, bool) {

@@ -44,7 +44,7 @@ export function MediaSync({ token, onSessionExpired }: { token: string; onSessio
   return <section className="content-section" aria-label="媒体库展示快照">
     <h2>媒体库展示快照（管理员）</h2>
     <p>手动同步 Emby、Jellyfin 或 Plex 所选影视库。完整读取后一次性替换该服务器类型的旧登记簿，取消、缺页或失败时保留旧数据。未选择的旧库项目会从此展示快照移除，不删除媒体文件。</p>
-    <p>仅供展示，不作为下载查重证据；本批不启动定时同步。请先停止旧 Python 媒体库同步任务。</p>
+    <p>仅供展示，不作为下载查重证据；此处只执行一次，定时任务需在下方独立授权。请先停止旧 Python 媒体库同步任务。已启用的定时任务仍按自己的范围更新快照。</p>
     <button type="button" className="secondary-button" disabled={busy} onClick={() => void operate("status")}>只读刷新快照</button>{" "}
     <button type="button" className="secondary-button" disabled={busy} onClick={() => void operate("catalog")}>读取可同步媒体库</button>
     {busy && <p role="status">处理中，大型媒体库可能需要数分钟；请勿重复提交。</p>}

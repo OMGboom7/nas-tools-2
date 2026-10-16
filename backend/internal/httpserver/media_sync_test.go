@@ -173,7 +173,7 @@ func TestMediaSyncRequiresAdministratorConfirmationAndExclusiveGuard(t *testing.
 		t.Fatal(created.Body.String())
 	}
 	token := loginForTest(t, f.handler, "other", "strong-password")
-	for _, route := range []string{"GET /api/v1/library/sync", "GET /api/v1/library/sync/libraries", "POST /api/v1/library/sync"} {
+	for _, route := range []string{"GET /api/v1/library/sync", "GET /api/v1/library/sync/libraries", "POST /api/v1/library/sync", "GET /api/v1/library/sync/schedule", "POST /api/v1/library/sync/schedule/review", "POST /api/v1/library/sync/schedule/activate", "POST /api/v1/library/sync/schedule/stop"} {
 		parts := strings.SplitN(route, " ", 2)
 		w := nativeJSONRequest(f.handler, parts[0], parts[1], token, `{}`)
 		if w.Code != 403 {
@@ -204,5 +204,12 @@ func TestMediaSyncMixedModeCannotWrite(t *testing.T) {
 	w := nativeJSONRequest(h, "POST", "/api/v1/library/sync", token, `{"confirm":true}`)
 	if w.Code != 501 {
 		t.Fatal(w.Code, w.Body.String())
+	}
+	for _, route := range []string{"GET /api/v1/library/sync/schedule", "POST /api/v1/library/sync/schedule/review", "POST /api/v1/library/sync/schedule/activate", "POST /api/v1/library/sync/schedule/stop"} {
+		parts := strings.SplitN(route, " ", 2)
+		w := nativeJSONRequest(h, parts[0], parts[1], token, `{}`)
+		if w.Code != 501 {
+			t.Fatal(w.Code, w.Body.String())
+		}
 	}
 }

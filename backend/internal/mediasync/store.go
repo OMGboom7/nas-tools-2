@@ -52,6 +52,8 @@ func Open(path string) (*Store, error) {
 		`CREATE INDEX IF NOT EXISTS INDX_MEDIASYNC_ITEMS_SL ON MEDIASYNC_ITEMS(SERVER,LIBRARY)`,
 		`CREATE TABLE IF NOT EXISTS MEDIASYNC_STATISTICS (ID INTEGER PRIMARY KEY, SERVER TEXT, TOTAL_COUNT TEXT, MOVIE_COUNT TEXT, TV_COUNT TEXT, UPDATE_TIME TEXT)`,
 		`CREATE TABLE IF NOT EXISTS GO_MEDIASYNC_SNAPSHOTS (SERVER TEXT PRIMARY KEY, DOCUMENT TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_MEDIASYNC_SCHEDULE (ID INTEGER PRIMARY KEY CHECK(ID=1), DOCUMENT TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_MEDIASYNC_RUNS (ID TEXT PRIMARY KEY, DOCUMENT TEXT NOT NULL)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()
@@ -65,6 +67,9 @@ func (s *Store) Close() error { return s.db.Close() }
 // Publish replaces one server's display cache and both statistics tables in a
 // single transaction. Callers must hold the cross-process media-sync guard.
 func (s *Store) Publish(ctx context.Context, server, digest, actor string, libraries []string, items []mediaserver.SyncItem) (Snapshot, error) {
+	return s.publish(ctx, server, digest, actor, libraries, items, nil, time.Now())
+}
+func (s *Store) publish(ctx context.Context, server, digest, actor string, libraries []string, items []mediaserver.SyncItem, run *ScheduledRun, now time.Time) (Snapshot, error) {
 	result := Snapshot{Server: server, ConfigDigest: digest, Actor: actor, Libraries: libraries, Updated: time.Now().UTC().Format(time.RFC3339Nano), Total: len(items), Items: []mediaserver.SyncItem{}}
 	if (server != "emby" && server != "jellyfin" && server != "plex") || len(digest) != 64 || actor == "" || len(libraries) == 0 || len(libraries) > 100 || len(items) > 100000 {
 		return result, ErrSnapshot
@@ -101,6 +106,11 @@ func (s *Store) Publish(ctx context.Context, server, digest, actor string, libra
 		return result, err
 	}
 	defer tx.Rollback()
+	if run != nil {
+		if _, _, err := checkScheduledRun(ctx, tx, *run); err != nil {
+			return result, err
+		}
+	}
 	for _, statement := range []string{`DELETE FROM MEDIASYNC_ITEMS WHERE SERVER=?`, `DELETE FROM MEDIASYNC_STATISTICS WHERE SERVER=?`} {
 		if _, err := tx.ExecContext(ctx, statement, server); err != nil {
 			return result, err
@@ -154,6 +164,11 @@ func (s *Store) Publish(ctx context.Context, server, digest, actor string, libra
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return result, ErrSnapshot
+	}
+	if run != nil {
+		if err := finishScheduledRun(ctx, tx, *run, "completed", "", result.Generation, now); err != nil {
+			return result, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return result, err

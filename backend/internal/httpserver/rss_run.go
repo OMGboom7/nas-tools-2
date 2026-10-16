@@ -20,6 +20,7 @@ import (
 )
 
 type rssRunAPI struct {
+	mediaSync     *mediaSyncAPI
 	notifications *businessNotifications
 	organizer     *organizationAPI
 	preview       rssPreviewAPI

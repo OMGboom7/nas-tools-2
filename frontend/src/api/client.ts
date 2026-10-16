@@ -8,6 +8,35 @@ export type MediaSyncLibrary = { id: string; name: string; type: "movie" | "show
 export type MediaSyncCatalog = { server: string; fingerprint: string; libraries: MediaSyncLibrary[] };
 export type MediaSyncSnapshot = { server: string; generation: string; configDigest: string; libraries: string[]; actor: string; updated: string; total: number; movies: number; series: number; page: number; items: { id: string; library: string; title: string; type: string; year?: string; tmdbid?: string; episodes: { season_num: number; episode_num: number }[] }[] };
 export type MediaSyncStatus = { snapshot: MediaSyncSnapshot; current: boolean; displayOnly: true };
+export type MediaScheduleDefinition = { server: string; configDigest: string; authorityDigest: string; actor: string; libraries: string[]; intervalSeconds: number };
+export type MediaSyncSchedule = { revision: string; enabled: boolean; definition: MediaScheduleDefinition; nextRun: string; runId: string; lastState: string; reason: string; changedBy: string; updated: string };
+export type MediaScheduledRun = { id: string; revision: string; definition: MediaScheduleDefinition; state: string; reason: string; started: string; finished: string; snapshotGeneration: string };
+export type MediaScheduleStatus = { schedule: MediaSyncSchedule; runs: MediaScheduledRun[]; current: boolean; workerRunning: boolean; suggestedHours: number; warning: string };
+export type MediaScheduleReview = { definition: MediaScheduleDefinition; revision: string; replacesEnabled: boolean; fingerprint: string };
+export async function getMediaSchedule(token: string): Promise<MediaScheduleStatus> {
+  const result = await readResponse<MediaScheduleStatus>(await fetch("/api/v1/library/sync/schedule", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || typeof result.data?.schedule?.enabled !== "boolean" || !Array.isArray(result.data.runs)) throw new ApiError(result.message || "定时同步状态不可用", result.code);
+  return result.data;
+}
+export async function reviewMediaSchedule(token: string, catalog: MediaSyncCatalog, libraries: string[], hours: number): Promise<MediaScheduleReview> {
+  if (!Number.isFinite(hours) || hours < 1 / 60 || hours > 8760 || !libraries.length || libraries.length > 100 || new Set(libraries).size !== libraries.length || libraries.some((id) => !catalog.libraries.some((library) => library.id === id)) || !/^[a-f0-9]{64}$/.test(catalog.fingerprint)) throw new ApiError("请选择媒体库和 1 分钟至 1 年的周期", 400);
+  const result = await readResponse<MediaScheduleReview>(await fetch("/api/v1/library/sync/schedule/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ libraries, hours, configFingerprint: catalog.fingerprint }) }));
+  const d = result.data?.definition;
+  if (!result.success || result.code !== 0 || !result.data || !/^[a-f0-9]{64}$/.test(result.data.fingerprint || "") || d?.server !== catalog.server || d.configDigest !== catalog.fingerprint || d.intervalSeconds !== Math.round(hours * 3600) || !Array.isArray(d.libraries) || [...d.libraries].sort().join("\0") !== [...libraries].sort().join("\0")) throw new ApiError(result.message || "定时同步审核范围不匹配", result.code);
+  return result.data;
+}
+export async function activateMediaSchedule(token: string, review: MediaScheduleReview, confirm = false, legacyStopped = false): Promise<MediaSyncSchedule> {
+  if (!confirm || !legacyStopped || !/^[a-f0-9]{64}$/.test(review.fingerprint)) throw new ApiError("请分别确认周期执行和旧同步任务已经停止", 400);
+  const result = await readResponse<MediaSyncSchedule>(await fetch("/api/v1/library/sync/schedule/activate", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ libraries: review.definition.libraries, hours: review.definition.intervalSeconds / 3600, configFingerprint: review.definition.configDigest, fingerprint: review.fingerprint, confirm, legacyStopped }) }));
+  if (!result.success || result.code !== 0 || result.data?.enabled !== true || !/^[a-f0-9]{32}$/.test(result.data.revision || "")) throw new ApiError(result.message || "授权响应未核实，请只读刷新状态", result.code);
+  return result.data;
+}
+export async function stopMediaSchedule(token: string, revision: string, confirm = false): Promise<MediaSyncSchedule> {
+  if (!confirm || !/^[a-f0-9]{32}$/.test(revision)) throw new ApiError("请明确确认停止当前代次", 400);
+  const result = await readResponse<MediaSyncSchedule>(await fetch("/api/v1/library/sync/schedule/stop", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ revision, confirm }) }));
+  if (!result.success || result.code !== 0 || result.data?.enabled !== false) throw new ApiError(result.message || "停止响应未核实，请只读刷新状态", result.code);
+  return result.data;
+}
 export async function getMediaSyncStatus(token: string, page = 1): Promise<MediaSyncStatus> {
   if (!Number.isInteger(page) || page < 1 || page > 1000) throw new ApiError("媒体快照页码无效", 400);
   const result = await readResponse<MediaSyncStatus>(await fetch(`/api/v1/library/sync?page=${page}`, { headers: { Authorization: token } }));

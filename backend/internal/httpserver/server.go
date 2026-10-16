@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/auth"
@@ -69,7 +70,8 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSync := startSyncMonitorWorker(workerContext, runner.organizer)
 		waitDownloads := startDownloadMonitorWorker(workerContext, runner.organizer)
 		waitNotifications := startBusinessNotificationWorker(workerContext, runner.notifications)
-		wait = func() { waitExisting(); waitSync(); waitDownloads(); waitNotifications() }
+		waitMedia := startMediaSyncWorker(workerContext, runner.mediaSync)
+		wait = func() { waitExisting(); waitSync(); waitDownloads(); waitNotifications(); waitMedia() }
 	}
 	return handler, wait, nil
 }
@@ -318,10 +320,14 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 			return nil, fmt.Errorf("open native media snapshots: %w", err)
 		}
 	}
-	mediaSync := mediaSyncAPI{auth: nativeAuth, config: nativeConfig, store: mediaSnapshots, guards: organizationRecords, transport: transport, pureGo: cfg.DisableLegacy}
+	mediaSync := mediaSyncAPI{auth: nativeAuth, config: nativeConfig, store: mediaSnapshots, guards: organizationRecords, transport: transport, pureGo: cfg.DisableLegacy, workerRunning: &atomic.Bool{}}
 	mux.HandleFunc("GET /api/v1/library/sync", mediaSync.status)
 	mux.HandleFunc("GET /api/v1/library/sync/libraries", mediaSync.catalog)
 	mux.HandleFunc("POST /api/v1/library/sync", mediaSync.synchronize)
+	mux.HandleFunc("GET /api/v1/library/sync/schedule", mediaSync.scheduleStatus)
+	mux.HandleFunc("POST /api/v1/library/sync/schedule/review", mediaSync.scheduleReview)
+	mux.HandleFunc("POST /api/v1/library/sync/schedule/activate", mediaSync.scheduleActivate)
+	mux.HandleFunc("POST /api/v1/library/sync/schedule/stop", mediaSync.scheduleStop)
 	if !organization.CopySupported {
 		organizationJobs = nil
 	}
@@ -372,7 +378,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}", organizer.serveJob)
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}/unknown-status", organizer.serveUnknownReview)
 	mux.HandleFunc("POST /api/v1/organization/jobs/{id}/{action}", organizer.serveJobAction)
-	rssRunner := &rssRunAPI{organizer: &organizer, pureGo: cfg.DisableLegacy, filters: nativeFilters,
+	rssRunner := &rssRunAPI{mediaSync: &mediaSync, organizer: &organizer, pureGo: cfg.DisableLegacy, filters: nativeFilters,
 		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},
 		download:    rssItemDownloadAPI{tasks: nativeRSSTasks, downloaders: nativeDownloaders, system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, service: downloads},
 		recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},

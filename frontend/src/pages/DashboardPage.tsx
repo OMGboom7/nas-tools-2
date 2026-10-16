@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, getDashboard, type AuthSession, type DashboardData, type ResumeItem } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { MediaSync } from "../components/MediaSync";
+import { MediaSyncSchedule } from "../components/MediaSyncSchedule";
 
 type DashboardPageProps = {
   session: AuthSession;
@@ -63,6 +64,7 @@ export function DashboardPage({ session, currentPath, onNavigate, onLogout, onSe
           )}
           {state.kind === "ready" && <DashboardContent data={state.data} />}
           <MediaSync token={session.token} onSessionExpired={onSessionExpired} />
+          <MediaSyncSchedule token={session.token} onSessionExpired={onSessionExpired} />
       </div>
     </WorkspaceLayout>
   );
