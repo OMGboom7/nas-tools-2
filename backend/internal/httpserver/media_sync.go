@@ -149,7 +149,29 @@ func (api mediaSyncAPI) synchronize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer guard.Close()
-	items, err := client.CollectSnapshot(ctx, username, input.Libraries)
+	if err := api.store.RecoverInterrupted(ctx, time.Now()); err != nil {
+		writeAPIError(w, 503, 503, "previous sync receipts unavailable; no new collection started")
+		return
+	}
+	activity, err := api.store.BeginManual(ctx, kind, digest, actor, input.Libraries, time.Now())
+	if err != nil {
+		writeAPIError(w, 400, 400, "invalid media sync scope or receipt unavailable")
+		return
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		state, reason := "failed", "media sync not published; prior snapshot retained"
+		if ctx.Err() != nil {
+			state, reason = "interrupted", "media sync cancelled; prior snapshot retained"
+		}
+		persist, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer done()
+		_ = api.store.FailManual(persist, activity.ID, state, reason, time.Now())
+	}()
+	items, err := client.CollectSnapshotWithProgress(ctx, username, input.Libraries, api.progressReporter(activity.ID, ctx))
 	if err != nil {
 		writeAPIError(w, 502, 502, "media inventory incomplete; previous snapshot retained")
 		return
@@ -163,10 +185,11 @@ func (api mediaSyncAPI) synchronize(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, 409, "media configuration changed during sync; previous snapshot retained")
 		return
 	}
-	result, err := api.store.Publish(ctx, kind, digest, actor, input.Libraries, items)
+	result, err := api.store.PublishManual(ctx, activity, items, time.Now())
 	if err != nil {
 		writeAPIError(w, 503, 503, "media snapshot not confirmed; read status before retrying")
 		return
 	}
+	committed = true
 	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": result})
 }

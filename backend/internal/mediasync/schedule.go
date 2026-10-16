@@ -194,6 +194,9 @@ func (s *Store) ConfigureSchedule(ctx context.Context, expected string, d Schedu
 		if err := writeScheduledRun(ctx, tx, run, false); err != nil {
 			return old, err
 		}
+		if err := finishActivity(ctx, tx, run.ID, run.State, run.Reason, "", now, true); err != nil {
+			return old, err
+		}
 	}
 	revision, err := randomID()
 	if err != nil {
@@ -235,6 +238,9 @@ func (s *Store) DisableSchedule(ctx context.Context, expected, actor, state, rea
 		if err := writeScheduledRun(ctx, tx, run, false); err != nil {
 			return current, err
 		}
+		if err := finishActivity(ctx, tx, run.ID, run.State, run.Reason, "", now, true); err != nil {
+			return current, err
+		}
 	}
 	current.Revision, err = randomID()
 	if err != nil {
@@ -266,7 +272,10 @@ func (s *Store) RecoverInterrupted(ctx context.Context, now time.Time) error {
 		return err
 	}
 	if current.RunID == "" {
-		return nil
+		if err := recoverActivities(ctx, tx, now); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	run, err := readScheduledRun(ctx, tx, current.RunID)
 	if err != nil {
@@ -278,11 +287,17 @@ func (s *Store) RecoverInterrupted(ctx context.Context, now time.Time) error {
 	if err := writeScheduledRun(ctx, tx, run, false); err != nil {
 		return err
 	}
+	if err := finishActivity(ctx, tx, run.ID, run.State, run.Reason, "", now, true); err != nil {
+		return err
+	}
 	current.RunID = ""
 	current.LastState = run.State
 	current.Reason = run.Reason
 	current.Updated = now.UTC()
 	if err := writeSchedule(ctx, tx, raw, current); err != nil {
+		return err
+	}
+	if err := recoverActivities(ctx, tx, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -321,6 +336,9 @@ func (s *Store) ClaimSchedule(ctx context.Context, expected string, now time.Tim
 	current.Reason = ""
 	current.Updated = now.UTC()
 	if err := writeScheduledRun(ctx, tx, run, true); err != nil {
+		return run, false, err
+	}
+	if err := insertActivity(ctx, tx, newActivity(run.ID, "scheduled", run.Definition.Server, run.Definition.ConfigDigest, run.Definition.Actor, run.Definition.Libraries, now)); err != nil {
 		return run, false, err
 	}
 	if err := writeSchedule(ctx, tx, raw, current); err != nil {
@@ -363,6 +381,9 @@ func finishScheduledRun(ctx context.Context, tx *sql.Tx, run ScheduledRun, state
 	if err := writeScheduledRun(ctx, tx, run, false); err != nil {
 		return err
 	}
+	if err := finishActivity(ctx, tx, run.ID, state, reason, generation, now, state != "completed"); err != nil {
+		return err
+	}
 	current.RunID = ""
 	current.LastState = state
 	current.Reason = reason
@@ -387,5 +408,5 @@ func (s *Store) FailScheduledRun(ctx context.Context, run ScheduledRun, state, r
 	return tx.Commit()
 }
 func (s *Store) PublishScheduled(ctx context.Context, run ScheduledRun, items []mediaserver.SyncItem, now time.Time) (Snapshot, error) {
-	return s.publish(ctx, run.Definition.Server, run.Definition.ConfigDigest, run.Definition.Actor, run.Definition.Libraries, items, &run, now)
+	return s.publish(ctx, run.Definition.Server, run.Definition.ConfigDigest, run.Definition.Actor, run.Definition.Libraries, items, &run, run.ID, now)
 }

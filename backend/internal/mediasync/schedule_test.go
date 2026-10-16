@@ -46,6 +46,7 @@ func TestMediaScheduleDisabledByDefaultDurableCadenceAndAtomicSuccess(t *testing
 		t.Fatal("claimed same interval", err)
 	}
 	items := []mediaserver.SyncItem{{ID: "m", Library: "films", Type: "movie", Title: "Movie", Episodes: []mediaserver.SyncEpisode{}}}
+	readyActivity(t, s, run.ID, 1, 1, 0)
 	view, err := s.PublishScheduled(ctx, run, items, late.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +175,7 @@ func TestMediaScheduleCommitFailureCannotProduceSuccessOrClearOldCache(t *testin
 			if err != nil || !claimed {
 				t.Fatal(err)
 			}
+			readyActivity(t, s, run.ID, 1, 0, 0)
 			if _, err := s.db.Exec(`CREATE TRIGGER ignore_finish BEFORE UPDATE ON ` + target + ` BEGIN SELECT RAISE(IGNORE); END`); err != nil {
 				t.Fatal(err)
 			}

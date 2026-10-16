@@ -63,9 +63,19 @@ func TestSnapshotEmbyJellyfinPaginationNestedItemsAndEpisodes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			items, err := client.CollectSnapshot(context.Background(), "chosen", []string{"films", "tv"})
+			var progress SyncProgress
+			items, err := client.CollectSnapshotWithProgress(context.Background(), "chosen", []string{"films", "tv"}, func(p SyncProgress) error {
+				if p.PagesRead < progress.PagesRead || p.ItemsDone < progress.ItemsDone || p.LibrariesDone < progress.LibrariesDone {
+					t.Fatal("regressed progress", p, progress)
+				}
+				progress = p
+				return nil
+			})
 			if err != nil || len(items) != 102 || pages != 2 || items[0].TMDBID != "100" || items[0].Path != "/nested/Movie.mkv" || len(items[101].Episodes) != 2 {
 				t.Fatal(len(items), pages, err)
+			}
+			if progress.Stage != "publishing" || progress.LibrariesDone != 2 || progress.ItemsDone != 102 || progress.EpisodesDone != 2 || progress.PagesRead != 4 {
+				t.Fatal(progress)
 			}
 		})
 	}
@@ -192,5 +202,34 @@ func TestSnapshotRejectsBadSelectionUserAndIncompleteEpisodes(t *testing.T) {
 				t.Fatal("accepted", mode)
 			}
 		})
+	}
+}
+func TestSnapshotProgressFailureStopsCollectionWithoutSuccess(t *testing.T) {
+	sentinel := fmt.Errorf("progress receipt unavailable")
+	client, err := New("emby", "http://server.test", "key", transportFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/emby/Users":
+			return reply(200, `[{"Id":"u","Name":"user"}]`), nil
+		case "/emby/Users/u/Views":
+			return reply(200, `{"Items":[{"Id":"films","Name":"Films","CollectionType":"movies"}],"TotalRecordCount":1}`), nil
+		default:
+			return reply(200, `{"Items":[{"Id":"m","Type":"Movie","Name":"Movie"}],"TotalRecordCount":1}`), nil
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := false
+	items, err := client.CollectSnapshotWithProgress(context.Background(), "user", []string{"films"}, func(p SyncProgress) error {
+		if p.Stage == "publishing" {
+			final = true
+		}
+		if p.PagesRead == 1 {
+			return sentinel
+		}
+		return nil
+	})
+	if err != sentinel || items != nil || final {
+		t.Fatal(items, err, final)
 	}
 }

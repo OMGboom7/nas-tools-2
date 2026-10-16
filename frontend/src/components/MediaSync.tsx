@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, getMediaSyncLibraries, getMediaSyncStatus, synchronizeMediaLibraries, type MediaSyncCatalog, type MediaSyncStatus } from "../api/client";
+import { MediaSyncProgress } from "./MediaSyncProgress";
 
 export function MediaSync({ token, onSessionExpired }: { token: string; onSessionExpired: () => void }) {
   const [status, setStatus] = useState<MediaSyncStatus | null>(null);
@@ -66,5 +67,6 @@ export function MediaSync({ token, onSessionExpired }: { token: string; onSessio
         <button type="button" disabled={busy || status.snapshot.page * 100 >= status.snapshot.total} onClick={() => void operate("status", status.snapshot.page + 1)}>下一页</button>
       </>}
     </div>}
+    <MediaSyncProgress token={token} follow={busy} onSessionExpired={onSessionExpired} />
   </section>;
 }

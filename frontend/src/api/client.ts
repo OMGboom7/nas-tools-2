@@ -8,6 +8,22 @@ export type MediaSyncLibrary = { id: string; name: string; type: "movie" | "show
 export type MediaSyncCatalog = { server: string; fingerprint: string; libraries: MediaSyncLibrary[] };
 export type MediaSyncSnapshot = { server: string; generation: string; configDigest: string; libraries: string[]; actor: string; updated: string; total: number; movies: number; series: number; page: number; items: { id: string; library: string; title: string; type: string; year?: string; tmdbid?: string; episodes: { season_num: number; episode_num: number }[] }[] };
 export type MediaSyncStatus = { snapshot: MediaSyncSnapshot; current: boolean; displayOnly: true };
+export type MediaCachePresence = { state: "present" | "not-recorded" | "unavailable"; seasons: number; episodes: number };
+export type MediaCacheSummary = { state: "ready" | "unsynced" | "scope-changed" | "unavailable"; server: string; generation: string; updated: string; libraries: string[]; displayOnly: true };
+export type MediaCacheQuery = { tmdbid: string; title: string; year: string; type: "movie" | "show"; season?: number; episode?: number };
+export async function lookupMediaCache(token: string, items: MediaCacheQuery[]): Promise<{ cache: MediaCacheSummary; results: MediaCachePresence[] }> {
+  if (!items.length || items.length > 200) throw new ApiError("每次查询 1 至 200 个展示身份", 400);
+  const result = await readResponse<{ cache: MediaCacheSummary; results: MediaCachePresence[] }>(await fetch("/api/v1/library/sync/lookup", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ items }) }));
+  if (!result.success || result.code !== 0 || result.data?.cache?.displayOnly !== true || !Array.isArray(result.data.results) || result.data.results.length !== items.length) throw new ApiError(result.message || "媒体展示快照不可用", result.code);
+  return result.data;
+}
+export type MediaSyncProgress = { stage: string; library: string; librariesDone: number; librariesTotal: number; itemsDone: number; episodesDone: number; pagesRead: number };
+export type MediaSyncActivity = { id: string; kind: string; server: string; actor: string; libraries: string[]; state: string; reason: string; started: string; updated: string; finished: string; snapshotGeneration: string; progress: MediaSyncProgress };
+export async function getMediaSyncProgress(token: string, signal?: AbortSignal): Promise<MediaSyncActivity[]> {
+  const result = await readResponse<{ activities: MediaSyncActivity[]; indeterminate: boolean }>(await fetch("/api/v1/library/sync/progress", { headers: { Authorization: token }, signal }));
+  if (!result.success || result.code !== 0 || !Array.isArray(result.data?.activities) || result.data.activities.length > 50 || result.data.activities.some((a) => !/^[a-f0-9]{32}$/.test(a.id) || !["manual", "scheduled"].includes(a.kind) || !["collecting", "completed", "failed", "interrupted", "stopped", "paused", "superseded"].includes(a.state) || !a.progress || [a.progress.librariesDone, a.progress.librariesTotal, a.progress.itemsDone, a.progress.episodesDone, a.progress.pagesRead].some((n) => !Number.isInteger(n) || n < 0) || a.state === "completed" && !/^[a-f0-9]{32}$/.test(a.snapshotGeneration))) throw new ApiError(result.message || "同步进度不可用", result.code);
+  return result.data.activities;
+}
 export type MediaScheduleDefinition = { server: string; configDigest: string; authorityDigest: string; actor: string; libraries: string[]; intervalSeconds: number };
 export type MediaSyncSchedule = { revision: string; enabled: boolean; definition: MediaScheduleDefinition; nextRun: string; runId: string; lastState: string; reason: string; changedBy: string; updated: string };
 export type MediaScheduledRun = { id: string; revision: string; definition: MediaScheduleDefinition; state: string; reason: string; started: string; finished: string; snapshotGeneration: string };
@@ -273,12 +289,14 @@ export type DiscoveryMedia = {
   overview: string;
   link: string;
   subscribed: boolean;
+  cachedPresence?: MediaCachePresence;
 };
 
 export type DiscoveryData = {
   category: string;
   page: number;
   items: DiscoveryMedia[];
+  cache?: MediaCacheSummary;
 };
 
 export type SiteSummary = {

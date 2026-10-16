@@ -33,6 +33,15 @@ type SyncItem struct {
 	Path          string        `json:"path,omitempty"`
 	Episodes      []SyncEpisode `json:"episodes"`
 }
+type SyncProgress struct {
+	Stage          string `json:"stage"`
+	Library        string `json:"library"`
+	LibrariesDone  int    `json:"librariesDone"`
+	LibrariesTotal int    `json:"librariesTotal"`
+	ItemsDone      int    `json:"itemsDone"`
+	EpisodesDone   int    `json:"episodesDone"`
+	PagesRead      int    `json:"pagesRead"`
+}
 type syncJSONItem struct {
 	ID                                              string `json:"Id"`
 	Name, Type, CollectionType, OriginalTitle, Path string
@@ -157,7 +166,7 @@ func (client *Client) SyncLibraries(ctx context.Context, username string) ([]Syn
 
 // Pagination requires a stable declared total and unique IDs, so an error,
 // truncated page, ignored offset or changing count cannot erase a valid cache.
-func (client *Client) syncJSONPages(ctx context.Context, endpoint url.URL, query url.Values) ([]syncJSONItem, error) {
+func (client *Client) syncJSONPages(ctx context.Context, endpoint url.URL, query url.Values, onPage func() error) ([]syncJSONItem, error) {
 	result := []syncJSONItem{}
 	seen := map[string]bool{}
 	expected := -1
@@ -184,6 +193,11 @@ func (client *Client) syncJSONPages(ctx context.Context, endpoint url.URL, query
 			seen[item.ID] = true
 		}
 		result = append(result, page.Items...)
+		if onPage != nil {
+			if err := onPage(); err != nil {
+				return nil, err
+			}
+		}
 		offset += len(page.Items)
 		if offset == expected {
 			return result, nil
@@ -194,7 +208,7 @@ func (client *Client) syncJSONPages(ctx context.Context, endpoint url.URL, query
 	}
 }
 
-func (client *Client) syncPlexPages(ctx context.Context, path string, query url.Values) ([]plexInventoryItem, error) {
+func (client *Client) syncPlexPages(ctx context.Context, path string, query url.Values, onPage func() error) ([]plexInventoryItem, error) {
 	result := []plexInventoryItem{}
 	seen := map[string]bool{}
 	expected := -1
@@ -220,6 +234,11 @@ func (client *Client) syncPlexPages(ctx context.Context, path string, query url.
 			seen[item.ID] = true
 		}
 		result = append(result, items...)
+		if onPage != nil {
+			if err := onPage(); err != nil {
+				return nil, err
+			}
+		}
 		offset += len(items)
 		if offset == expected {
 			return result, nil
@@ -255,8 +274,25 @@ func appendSyncEpisodes(result []SyncEpisode, seen map[[2]int]bool, season, epis
 }
 
 func (client *Client) CollectSnapshot(ctx context.Context, username string, selected []string) ([]SyncItem, error) {
+	return client.CollectSnapshotWithProgress(ctx, username, selected, nil)
+}
+func (client *Client) CollectSnapshotWithProgress(ctx context.Context, username string, selected []string, report func(SyncProgress) error) ([]SyncItem, error) {
 	if len(selected) == 0 || len(selected) > 100 {
 		return nil, ErrConfiguration
+	}
+	progress := SyncProgress{Stage: "libraries", LibrariesTotal: len(selected)}
+	emit := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if report != nil {
+			return report(progress)
+		}
+		return nil
+	}
+	onPage := func() error { progress.PagesRead++; return emit() }
+	if err := emit(); err != nil {
+		return nil, err
 	}
 	libraries, err := client.SyncLibraries(ctx, username)
 	if err != nil {
@@ -286,13 +322,17 @@ func (client *Client) CollectSnapshot(ctx context.Context, username string, sele
 	episodeCount := 0
 	for _, id := range selected {
 		library := available[id]
+		progress.Stage, progress.Library = "items", id
+		if err := emit(); err != nil {
+			return nil, err
+		}
 		items := []SyncItem{}
 		if client.kind == "plex" {
 			kind := "1"
 			if library.Type == "show" {
 				kind = "2"
 			}
-			raw, err := client.syncPlexPages(ctx, "/library/sections/"+id+"/all", url.Values{"type": {kind}, "includeGuids": {"1"}})
+			raw, err := client.syncPlexPages(ctx, "/library/sections/"+id+"/all", url.Values{"type": {kind}, "includeGuids": {"1"}}, onPage)
 			if err != nil {
 				return nil, err
 			}
@@ -324,7 +364,7 @@ func (client *Client) CollectSnapshot(ctx context.Context, username string, sele
 			if library.Type == "show" {
 				kind = "Series"
 			}
-			raw, err := client.syncJSONPages(ctx, endpoint, url.Values{"ParentId": {id}, "Recursive": {"true"}, "IncludeItemTypes": {kind}, "Fields": {"ProviderIds,OriginalTitle,Path,ProductionYear"}, "SortBy": {"SortName"}, "SortOrder": {"Ascending"}, "IsVirtualItem": {"false"}})
+			raw, err := client.syncJSONPages(ctx, endpoint, url.Values{"ParentId": {id}, "Recursive": {"true"}, "IncludeItemTypes": {kind}, "Fields": {"ProviderIds,OriginalTitle,Path,ProductionYear"}, "SortBy": {"SortName"}, "SortOrder": {"Ascending"}, "IsVirtualItem": {"false"}}, onPage)
 			if err != nil {
 				return nil, err
 			}
@@ -345,9 +385,13 @@ func (client *Client) CollectSnapshot(ctx context.Context, username string, sele
 			}
 			seen[item.ID] = true
 			if item.Type == "show" {
+				progress.Stage = "episodes"
+				if err := emit(); err != nil {
+					return nil, err
+				}
 				episodeSeen := map[[2]int]bool{}
 				if client.kind == "plex" {
-					raw, err := client.syncPlexPages(ctx, "/library/metadata/"+item.ID+"/allLeaves", url.Values{})
+					raw, err := client.syncPlexPages(ctx, "/library/metadata/"+item.ID+"/allLeaves", url.Values{}, onPage)
 					if err != nil {
 						return nil, err
 					}
@@ -363,7 +407,7 @@ func (client *Client) CollectSnapshot(ctx context.Context, username string, sele
 				} else {
 					endpoint := base
 					endpoint.Path += "/Shows/" + item.ID + "/Episodes"
-					raw, err := client.syncJSONPages(ctx, endpoint, url.Values{"UserId": {user}, "IsMissing": {"false"}, "IsVirtualItem": {"false"}})
+					raw, err := client.syncJSONPages(ctx, endpoint, url.Values{"UserId": {user}, "IsMissing": {"false"}, "IsVirtualItem": {"false"}}, onPage)
 					if err != nil {
 						return nil, err
 					}
@@ -384,12 +428,26 @@ func (client *Client) CollectSnapshot(ctx context.Context, username string, sele
 			}
 			episodeCount += len(item.Episodes)
 			result = append(result, item)
+			progress.ItemsDone = len(result)
+			progress.EpisodesDone = episodeCount
 			if len(result) > 100000 || episodeCount > 1000000 {
 				return nil, ErrResponse
 			}
+			if err := emit(); err != nil {
+				return nil, err
+			}
+		}
+		progress.LibrariesDone++
+		progress.Stage = "library-complete"
+		if err := emit(); err != nil {
+			return nil, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	progress.Stage = "publishing"
+	if err := emit(); err != nil {
 		return nil, err
 	}
 	return result, nil

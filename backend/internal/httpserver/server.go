@@ -324,6 +324,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/library/sync", mediaSync.status)
 	mux.HandleFunc("GET /api/v1/library/sync/libraries", mediaSync.catalog)
 	mux.HandleFunc("POST /api/v1/library/sync", mediaSync.synchronize)
+	mux.HandleFunc("POST /api/v1/library/sync/lookup", mediaSync.lookup)
+	mux.HandleFunc("POST /api/v1/library/sync/status", mediaSync.compatSyncStatus)
+	mux.HandleFunc("GET /api/v1/library/sync/progress", mediaSync.progress)
+	mux.HandleFunc("POST /api/v1/system/progress", mediaSync.compatProgress)
 	mux.HandleFunc("GET /api/v1/library/sync/schedule", mediaSync.scheduleStatus)
 	mux.HandleFunc("POST /api/v1/library/sync/schedule/review", mediaSync.scheduleReview)
 	mux.HandleFunc("POST /api/v1/library/sync/schedule/activate", mediaSync.scheduleActivate)
@@ -420,7 +424,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		subscriptions.control(w, r)
 	})
 	mux.HandleFunc("POST /api/v1/subscriptions/history/{type}/{id}/{action}", subscriptions.controlHistory)
-	discovery := discoveryService{client: &http.Client{Transport: transport}, images: images, config: nativeConfig, databasePath: nativeUserDatabasePath}
+	discovery := discoveryService{client: &http.Client{Transport: transport}, images: images, config: nativeConfig, databasePath: nativeUserDatabasePath, mediaCache: &mediaSync}
 	mux.HandleFunc("POST /api/v1/discovery", discovery.serveHTTP)
 	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits}
 	mux.HandleFunc("GET /api/v1/sites", sites.serveList)

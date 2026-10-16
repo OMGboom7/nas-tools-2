@@ -50,6 +50,9 @@ func Open(path string) (*Store, error) {
 		`PRAGMA busy_timeout=5000`,
 		`CREATE TABLE IF NOT EXISTS MEDIASYNC_ITEMS (ID INTEGER PRIMARY KEY, SERVER TEXT, LIBRARY TEXT, ITEM_ID TEXT, ITEM_TYPE TEXT, TITLE TEXT, ORGIN_TITLE TEXT, YEAR TEXT, TMDBID TEXT, IMDBID TEXT, PATH TEXT, NOTE TEXT, JSON TEXT)`,
 		`CREATE INDEX IF NOT EXISTS INDX_MEDIASYNC_ITEMS_SL ON MEDIASYNC_ITEMS(SERVER,LIBRARY)`,
+		`CREATE INDEX IF NOT EXISTS GO_MEDIASYNC_ITEMS_IDENTITY ON MEDIASYNC_ITEMS(SERVER,ITEM_TYPE,TMDBID)`,
+		`CREATE INDEX IF NOT EXISTS GO_MEDIASYNC_ITEMS_TITLE ON MEDIASYNC_ITEMS(SERVER,ITEM_TYPE,TITLE,YEAR)`,
+		`CREATE TABLE IF NOT EXISTS GO_MEDIASYNC_ACTIVITY (ID TEXT PRIMARY KEY, DOCUMENT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS MEDIASYNC_STATISTICS (ID INTEGER PRIMARY KEY, SERVER TEXT, TOTAL_COUNT TEXT, MOVIE_COUNT TEXT, TV_COUNT TEXT, UPDATE_TIME TEXT)`,
 		`CREATE TABLE IF NOT EXISTS GO_MEDIASYNC_SNAPSHOTS (SERVER TEXT PRIMARY KEY, DOCUMENT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_MEDIASYNC_SCHEDULE (ID INTEGER PRIMARY KEY CHECK(ID=1), DOCUMENT TEXT NOT NULL)`,
@@ -67,9 +70,9 @@ func (s *Store) Close() error { return s.db.Close() }
 // Publish replaces one server's display cache and both statistics tables in a
 // single transaction. Callers must hold the cross-process media-sync guard.
 func (s *Store) Publish(ctx context.Context, server, digest, actor string, libraries []string, items []mediaserver.SyncItem) (Snapshot, error) {
-	return s.publish(ctx, server, digest, actor, libraries, items, nil, time.Now())
+	return s.publish(ctx, server, digest, actor, libraries, items, nil, "", time.Now())
 }
-func (s *Store) publish(ctx context.Context, server, digest, actor string, libraries []string, items []mediaserver.SyncItem, run *ScheduledRun, now time.Time) (Snapshot, error) {
+func (s *Store) publish(ctx context.Context, server, digest, actor string, libraries []string, items []mediaserver.SyncItem, run *ScheduledRun, activity string, now time.Time) (Snapshot, error) {
 	result := Snapshot{Server: server, ConfigDigest: digest, Actor: actor, Libraries: libraries, Updated: time.Now().UTC().Format(time.RFC3339Nano), Total: len(items), Items: []mediaserver.SyncItem{}}
 	if (server != "emby" && server != "jellyfin" && server != "plex") || len(digest) != 64 || actor == "" || len(libraries) == 0 || len(libraries) > 100 || len(items) > 100000 {
 		return result, ErrSnapshot
@@ -106,6 +109,15 @@ func (s *Store) publish(ctx context.Context, server, digest, actor string, libra
 		return result, err
 	}
 	defer tx.Rollback()
+	if activity != "" {
+		kind := "manual"
+		if run != nil {
+			kind = "scheduled"
+		}
+		if err := checkActivity(ctx, tx, activity, kind, server, digest, actor, libraries, items); err != nil {
+			return result, err
+		}
+	}
 	if run != nil {
 		if _, _, err := checkScheduledRun(ctx, tx, *run); err != nil {
 			return result, err
@@ -167,6 +179,10 @@ func (s *Store) publish(ctx context.Context, server, digest, actor string, libra
 	}
 	if run != nil {
 		if err := finishScheduledRun(ctx, tx, *run, "completed", "", result.Generation, now); err != nil {
+			return result, err
+		}
+	} else if activity != "" {
+		if err := finishActivity(ctx, tx, activity, "completed", "", result.Generation, now, false); err != nil {
 			return result, err
 		}
 	}

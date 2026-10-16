@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { addDefaultSubscription, ApiError, getDiscovery, type AuthSession, type DiscoveryData, type DiscoveryMedia } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
+import { mediaCacheLabel } from "../utils/mediaCache";
 
 type DiscoveryPageProps = {
   session: AuthSession;
@@ -73,12 +74,14 @@ export function DiscoveryPage({ session, currentPath, onNavigate, onLogout, onSe
       {state.kind === "loading" && <DiscoverySkeleton />}
       {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>探索内容暂时不可用</h2><p>{state.message}</p></section>}
       {state.kind === "ready" && <>
+	    <p className="data-warning">媒体卡片标记仅来自所选媒体库展示快照，非实时查重，不会阻止或自动触发订阅。{state.data.cache?.updated && `快照时间：${state.data.cache.updated}`}</p>
         {state.data.items.length === 0 ? <div className="inline-empty discovery-empty">这一页没有更多内容。</div> : <div className="discovery-grid">{state.data.items.map((media) => {
           const key = `${media.type}-${media.id}`;
           return <article className="discovery-card" key={key}>
             <div className="discovery-poster"><strong>{media.title.slice(0, 1)}</strong>{media.image && <img src={media.image} alt={`${media.title} 海报`} loading="lazy" />}</div>
             <div className="discovery-card__body"><div className="discovery-meta"><span>{media.type === "MOV" ? "电影" : "剧集"}</span>{media.vote && <strong>{media.vote} 分</strong>}</div>
               <h2>{media.link ? <a href={media.link} target="_blank" rel="noreferrer">{media.title}</a> : media.title}</h2><p>{media.year || "年份未知"}</p><small>{media.overview || "暂无简介"}</small>
+              <p>{mediaCacheLabel(state.data.cache, media.cachedPresence, media.type === "TV")}</p>
               {canSubscribe && <button type="button" className={media.subscribed ? "is-subscribed" : ""} disabled={media.subscribed || subscribing[key]} onClick={() => void subscribe(media)}>
                 {media.subscribed ? "已订阅" : subscribing[key] ? "订阅中…" : "加入订阅"}
               </button>}

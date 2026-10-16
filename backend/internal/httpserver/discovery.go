@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/mediasync"
 )
 
 type discoveryService struct {
@@ -15,6 +16,7 @@ type discoveryService struct {
 	images       *mediaImageProxy
 	config       *config.Store
 	databasePath string
+	mediaCache   *mediaSyncAPI
 }
 
 type discoveryRequest struct {
@@ -23,23 +25,25 @@ type discoveryRequest struct {
 }
 
 type discoveryData struct {
-	Category string           `json:"category"`
-	Page     int              `json:"page"`
-	Items    []discoveryMedia `json:"items"`
+	Category string                  `json:"category"`
+	Page     int                     `json:"page"`
+	Items    []discoveryMedia        `json:"items"`
+	Cache    *mediasync.CacheSummary `json:"cache,omitempty"`
 }
 
 type discoveryMedia struct {
-	ID         string `json:"id"`
-	Title      string `json:"title"`
-	Year       string `json:"year"`
-	Type       string `json:"type"`
-	MediaType  string `json:"mediaType"`
-	Vote       string `json:"vote"`
-	Image      string `json:"image"`
-	Backdrop   string `json:"backdrop"`
-	Overview   string `json:"overview"`
-	Link       string `json:"link"`
-	Subscribed bool   `json:"subscribed"`
+	ID             string                   `json:"id"`
+	Title          string                   `json:"title"`
+	Year           string                   `json:"year"`
+	Type           string                   `json:"type"`
+	MediaType      string                   `json:"mediaType"`
+	Vote           string                   `json:"vote"`
+	Image          string                   `json:"image"`
+	Backdrop       string                   `json:"backdrop"`
+	Overview       string                   `json:"overview"`
+	Link           string                   `json:"link"`
+	Subscribed     bool                     `json:"subscribed"`
+	CachedPresence *mediasync.CachePresence `json:"cachedPresence,omitempty"`
 }
 
 var discoveryCategories = map[string]string{
@@ -83,5 +87,24 @@ func (service discoveryService) serveHTTP(response http.ResponseWriter, request 
 		return
 	}
 	data := discoveryData{Category: input.Category, Page: input.Page, Items: items}
+	if service.mediaCache != nil {
+		queries := make([]mediasync.CacheQuery, len(items))
+		for i, item := range items {
+			kind := "movie"
+			if item.Type == "TV" {
+				kind = "show"
+			}
+			queries[i] = mediasync.CacheQuery{TMDBID: item.ID, Title: item.Title, Year: item.Year, Type: kind}
+		}
+		cached, err := service.mediaCache.cachedPresence(ctx, queries)
+		if err == nil {
+			data.Cache = &cached.Cache
+			for i := range data.Items {
+				data.Items[i].CachedPresence = &cached.Results[i]
+			}
+		} else {
+			data.Cache = &mediasync.CacheSummary{State: "unavailable", DisplayOnly: true, Libraries: []string{}}
+		}
+	}
 	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "data": data})
 }

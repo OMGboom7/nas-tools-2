@@ -267,7 +267,7 @@ func (api *mediaSyncAPI) scheduleTick(parent context.Context, now time.Time) err
 	}
 	ctx, cancel := context.WithTimeout(parent, 10*time.Minute)
 	defer cancel()
-	items, err := client.CollectSnapshot(ctx, username, run.Definition.Libraries)
+	items, err := client.CollectSnapshotWithProgress(ctx, username, run.Definition.Libraries, api.progressReporter(run.ID, ctx))
 	if err != nil {
 		state, reason := "failed", "inventory incomplete; prior snapshot retained; next period starts a new complete read"
 		if ctx.Err() != nil {
