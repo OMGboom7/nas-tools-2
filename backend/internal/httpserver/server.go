@@ -425,6 +425,16 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	})
 	mux.HandleFunc("POST /api/v1/subscriptions/history/{type}/{id}/{action}", subscriptions.controlHistory)
 	discovery := discoveryService{client: &http.Client{Transport: transport}, images: images, config: nativeConfig, databasePath: nativeUserDatabasePath, mediaCache: &mediaSync}
+	mediaDetails := mediaDetailAPI{service: subscriptions, cache: &mediaSync, discovery: discovery, auth: nativeAuth}
+	mux.HandleFunc("GET /media_detail", mediaDetailRedirect)
+	mux.HandleFunc("POST /media_detail", mediaDetailRedirect)
+	mux.HandleFunc("GET /api/v1/media/details/{kind}/{id}", mediaDetails.serveDetail)
+	mux.HandleFunc("GET /api/v1/media/details/tv/{id}/seasons/{season}", mediaDetails.serveSeason)
+	mux.HandleFunc("GET /api/v1/media/details/{kind}/{id}/related/{relation}", mediaDetails.serveRelated)
+	mux.HandleFunc("GET /api/v1/media/details/{kind}/{id}/playback", mediaDetails.servePlayback)
+	mux.HandleFunc("POST /api/v1/media/detail", mediaDetails.serveDetail)
+	mux.HandleFunc("POST /api/v1/media/similar", mediaDetails.serveRelated)
+	mux.HandleFunc("POST /api/v1/media/recommendations", mediaDetails.serveRelated)
 	mux.HandleFunc("POST /api/v1/discovery", discovery.serveHTTP)
 	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits}
 	mux.HandleFunc("GET /api/v1/sites", sites.serveList)

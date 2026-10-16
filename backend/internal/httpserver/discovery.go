@@ -87,6 +87,11 @@ func (service discoveryService) serveHTTP(response http.ResponseWriter, request 
 		return
 	}
 	data := discoveryData{Category: input.Category, Page: input.Page, Items: items}
+	service.decorateCache(ctx, &data)
+	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "data": data})
+}
+func (service discoveryService) decorateCache(ctx context.Context, data *discoveryData) {
+	items := data.Items
 	if service.mediaCache != nil {
 		queries := make([]mediasync.CacheQuery, len(items))
 		for i, item := range items {
@@ -106,5 +111,4 @@ func (service discoveryService) serveHTTP(response http.ResponseWriter, request 
 			data.Cache = &mediasync.CacheSummary{State: "unavailable", DisplayOnly: true, Libraries: []string{}}
 		}
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "data": data})
 }

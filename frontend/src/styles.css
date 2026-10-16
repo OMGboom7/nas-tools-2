@@ -6,6 +6,23 @@
   text-rendering: optimizeLegibility;
 }
 
+.media-detail-page { padding: 24px clamp(16px, 3vw, 44px) 60px; }
+.media-detail-page h1 { font-size: clamp(2rem, 4vw, 4rem); line-height: 1.12; }
+.media-detail-hero { display: flex; gap: 28px; padding: 28px; margin-top: 20px; border-radius: 16px; background-size: cover; background-position: center; }
+.media-detail-poster { width: min(28%, 240px); align-self: flex-start; border-radius: 12px; }
+.media-detail-page a { color: #69d9bb; }
+.media-detail-page .content-section { margin-top: 36px; }
+.media-detail-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; }
+.media-detail-facts dt { color: #a9b8cb; }.media-detail-facts dd { margin: 6px 0 0; overflow-wrap: anywhere; }
+.media-detail-seasons, .media-detail-people, .media-detail-related { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; margin: 18px 0; }
+.media-detail-seasons button { background: #142338; border: 1px solid #2b415c; border-radius: 10px; padding: 14px; text-align: left; cursor: pointer; }
+.media-detail-seasons button[aria-pressed=true] { border-color: #55d6b4; }.media-detail-seasons span, .media-detail-seasons small { display: block; margin-top: 8px; color: #b8c6d8; }
+.media-detail-people img { display: block; width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 10px; margin-bottom: 10px; }
+.media-detail-people small { display: block; margin-top: 6px; color: #a9b8cb; }.media-detail-people article { min-width: 0; }
+.media-detail-related img { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 10px; }.media-detail-related h3 { margin: 8px 0; }
+.media-detail-episodes { list-style: none; padding: 0; display: grid; gap: 18px; }.media-detail-episodes li { display: flex; gap: 18px; background: #101e30; padding: 18px; border-radius: 12px; }.media-detail-episodes img { width: 180px; align-self: flex-start; border-radius: 8px; }.media-detail-episodes p { color: #b8c6d8; line-height: 1.7; }
+@media (max-width: 650px) { .media-detail-hero { display: block; padding: 18px; }.media-detail-poster { width: 140px; margin-bottom: 20px; }.media-detail-episodes li { display: block; }.media-detail-episodes img { width: 100%; }.media-detail-page { padding: 18px 14px 40px; } }
+
 * { box-sizing: border-box; }
 
 body {

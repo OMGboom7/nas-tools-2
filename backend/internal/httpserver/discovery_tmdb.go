@@ -118,7 +118,7 @@ func (service discoveryService) nativeRecommendations(ctx context.Context, endpo
 			continue
 		}
 		kind := "MOV"
-		if endpoint == "/tv/popular" || endpoint == "/tv/on_the_air" || raw.MediaType == "tv" {
+		if strings.HasPrefix(endpoint, "/tv/") || raw.MediaType == "tv" {
 			kind = "TV"
 		}
 		title, date, label := raw.Title, raw.ReleaseDate, "电影"

@@ -14,6 +14,7 @@ import {
   type SubscriptionInput,
 } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
+import { mediaDetailPath } from "../utils/mediaDetail";
 import { SubscriptionEditor } from "../components/SubscriptionEditor";
 
 type SubscriptionsPageProps = {
@@ -151,7 +152,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
             <section className="subscription-section">
               <div className="section-heading"><div><p className="eyebrow">ACTIVE</p><h2>{mediaType === "MOV" ? "电影订阅" : "电视剧订阅"}</h2></div><span>{filtered.items.length} 项</span></div>
               {filtered.items.length === 0 ? <div className="inline-empty">当前筛选条件下没有订阅。</div> : <div className="subscription-grid">{filtered.items.map((item) => (
-                <SubscriptionCard key={`${item.type}-${item.id}`} item={item} busy={busy[`item-${item.type}-${item.id}`]} onEdit={() => void openEditor(item)} onAction={(action) => void handleItemAction(item, action)} />
+                <SubscriptionCard key={`${item.type}-${item.id}`} item={item} busy={busy[`item-${item.type}-${item.id}`]} onNavigate={onNavigate} onEdit={() => void openEditor(item)} onAction={(action) => void handleItemAction(item, action)} />
               ))}</div>}
             </section>
           ) : (
@@ -169,7 +170,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   );
 }
 
-function SubscriptionCard({ item, busy, onEdit, onAction }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onAction: (action: "refresh" | "remove" | "reconcile") => void }) {
+function SubscriptionCard({ item, busy, onEdit, onAction, onNavigate }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onAction: (action: "refresh" | "remove" | "reconcile") => void; onNavigate: (path: string) => void }) {
   const tags = [item.overEdition ? "洗版" : "", item.quality, item.resolution, item.releaseGroup, ...item.rssSites, ...item.searchSites].filter(Boolean);
   return <article className="subscription-card">
     <div className="subscription-art"><strong>{item.name.slice(0, 1)}</strong>{item.image && <img src={item.image} alt={`${item.name} 海报`} loading="lazy" />}</div>
@@ -178,6 +179,7 @@ function SubscriptionCard({ item, busy, onEdit, onAction }: { item: Subscription
       {item.type === "TV" && item.total > 0 && <><div className="subscription-progress"><span style={{ width: `${item.progress}%` }} /></div><small>已获取 {item.total - item.remaining}/{item.total} 集</small></>}
       {tags.length > 0 && <div className="subscription-tags">{tags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div>}
       {item.pendingSubmission && <small>上次提交结果待核实，请先核对下载器任务；核实不会重新提交下载。</small>}
+      {mediaDetailPath(item.type, item.tmdbId) && <button type="button" className="text-button" onClick={() => onNavigate(mediaDetailPath(item.type, item.tmdbId)!)}>查看媒体详情与季集</button>}
       <div className="subscription-actions"><button type="button" disabled={busy} onClick={onEdit}>编辑</button>{item.pendingSubmission ? <button type="button" disabled={busy} onClick={() => onAction("reconcile")}>{busy ? "核实中…" : "核实提交"}</button> : <button type="button" disabled={busy} onClick={() => onAction("refresh")}>{busy ? "处理中…" : "立即搜索"}</button>}<button type="button" className="is-danger" disabled={busy} onClick={() => onAction("remove")}>删除</button></div>
     </div>
   </article>;

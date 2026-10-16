@@ -203,8 +203,53 @@ func (authentication nativeAuthentication) protectAPI(next http.Handler) http.Ha
 				return
 			}
 		}
+		if requiresSubscriptionPermission(request) {
+			claims, err := authentication.service.VerifyToken(token)
+			if err != nil {
+				writeAPIError(response, 401, 401, "登录状态无效或已过期")
+				return
+			}
+			user, err := authentication.service.FindUser(request.Context(), claims.Username)
+			if err != nil {
+				status := 503
+				if errors.Is(err, auth.ErrUserNotFound) {
+					status = 401
+				}
+				writeAPIError(response, status, status, "无法核实当前订阅管理权限")
+				return
+			}
+			allowed := false
+			for _, permission := range user.Permissions {
+				allowed = allowed || permission == "订阅管理"
+			}
+			if !allowed {
+				writeAPIError(response, 403, 403, "需要订阅管理权限")
+				return
+			}
+		}
 		next.ServeHTTP(response, request)
 	})
+}
+
+// Apply at the HTTP boundary so both modern and legacy mutation routes share
+// current account permissions. Internal scheduled operations keep their own
+// explicit authorities; readonly POST list/metadata routes are not mutations.
+func requiresSubscriptionPermission(request *http.Request) bool {
+	if request.Method != "POST" && request.Method != "PUT" && request.Method != "DELETE" {
+		return false
+	}
+	path := request.URL.Path
+	if path == "/api/v1/subscriptions" || strings.HasPrefix(path, "/api/v1/subscriptions/") {
+		return true
+	}
+	if request.Method == "POST" {
+		for _, action := range []string{"add", "delete", "redo", "history/delete", "search"} {
+			if path == "/api/v1/subscribe/"+action {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isMigratedProtectedPath(path string) bool {

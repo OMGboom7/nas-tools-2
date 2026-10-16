@@ -298,6 +298,46 @@ export type DiscoveryData = {
   items: DiscoveryMedia[];
   cache?: MediaCacheSummary;
 };
+export type MediaDetailKind = "movie" | "tv";
+export type MediaPerson = { id: number; name: string; originalName: string; role: string; job: string; department: string; image: string; link: string };
+export type MediaSeason = { number: number; id: number; name: string; overview: string; airDate: string; episodeCount: number | null; poster: string; cachedPresence: MediaCachePresence };
+export type MediaDisplayDetail = { id: string; kind: MediaDetailKind; sourceId: string; title: string; originalTitle: string; year: string; overview: string; tagline: string; vote: number; runtime: number | null; poster: string; backdrop: string; genres: string[]; link: string; doubanId: string; doubanLink: string; facts: { label: string; value: string }[]; cast: MediaPerson[]; crew: MediaPerson[]; seasons: MediaSeason[]; subscribed: boolean; subscriptionsKnown: boolean; subscriptions: { id: string; season: string }[]; cache: MediaCacheSummary; cachedPresence: MediaCachePresence; warnings: string[] };
+export type MediaSeasonDetail = { id: string; season: number; seasonId: number; name: string; overview: string; poster: string; airDate: string; page: number; total: number; episodes: { id: number; number: number; season: number; name: string; overview: string; airDate: string; productionCode: string; runtime: number | null; vote: number; image: string; cachedPresence: MediaCachePresence }[]; cache: MediaCacheSummary };
+function validMediaDetailSelector(kind: MediaDetailKind, id: string): boolean { return ["movie", "tv"].includes(kind) && (/^[1-9]\d{0,18}$/.test(id) || /^DB:[1-9]\d{0,18}$/.test(id) || kind === "tv" && /^BG:[1-9]\d{0,18}$/.test(id)); }
+export async function getMediaDetail(token: string, kind: MediaDetailKind, id: string, signal?: AbortSignal): Promise<MediaDisplayDetail> {
+  if (!validMediaDetailSelector(kind, id)) throw new ApiError("媒体身份无效", 400);
+  const result = await readResponse<MediaDisplayDetail>(await fetch(`/api/v1/media/details/${kind}/${encodeURIComponent(id)}`, { headers: { Authorization: token }, signal }));
+  const d = result.data;
+  if (!result.success || result.code !== 0 || !d || d.kind !== kind || d.sourceId !== id || /^[1-9]\d*$/.test(id) && d.id !== id || !/^[1-9]\d{0,18}$/.test(d.id) || !d.title || !Array.isArray(d.seasons) || !Array.isArray(d.cast) || !Array.isArray(d.crew) || !Array.isArray(d.subscriptions) || !Array.isArray(d.facts) || !Array.isArray(d.genres) || !Array.isArray(d.warnings) || d.cache?.displayOnly !== true) throw new ApiError(result.message || "媒体详情不可用", result.code);
+  return d;
+}
+export async function getMediaSeason(token: string, id: string, season: number, page = 1, signal?: AbortSignal): Promise<MediaSeasonDetail> {
+  if (!/^[1-9]\d{0,18}$/.test(id) || !Number.isInteger(season) || season < 0 || season > 10000 || !Number.isInteger(page) || page < 1 || page > 100) throw new ApiError("季集选择无效", 400);
+  const result = await readResponse<MediaSeasonDetail>(await fetch(`/api/v1/media/details/tv/${id}/seasons/${season}?page=${page}`, { headers: { Authorization: token }, signal }));
+  const d = result.data;
+  if (!result.success || result.code !== 0 || !d || d.id !== id || d.season !== season || d.page !== page || !Array.isArray(d.episodes) || d.episodes.length > 100 || d.episodes.some((ep) => ep.season !== season || !Number.isInteger(ep.number) || ep.number < 0) || d.cache?.displayOnly !== true) throw new ApiError(result.message || "季集详情不可用", result.code);
+  return d;
+}
+export async function getRelatedMedia(token: string, kind: MediaDetailKind, id: string, relation: "similar" | "recommendations", page = 1, signal?: AbortSignal): Promise<DiscoveryData> {
+  if (!/^[1-9]\d{0,18}$/.test(id) || !["movie", "tv"].includes(kind) || !["similar", "recommendations"].includes(relation) || !Number.isInteger(page) || page < 1 || page > 100) throw new ApiError("相关媒体选择无效", 400);
+  const result = await readResponse<DiscoveryData>(await fetch(`/api/v1/media/details/${kind}/${id}/related/${relation}?page=${page}`, { headers: { Authorization: token }, signal }));
+  if (!result.success || result.code !== 0 || !result.data || result.data.category !== relation || result.data.page !== page || !Array.isArray(result.data.items)) throw new ApiError(result.message || "相关媒体不可用", result.code);
+  return result.data;
+}
+export async function getMediaPlayback(token: string, kind: MediaDetailKind, id: string): Promise<string> {
+  if (!/^[1-9]\d{0,18}$/.test(id) || !["movie", "tv"].includes(kind)) throw new ApiError("播放身份无效", 400);
+  const result = await readResponse<{ id: string; kind: string; link: string; liveVerified: boolean }>(await fetch(`/api/v1/media/details/${kind}/${id}/playback`, { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !result.data || result.data.id !== id || result.data.kind !== kind || result.data.liveVerified !== true) throw new ApiError(result.message || "当前播放入口不可用", result.code);
+  let link: URL; try { link = new URL(result.data.link); } catch { throw new ApiError("播放入口格式无效", 502); }
+  if (!["http:", "https:"].includes(link.protocol) || link.username || link.password || link.search) throw new ApiError("播放入口不安全", 502);
+  return result.data.link;
+}
+export async function subscribeMediaDetail(token: string, detail: MediaDisplayDetail, season?: number, confirm = false): Promise<void> {
+  if (!confirm || !/^[1-9]\d{0,18}$/.test(detail.id) || !detail.title || !["movie", "tv"].includes(detail.kind) || detail.kind === "tv" && (season === undefined || !Number.isInteger(season) || season < 0 || season > 999 || !detail.seasons.some((item) => item.number === season)) || detail.kind === "movie" && season !== undefined) throw new ApiError("请核对媒体身份及明确确认所选季订阅", 400);
+  const body = { name: detail.title, year: detail.year, type: detail.kind === "tv" ? "TV" : "MOV", mediaId: detail.id, ...(season === undefined ? {} : { season: String(season) }), fuzzyMatch: false, overEdition: false, rssSites: [], searchSites: [] };
+  const result = await readResponse<unknown>(await fetch("/api/v1/subscriptions", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "订阅响应未核实，请先查看订阅记录，不自动重试", result.code);
+}
 
 export type SiteSummary = {
   id: string;

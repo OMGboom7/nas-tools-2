@@ -28,7 +28,7 @@
 - `POST /api/v1/library/sync/status`：原 mediasync_state 的统计文案由 Go 快照生成，标记展示用途及配置不匹配，不代理旧服务。
 - `POST /api/v1/system/progress`，表单 `type=mediasync`：返回真实最近活动 text/state/enable；采集、发布准备或失败时 value=0 且明确不可定百分比，只有 completed 且有快照代次时 value=100。其他进度类型返回 501，不冒充已迁移，也不退回 Flask。
 - 上述管理接口要求管理员；展示查询与探索为已登录用户。请求体、身份和批量数量有界，无鉴权不读取登记簿内容。
-- 尚未迁移旧 `start_mediasync` 动作、旧 SSE `/stream-progress`、完整媒体详情/季集页面及其所有标记消费者、播放跳转、插件展示使用方。这些不能以新增探索标记或查询 API 为由删除。Go React 不依赖这些旧入口，新同步有独立明确确认。
+- 后续已接入 [原生详情/季集及实时播放入口](media-details.md)，复用本模块展示查询。旧 `start_mediasync`、SSE `/stream-progress`、其他媒体/插件展示使用方仍未全部迁移，不能以新增探索标记或查询 API 为由删除。Go React 不依赖这些旧入口，新同步有独立明确确认。
 
 ## 验证范围
 

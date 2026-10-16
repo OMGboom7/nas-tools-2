@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { login, logout, type AuthSession } from "./api/client";
 import { clearSession, loadSession, saveSession } from "./auth/storage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -12,6 +12,9 @@ import { SearchPage } from "./pages/SearchPage";
 import { SitesPage } from "./pages/SitesPage";
 import { ServicesPage } from "./pages/ServicesPage";
 import { SubscriptionsPage } from "./pages/SubscriptionsPage";
+import { parseMediaDetailPath } from "./utils/mediaDetail";
+
+const MediaDetailPage = lazy(() => import("./pages/MediaDetailPage").then((module) => ({ default: module.MediaDetailPage })));
 
 export function App() {
   const [session, setSession] = useState<AuthSession | null>(() => loadSession());
@@ -54,6 +57,8 @@ export function App() {
   }
 
   if (!session) return <LoginPage onLogin={handleLogin} />;
+  const mediaDetail = parseMediaDetailPath(path);
+  if (mediaDetail) return <Suspense fallback={<p role="status">正在加载媒体详情界面…</p>}><MediaDetailPage key={`${session.user.userid}:${mediaDetail.kind}:${mediaDetail.id}`} session={session} kind={mediaDetail.kind} id={mediaDetail.id} onNavigate={handleNavigate} onLogout={handleLogout} onSessionExpired={handleSessionExpired} /></Suspense>;
   if (path === "/organization" && session.user.userpris.includes("媒体整理")) {
     return <OrganizationPage session={session} currentPath="/organization" onNavigate={handleNavigate}
       onLogout={handleLogout} onSessionExpired={handleSessionExpired} />;

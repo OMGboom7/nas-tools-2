@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { addDefaultSubscription, ApiError, getDiscovery, type AuthSession, type DiscoveryData, type DiscoveryMedia } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { mediaCacheLabel } from "../utils/mediaCache";
+import { mediaDetailPath } from "../utils/mediaDetail";
 
 type DiscoveryPageProps = {
   session: AuthSession;
@@ -81,6 +82,7 @@ export function DiscoveryPage({ session, currentPath, onNavigate, onLogout, onSe
             <div className="discovery-poster"><strong>{media.title.slice(0, 1)}</strong>{media.image && <img src={media.image} alt={`${media.title} 海报`} loading="lazy" />}</div>
             <div className="discovery-card__body"><div className="discovery-meta"><span>{media.type === "MOV" ? "电影" : "剧集"}</span>{media.vote && <strong>{media.vote} 分</strong>}</div>
               <h2>{media.link ? <a href={media.link} target="_blank" rel="noreferrer">{media.title}</a> : media.title}</h2><p>{media.year || "年份未知"}</p><small>{media.overview || "暂无简介"}</small>
+              {mediaDetailPath(media.type, media.id) && <button type="button" className="text-button" onClick={() => onNavigate(mediaDetailPath(media.type, media.id)!)}>查看详情与季集</button>}
               <p>{mediaCacheLabel(state.data.cache, media.cachedPresence, media.type === "TV")}</p>
               {canSubscribe && <button type="button" className={media.subscribed ? "is-subscribed" : ""} disabled={media.subscribed || subscribing[key]} onClick={() => void subscribe(media)}>
                 {media.subscribed ? "已订阅" : subscribing[key] ? "订阅中…" : "加入订阅"}

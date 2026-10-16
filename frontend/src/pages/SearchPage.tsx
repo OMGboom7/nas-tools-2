@@ -2,6 +2,7 @@ import { type FormEvent, useMemo, useState } from "react";
 import { addSearchResource, ApiError, searchResources, type AuthSession, type SearchData, type SearchResource } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { seedingRequirements } from "../utils/seedingRequirements";
+import { mediaDetailPath } from "../utils/mediaDetail";
 
 type SearchPageProps = {
   session: AuthSession;
@@ -137,6 +138,7 @@ export function SearchPage({ session, currentPath, onNavigate, onLogout, onSessi
                           <div className="media-result__title"><h3>{media.title}</h3>{media.exists && <span>已入库</span>}{media.existsKnown === false && <span>库状态未知</span>}</div>
                           <p>{[media.type, media.year, media.vote ? `${media.vote} 分` : ""].filter(Boolean).join(" · ")}</p>
                           {media.overview && <small>{media.overview}</small>}
+                          {mediaDetailPath(media.type, media.tmdbId) && <p><button type="button" className="text-button" onClick={() => onNavigate(mediaDetailPath(media.type, media.tmdbId)!)}>查看媒体详情与季集</button></p>}
                         </div>
                       </div>
 
