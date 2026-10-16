@@ -57,6 +57,19 @@ func manualHTTPFixture(t *testing.T, kind string, modern bool) *manualDownloadFi
 			if read && (r.URL.Query().Get("hashes") != f.hash || r.URL.Query().Get("filter") != "all") {
 				t.Fatal("verification widened", r.URL)
 			}
+		} else if kind == "pikpak" {
+			if r.URL.Host == "user.mypikpak.com" {
+				if f.authFailure {
+					return jsonResponse(r, `{"error":"invalid_account_or_password"}`), nil
+				}
+				if r.URL.Path == "/v1/shield/captcha/init" {
+					return jsonResponse(r, `{"captcha_token":"private-token"}`), nil
+				}
+				if r.URL.Path == "/v1/auth/signin" {
+					return jsonResponse(r, `{"access_token":"private-token","sub":"User_A"}`), nil
+				}
+			}
+			added = r.URL.Host == "api-drive.mypikpak.com" && r.URL.Path == "/drive/v1/files" && r.Method == "POST"
 		} else if kind == "pan115" {
 			if r.URL.Host == "webapi.115.com" {
 				return jsonResponse(r, `{"state":true,"id":"123"}`), nil
@@ -150,6 +163,10 @@ func manualHTTPFixture(t *testing.T, kind string, modern bool) *manualDownloadFi
 			if added {
 				return jsonResponse(r, `{"state":true,"result":[{"info_hash":"`+hash+`"}]}`), nil
 			}
+		case "pikpak":
+			if added {
+				return jsonResponse(r, `{"task":{"id":"Task_CaseSensitive"}}`), nil
+			}
 		}
 		t.Fatal("unexpected external request", r.URL, rpc.Method)
 		return nil, nil
@@ -214,9 +231,9 @@ func TestManualDownloadAllProtocolsPersistAndDoNotResubmitAfterRestart(t *testin
 	for _, spec := range []struct {
 		kind   string
 		modern bool
-	}{{"qbittorrent", false}, {"transmission", false}, {"transmission", true}, {"aria2", false}, {"pan115", false}} {
+	}{{"qbittorrent", false}, {"transmission", false}, {"transmission", true}, {"aria2", false}, {"pan115", false}, {"pikpak", false}} {
 		for _, source := range []string{"magnet", "torrent"} {
-			if spec.kind == "pan115" && source == "torrent" {
+			if (spec.kind == "pan115" || spec.kind == "pikpak") && source == "torrent" {
 				continue
 			}
 			t.Run(spec.kind+source+map[bool]string{true: "modern"}[spec.modern], func(t *testing.T) {

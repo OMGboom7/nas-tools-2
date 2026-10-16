@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -34,23 +33,37 @@ func TestRawDownloaderTestUsesNativeClientAndProtectsConfiguration(t *testing.T)
 	}
 }
 
-func TestRawCloudDownloaderTestKeepsExplicitCompatibilityBranch(t *testing.T) {
+func TestRawPikPakDownloaderTestIsNativeAndRejectsUnknownTypes(t *testing.T) {
 	calls := 0
 	handler, _, token := nativeSiteFixture(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
-		if request.URL.Path != "/api/v1/download/client/test" {
-			t.Fatalf("unexpected path: %s", request.URL.Path)
+		if request.URL.Host != "user.mypikpak.com" || request.Header.Get("Authorization") != "" {
+			t.Fatalf("unexpected destination: %s", request.URL)
 		}
-		body, _ := io.ReadAll(request.Body)
-		form, _ := url.ParseQuery(string(body))
-		if form.Get("type") != "pikpak" || !strings.Contains(form.Get("config"), "server-secret") {
-			t.Fatalf("legacy form = %v", form)
+		if request.URL.Path == "/v1/shield/captcha/init" {
+			return jsonResponse(request, `{"captcha_token":"challenge-secret"}`), nil
 		}
-		return jsonResponse(request, `{"code":0,"success":true}`), nil
+		if request.URL.Path != "/v1/auth/signin" {
+			t.Fatal("unexpected path", request.URL.Path)
+		}
+		return jsonResponse(request, `{"access_token":"access-secret","sub":"User_1"}`), nil
 	}))
 	response := performFormRequest(handler, "/api/v1/download/client/test", token, url.Values{"type": {"pikpak"}, "config": {`{"username":"user","password":"server-secret"}`}})
-	if response.Code != 200 || calls != 1 || !strings.Contains(response.Body.String(), `"code":0`) {
-		t.Fatalf("compatibility response: calls=%d %d %s", calls, response.Code, response.Body.String())
+	if response.Code != 200 || calls != 2 || !strings.Contains(response.Body.String(), `"code":0`) {
+		t.Fatalf("native response: calls=%d %d %s", calls, response.Code, response.Body.String())
+	}
+	for _, secret := range []string{"server-secret", "challenge-secret", "access-secret", "User_1"} {
+		if strings.Contains(response.Body.String(), secret) {
+			t.Fatal("leaked secret")
+		}
+	}
+	response = performFormRequest(handler, "/api/v1/download/client/test", token, url.Values{"type": {"unknown"}, "config": {`{}`}})
+	if response.Code != 400 || calls != 2 {
+		t.Fatal("unknown type used fallback", response.Code, calls)
+	}
+	response = performFormRequest(handler, "/api/v1/download/client/test", token, url.Values{"type": {"pikpak"}, "config": {`{"username":"user"}`}})
+	if response.Code != 200 || !strings.Contains(response.Body.String(), `"success":false`) || calls != 2 {
+		t.Fatal("invalid credentials used network", response.Code, calls)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
 	"github.com/0xforee/nas-tools/backend/internal/pan115"
+	"github.com/0xforee/nas-tools/backend/internal/pikpak"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
 )
@@ -38,6 +39,12 @@ func nativeDownloaderCheck(ctx context.Context, downloaderType string, configura
 			err = client.Check(ctx)
 		}
 		return true, err, "115网盘"
+	case "pikpak":
+		client, err := pikpak.New(username, password, text(configuration["proxy"]), transport)
+		if err == nil {
+			err = client.Check(ctx)
+		}
+		return true, err, "PikPak"
 	default:
 		return false, nil, ""
 	}

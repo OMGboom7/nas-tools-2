@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -43,12 +42,5 @@ func (api downloaderConfigurationAPI) testConnection(response http.ResponseWrite
 		writeJSON(response, http.StatusOK, map[string]any{"code": code, "success": checkErr == nil})
 		return
 	}
-	// Cloud downloaders keep their compatibility path until their account APIs
-	// are migrated. This branch is deleted together with the legacy proxy.
-	result, err := postLegacy(ctx, api.client, api.legacyURL, "/api/v1/download/client/test", request.Header.Get("Authorization"), url.Values{"type": {downloaderType}, "config": {request.Form.Get("config")}})
-	if err != nil {
-		writeAPIError(response, 502, 502, "旧下载器测试服务不可用")
-		return
-	}
-	writeJSON(response, http.StatusOK, result)
+	writeAPIError(response, 400, 400, "不支持的下载器类型")
 }

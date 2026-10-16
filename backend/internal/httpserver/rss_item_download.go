@@ -197,6 +197,8 @@ func rssOptionsSupported(kind string, options downloadAddOptions) bool {
 		return options.Category == "" && len(options.Tags) == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
 	case "pan115":
 		return options.empty()
+	case "pikpak":
+		return pikpakDownloadOptionsSupported(options)
 	default:
 		return false
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/pan115"
+	"github.com/0xforee/nas-tools/backend/internal/pikpak"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
 )
@@ -206,8 +207,44 @@ func (service downloadService) nativeActiveFor(ctx context.Context, requestedID 
 	}
 
 	ariaClient, downloaderID, handled, err := service.nativeAria2(ctx, requestedID)
-	if !handled || err != nil {
+	if err != nil {
 		return nil, handled, err
+	}
+	if !handled {
+		item, rawID, available, err := service.configuredDownloader(ctx, requestedID)
+		if !available || err != nil {
+			return nil, available, err
+		}
+		if item.Type != "pikpak" {
+			return nil, false, nil
+		}
+		var cfg map[string]any
+		if item.Enabled == 0 || json.Unmarshal([]byte(item.Config), &cfg) != nil || cfg == nil {
+			return nil, true, pikpak.ErrConfiguration
+		}
+		c, err := pikpak.New(text(cfg["username"]), text(cfg["password"]), text(cfg["proxy"]), service.client.Transport)
+		if err != nil {
+			return nil, true, err
+		}
+		tasks, err := c.Tasks(ctx)
+		if err != nil {
+			return nil, true, err
+		}
+		result := make([]downloadTask, 0, len(tasks))
+		for _, task := range tasks {
+			title, image, err := service.taskPresentation(ctx, rawID, task.ID, task.Name)
+			if err != nil {
+				return nil, true, err
+			}
+			state := "Downloading"
+			if task.Phase == "PHASE_TYPE_ERROR" {
+				state = "Error"
+			} else if task.Phase == "PHASE_TYPE_PENDING" {
+				state = "Pending"
+			}
+			result = append(result, downloadTask{ID: task.ID, Title: title, Image: image, State: state, CanControl: false, CanRemove: false, ShowProgress: false})
+		}
+		return result, true, nil
 	}
 	if ariaClient == nil {
 		return []downloadTask{}, true, nil
@@ -301,6 +338,9 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 	}
 	if item.ID == 0 {
 		return true, errors.New("default downloader is not configured")
+	}
+	if item.Type == "pikpak" {
+		return true, errDownloaderControlUnsupported
 	}
 	if action == "stop" || action == "remove" || action == "start" && (item.Type == "qbittorrent" || item.Type == "transmission") {
 		guarded, close, e := service.seedingGuard(ctx, item.ID, id)

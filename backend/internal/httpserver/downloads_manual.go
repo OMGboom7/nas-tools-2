@@ -12,6 +12,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/pikpak"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
@@ -85,8 +86,11 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 	if json.Unmarshal([]byte(item.Config), &configuration) != nil || configuration == nil {
 		return "", true, errManualConfiguration
 	}
-	if item.Type != "qbittorrent" && item.Type != "transmission" && item.Type != "aria2" && item.Type != "pan115" || item.Type == "pan115" && torrent != nil {
+	if item.Type != "qbittorrent" && item.Type != "transmission" && item.Type != "aria2" && item.Type != "pan115" && item.Type != "pikpak" || item.Type == "pan115" && torrent != nil {
 		return "", false, nil
+	}
+	if item.Type == "pikpak" && torrent != nil {
+		return "", true, errDownloadOptionsUnsupported
 	}
 	hash := magnetInfoHash(magnet)
 	if torrent != nil {
@@ -134,12 +138,18 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 		}
 		return "", true, downloaderconfig.ErrManualPending
 	}
-	id = strings.ToLower(id)
+	if item.Type == "pikpak" {
+		if !pikpak.ValidID(id) {
+			return "", true, downloaderconfig.ErrManualPending
+		}
+	} else {
+		id = strings.ToLower(id)
+	}
 	if item.Type == "aria2" {
 		if !aria2.ValidGID(id) {
 			return "", true, downloaderconfig.ErrManualPending
 		}
-	} else if id != hash {
+	} else if item.Type != "pikpak" && id != hash {
 		return "", true, downloaderconfig.ErrManualPending
 	}
 	if err := service.downloaders.CompleteManual(persist, receipt, id, "acknowledged", actor); err != nil {
