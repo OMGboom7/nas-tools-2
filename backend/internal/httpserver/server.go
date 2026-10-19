@@ -242,11 +242,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	if nativeConfig != nil {
 		nativeSearchResources = searchcache.New()
 	}
-	search := searchService{
-		legacyURL: cfg.LegacyBackendURL,
-		client:    &http.Client{Transport: transport},
-		images:    images,
-	}
+	search := searchService{}
 	siteLimits := &siteRequestLimiter{}
 	if nativeSearchResources != nil {
 		search.native = &nativeExternalResourceSearch{system: nativeSystemConfig, auth: nativeAuth, resources: nativeSearchResources, transport: transport, images: images,
@@ -260,7 +256,6 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	downloads := downloadService{
 		manualGuards: &organizationJobs,
 		pureGo:       cfg.DisableLegacy,
-		legacyURL:    cfg.LegacyBackendURL,
 		client:       &http.Client{Transport: transport},
 		images:       images,
 		downloaders:  nativeDownloaders,

@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
@@ -25,7 +23,6 @@ import (
 type downloadService struct {
 	manualGuards **organization.Store
 	pureGo       bool
-	legacyURL    string
 	client       *http.Client
 	images       *mediaImageProxy
 	downloaders  *downloaderconfig.Store
@@ -75,98 +72,63 @@ type addResourceRequest struct {
 }
 
 func (service downloadService) serveList(response http.ResponseWriter, request *http.Request) {
-	token := request.Header.Get("Authorization")
-	if token == "" {
-		writeAPIError(response, http.StatusUnauthorized, 401, "missing authorization token")
+	if request.Header.Get("Authorization") == "" {
+		writeAPIError(response, 401, 401, "missing authorization token")
 		return
 	}
 	page := 1
 	if raw := request.URL.Query().Get("historyPage"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 1000 {
-			writeAPIError(response, http.StatusBadRequest, 400, "invalid history page")
+			writeAPIError(response, 400, 400, "invalid history page")
 			return
 		}
 		page = parsed
 	}
-
+	if service.downloaders == nil || service.systemConfig == nil {
+		writeAPIError(response, 503, 503, "native download configuration is unavailable; no legacy request attempted")
+		return
+	}
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
 	type result struct {
 		name    string
-		value   map[string]any
 		active  []downloadTask
 		history []downloadHistory
-		native  bool
 		err     error
 	}
 	results := make(chan result, 2)
-	var wait sync.WaitGroup
-	for _, item := range []struct {
-		name string
-		path string
-		form url.Values
-	}{
-		{name: "active", path: "/api/v1/download/now", form: url.Values{"force_list": {"true"}}},
-		{name: "history"},
-	} {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			if item.name == "active" {
-				items, handled, err := service.nativeActive(ctx)
-				if handled {
-					results <- result{name: item.name, active: items, native: true, err: err}
-					return
-				}
-			} else {
-				items, err := service.nativeHistory(ctx, page)
-				results <- result{name: item.name, history: items, native: true, err: err}
-				return
-			}
-			value, err := postLegacy(ctx, service.client, service.legacyURL, item.path, token, item.form)
-			results <- result{name: item.name, value: value, err: err}
-		}()
-	}
-	wait.Wait()
-	close(results)
-
+	go func() {
+		items, handled, err := service.nativeActive(ctx)
+		if !handled && err == nil {
+			err = errors.New("native downloader is unavailable")
+		}
+		results <- result{name: "active", active: items, err: err}
+	}()
+	go func() {
+		items, err := service.nativeHistory(ctx, page)
+		results <- result{name: "history", history: items, err: err}
+	}()
 	data := downloadsData{Active: []downloadTask{}, History: []downloadHistory{}, HistoryPage: page, Warnings: []string{}}
 	successful := 0
-	unauthorized := 0
-	for result := range results {
-		if result.err != nil || !result.native && number(result.value["code"]) != 0 {
-			if result.err == nil && !result.native && number(result.value["code"]) == 403 {
-				unauthorized++
-			}
-			data.Warnings = append(data.Warnings, result.name+" unavailable")
+	for i := 0; i < 2; i++ {
+		r := <-results
+		if r.err != nil {
+			data.Warnings = append(data.Warnings, r.name+" unavailable")
 			continue
 		}
 		successful++
-		if result.native {
-			if result.name == "active" {
-				data.Active = result.active
-			} else {
-				data.History = result.history
-			}
-			continue
-		}
-		payload := legacyPayload(result.value)
-		if result.name == "active" {
-			data.Active = service.normalizeActive(payload["result"])
+		if r.name == "active" {
+			data.Active = r.active
 		} else {
-			data.History = service.normalizeHistory(payload["Items"])
+			data.History = r.history
 		}
 	}
 	if successful == 0 {
-		if unauthorized == 2 {
-			writeAPIError(response, http.StatusUnauthorized, 401, "authorization token is invalid or expired")
-			return
-		}
-		writeAPIError(response, http.StatusBadGateway, 502, "download service is unavailable")
+		writeAPIError(response, 502, 502, "native download service is unavailable")
 		return
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "data": data})
+	writeJSON(response, 200, map[string]any{"code": 0, "success": true, "data": data})
 }
 
 func (service downloadService) addResource(response http.ResponseWriter, request *http.Request) {
@@ -188,14 +150,7 @@ func (service downloadService) addResource(response http.ResponseWriter, request
 		service.addNativeSearchResource(response, request, input)
 		return
 	}
-	form := url.Values{"id": {input.ResourceID}}
-	if input.Directory != "" {
-		form.Set("dir", input.Directory)
-	}
-	if input.Setting != "" {
-		form.Set("setting", input.Setting)
-	}
-	service.forwardMutation(response, request, token, "/api/v1/download/search", form, "download could not be started")
+	writeAPIError(response, 409, 409, "搜索结果来自旧缓存，请重新搜索后再下载；未提交任何任务")
 }
 
 func (service downloadService) control(response http.ResponseWriter, request *http.Request) {
@@ -206,8 +161,8 @@ func (service downloadService) control(response http.ResponseWriter, request *ht
 	}
 	id := strings.TrimSpace(request.PathValue("id"))
 	action := request.PathValue("action")
-	legacyAction := map[string]string{"start": "start", "stop": "stop", "remove": "remove"}[action]
-	if id == "" || len(id) > 256 || legacyAction == "" {
+	validAction := action == "start" || action == "stop" || action == "remove"
+	if id == "" || len(id) > 256 || !validAction {
 		writeAPIError(response, http.StatusBadRequest, 400, "invalid download action")
 		return
 	}
@@ -232,81 +187,7 @@ func (service downloadService) control(response http.ResponseWriter, request *ht
 		writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": ""})
 		return
 	}
-	service.forwardMutation(response, request, token, "/api/v1/download/"+legacyAction, url.Values{"id": {id}}, "download action failed")
-}
-
-func (service downloadService) forwardMutation(response http.ResponseWriter, request *http.Request, token, path string, form url.Values, fallback string) {
-	ctx, cancel := context.WithTimeout(request.Context(), 30*time.Second)
-	defer cancel()
-	result, err := postLegacy(ctx, service.client, service.legacyURL, path, token, form)
-	if err != nil {
-		writeAPIError(response, http.StatusBadGateway, 502, "legacy download service is unavailable")
-		return
-	}
-	code := int(number(result["code"]))
-	if code == 403 {
-		writeAPIError(response, http.StatusUnauthorized, 401, "authorization token is invalid or expired")
-		return
-	}
-	if code != 0 || result["success"] == false {
-		message := text(result["message"])
-		if message == "" {
-			message = fallback
-		}
-		writeJSON(response, http.StatusBadRequest, map[string]any{"code": code, "success": false, "message": message})
-		return
-	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": text(result["message"])})
-}
-
-func (service downloadService) normalizeActive(value any) []downloadTask {
-	items := make([]downloadTask, 0)
-	for _, raw := range slice(value) {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		progress := number(item["progress"])
-		if progress < 0 {
-			progress = 0
-		} else if progress > 100 {
-			progress = 100
-		}
-		title := text(item["title"])
-		if title == "" {
-			title = text(item["name"])
-		}
-		image := text(item["image"])
-		if service.images != nil {
-			image = service.images.rewrite(image)
-		}
-		items = append(items, downloadTask{
-			ID: text(item["id"]), Title: title, Progress: progress, Speed: text(item["speed"]),
-			State: text(item["state"]), SiteURL: text(item["site_url"]), Image: image,
-			CanControl: !truthy(item["nomenu"]), CanRemove: !truthy(item["nomenu"]), ShowProgress: !truthy(item["noprogress"]),
-		})
-	}
-	return items
-}
-
-func (service downloadService) normalizeHistory(value any) []downloadHistory {
-	items := make([]downloadHistory, 0)
-	for _, raw := range slice(value) {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		image := text(item["image"])
-		if service.images != nil {
-			image = service.images.rewrite(image)
-		}
-		items = append(items, downloadHistory{
-			ID: text(item["id"]), Title: text(item["title"]), Type: text(item["media_type"]),
-			Year: text(item["year"]), Image: image, Torrent: text(item["overview"]),
-			Date: text(item["date"]), Site: text(item["site"]),
-		})
-	}
-	return items
+	writeAPIError(response, 503, 503, "native downloader is unavailable; no legacy request attempted")
 }
 
 func truthy(value any) bool {

@@ -126,7 +126,7 @@ func TestScopedSearchDoesNotDropSelectionIntoLegacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := nativeJSONRequest(handler, "POST", "/api/v1/search/resources", "token", `{"keyword":"Movie","indexers":["First-prowlarr"]}`)
-	if response.Code != 501 {
+	if response.Code != 503 {
 		t.Fatal(response.Code, response.Body.String())
 	}
 }

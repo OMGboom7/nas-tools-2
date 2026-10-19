@@ -65,7 +65,7 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 		writeAPIError(response, 503, 503, "selected download configuration is unavailable or disabled")
 		return
 	}
-	if downloader.Type != "qbittorrent" && downloader.Type != "transmission" && downloader.Type != "aria2" && downloader.Type != "pan115" {
+	if downloader.Type != "qbittorrent" && downloader.Type != "transmission" && downloader.Type != "aria2" && downloader.Type != "pan115" && downloader.Type != "pikpak" {
 		writeAPIError(response, 501, 501, "selected downloader type is not migrated")
 		return
 	}

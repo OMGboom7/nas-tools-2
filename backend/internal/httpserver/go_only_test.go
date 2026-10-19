@@ -27,7 +27,10 @@ func TestGoOnlyModeNeverContactsLegacyBackend(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/health", "", 200},
 		{http.MethodPost, "/api/v1/unmigrated/endpoint", "", http.StatusNotImplemented},
-		{http.MethodPost, "/api/v1/search/resources", `{"keyword":"movie"}`, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/search/resources", `{"keyword":"movie"}`, http.StatusServiceUnavailable},
+		{http.MethodGet, "/api/v1/downloads", "", http.StatusServiceUnavailable},
+		{http.MethodPost, "/api/v1/downloads/task/stop", "", http.StatusServiceUnavailable},
+		{http.MethodPost, "/api/v1/downloads/resource", `{"resourceId":"42"}`, http.StatusConflict},
 	} {
 		request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
 		request.Header.Set("Authorization", "test-token")

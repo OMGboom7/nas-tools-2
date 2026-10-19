@@ -6,17 +6,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
-	"sort"
 	"strings"
 	"time"
 )
 
 type searchService struct {
-	legacyURL string
-	client    *http.Client
-	images    *mediaImageProxy
-	native    *nativeExternalResourceSearch
+	native *nativeExternalResourceSearch
 }
 
 type searchRequest struct {
@@ -80,10 +75,11 @@ func (service searchService) serveHTTP(response http.ResponseWriter, request *ht
 		return
 	}
 
-	decoder := json.NewDecoder(io.LimitReader(request.Body, 1<<20))
+	request.Body = http.MaxBytesReader(response, request.Body, 1<<20)
+	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
 	var input searchRequest
-	if err := decoder.Decode(&input); err != nil {
+	if err := decoder.Decode(&input); err != nil || decoder.Decode(new(any)) != io.EOF {
 		writeJSON(response, http.StatusBadRequest, map[string]any{
 			"code": 400, "success": false, "message": "invalid search request",
 		})
@@ -99,7 +95,7 @@ func (service searchService) serveHTTP(response http.ResponseWriter, request *ht
 
 	ctx, cancel := context.WithTimeout(request.Context(), 90*time.Second)
 	defer cancel()
-	if service.native != nil {
+	if service.native != nil && service.native.auth != nil && service.native.resources != nil && service.native.system != nil {
 		data, handled, err := service.native.searchSelected(ctx, token, input.Keyword, input.Quick, input.Indexers)
 		if handled {
 			if err != nil {
@@ -118,127 +114,7 @@ func (service searchService) serveHTTP(response http.ResponseWriter, request *ht
 			return
 		}
 	}
-	if len(input.Indexers) > 0 {
-		writeAPIError(response, 501, 501, "scoped indexer search requires native configuration")
-		return
-	}
-	form := url.Values{"search_word": {input.Keyword}}
-	if input.Quick {
-		form.Set("unident", "1")
-	}
-	started, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/search/keyword", token, form)
-	if err != nil {
-		writeJSON(response, http.StatusBadGateway, map[string]any{
-			"code": 502, "success": false, "message": "legacy search service is unavailable",
-		})
-		return
-	}
-	if number(started["code"]) == 403 {
-		writeJSON(response, http.StatusUnauthorized, map[string]any{
-			"code": 401, "success": false, "message": "authorization token is invalid or expired",
-		})
-		return
-	}
-	if number(started["code"]) != 0 {
-		writeJSON(response, http.StatusOK, map[string]any{
-			"code": 0, "success": true,
-			"data":    searchData{Keyword: input.Keyword, Items: []searchMedia{}},
-			"message": text(started["msg"]),
-		})
-		return
-	}
-
-	result, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/search/result", token, nil)
-	if err != nil {
-		writeJSON(response, http.StatusBadGateway, map[string]any{
-			"code": 502, "success": false, "message": "search result is unavailable",
-		})
-		return
-	}
-	if number(result["code"]) == 403 {
-		writeJSON(response, http.StatusUnauthorized, map[string]any{
-			"code": 401, "success": false, "message": "authorization token is invalid or expired",
-		})
-		return
-	}
-
-	data := service.normalize(input.Keyword, legacyPayload(result))
-	writeJSON(response, http.StatusOK, map[string]any{
-		"code": 0, "success": true, "data": data,
-	})
-}
-
-func (service searchService) normalize(keyword string, result map[string]any) searchData {
-	data := searchData{
-		Keyword: keyword,
-		Total:   int(number(result["total"])),
-		Items:   make([]searchMedia, 0),
-	}
-	mediaResults, _ := result["result"].(map[string]any)
-	for _, value := range mediaResults {
-		media, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		item := searchMedia{
-			Key:       text(media["key"]),
-			Title:     text(media["title"]),
-			Year:      text(media["year"]),
-			Type:      text(media["type"]),
-			Vote:      text(media["vote"]),
-			TMDBID:    text(media["tmdbid"]),
-			Poster:    service.images.rewrite(text(media["poster"])),
-			Overview:  text(media["overview"]),
-			Exists:    text(media["fav"]) == "2",
-			Resources: flattenResources(media["torrent_dict"]),
-		}
-		data.Items = append(data.Items, item)
-	}
-	sort.Slice(data.Items, func(left, right int) bool {
-		return data.Items[left].Title < data.Items[right].Title
-	})
-	return data
-}
-
-func flattenResources(value any) []searchResource {
-	resources := make([]searchResource, 0)
-	for _, seasonEntry := range entries(value) {
-		season := seasonEntry.key
-		for _, groupEntry := range entries(seasonEntry.value) {
-			group, _ := groupEntry.value.(map[string]any)
-			for _, uniqueEntry := range entries(group["group_torrents"]) {
-				unique, _ := uniqueEntry.value.(map[string]any)
-				for _, torrentValue := range slice(unique["torrent_list"]) {
-					torrent, ok := torrentValue.(map[string]any)
-					if !ok {
-						continue
-					}
-					resources = append(resources, searchResource{
-						ID:             text(torrent["id"]),
-						Season:         season,
-						Name:           text(torrent["torrent_name"]),
-						Description:    text(torrent["description"]),
-						Site:           text(torrent["site"]),
-						PageURL:        text(torrent["pageurl"]),
-						Size:           text(torrent["size"]),
-						Seeders:        int(number(torrent["seeders"])),
-						Resolution:     text(torrent["respix"]),
-						Medium:         text(torrent["restype"]),
-						Effect:         text(torrent["reseffect"]),
-						ReleaseGroup:   text(torrent["releasegroup"]),
-						VideoCodec:     text(torrent["video_encode"]),
-						Labels:         stringsOf(torrent["labels"]),
-						UploadFactor:   number(torrent["uploadvalue"]),
-						DownloadFactor: number(torrent["downloadvalue"]),
-					})
-				}
-			}
-		}
-	}
-	sort.SliceStable(resources, func(left, right int) bool {
-		return resources[left].Seeders > resources[right].Seeders
-	})
-	return resources
+	writeAPIError(response, http.StatusServiceUnavailable, 503, "native search configuration is unavailable; no legacy request attempted")
 }
 
 type valueEntry struct {
