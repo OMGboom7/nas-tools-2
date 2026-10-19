@@ -92,6 +92,7 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	ScraperEnabled        bool                      `json:"scraperEnabled,omitempty"`
 	Download              *DownloadOrigin           `json:"download,omitempty"`
 	Sync                  *SyncOrigin               `json:"sync,omitempty"`
 	LegacyTargetOverride  bool                      `json:"legacyTargetOverride,omitempty"`

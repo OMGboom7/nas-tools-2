@@ -62,6 +62,11 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 			return ErrState
 		}
 		originDigest := SubtitleOriginDigest(Job{Definition: d}, JobItem{Index: ordinal, Proof: proof})
+		if d.ScraperEnabled {
+			if err := emitScrape(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, originDigest); err != nil {
+				return err
+			}
+		}
 		if err := subtitles.Emit(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest); err != nil {
 			return err
 		}

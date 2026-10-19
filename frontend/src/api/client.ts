@@ -4,6 +4,31 @@ export type UserInfo = {
   userpris: string[];
 };
 
+export type ScraperOptions = { scraper_nfo: Record<string, Record<string, boolean>>; scraper_pic: Record<string, Record<string, boolean>> };
+export type ScraperReceipt = { id: string; jobId: string; ordinal: number; name: string; state: string; reason?: string; updated: string; results: { name: string; state: string; reason?: string }[] };
+export type ScraperStatus = { enabled: boolean; options: ScraperOptions; fields: ScraperOptions; fingerprint: string; warnings: string[]; receipts: ScraperReceipt[] };
+function verifiedScraperStatus(value: unknown): value is ScraperStatus {
+  const s = value as ScraperStatus | null;
+  return !!s && typeof s.enabled === "boolean" && /^[a-f0-9]{64}$/.test(s.fingerprint) && !!s.options?.scraper_nfo && !!s.options.scraper_pic && !!s.fields?.scraper_nfo && !!s.fields.scraper_pic && Array.isArray(s.warnings) && Array.isArray(s.receipts) && s.receipts.every((row) => typeof row.id === "string" && typeof row.jobId === "string" && Array.isArray(row.results));
+}
+export async function getIntakeScraper(token: string): Promise<ScraperStatus> {
+  const result = await readResponse<ScraperStatus>(await fetch("/api/v1/organization/scraper", { headers: { Authorization: token } }));
+  if (!result.success || result.code !== 0 || !verifiedScraperStatus(result.data)) throw new ApiError(result.message || "刮削配置和回执不可用", result.code);
+  return result.data;
+}
+export async function saveIntakeScraperOptions(token: string, fingerprint: string, options: ScraperOptions, confirm = false): Promise<ScraperStatus> {
+  if (!confirm || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("请审核并明确确认刮削配置", 400);
+  const result = await readResponse<ScraperStatus>(await fetch("/api/v1/organization/scraper/options", { method: "PUT", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ fingerprint, options, confirm }) }));
+  if (!result.success || result.code !== 0 || !verifiedScraperStatus(result.data)) throw new ApiError(result.message || "配置保存未核实，请只读刷新，不要自动重试", result.code);
+  return result.data;
+}
+export async function setIntakeScraperEnabled(token: string, enabled: boolean, confirm = false): Promise<ScraperStatus> {
+  if (!confirm || typeof enabled !== "boolean") throw new ApiError("请独立确认入库刮削开关", 400);
+  const result = await readResponse<ScraperStatus>(await fetch("/api/v1/organization/scraper/enabled", { method: "PUT", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ enabled, confirm }) }));
+  if (!result.success || result.code !== 0 || !verifiedScraperStatus(result.data) || result.data.enabled !== enabled) throw new ApiError(result.message || "开关保存未核实，请只读刷新", result.code);
+  return result.data;
+}
+
 export type MediaSyncLibrary = { id: string; name: string; type: "movie" | "show" };
 export type MediaSyncCatalog = { server: string; fingerprint: string; libraries: MediaSyncLibrary[] };
 export type MediaSyncSnapshot = { server: string; generation: string; configDigest: string; libraries: string[]; actor: string; updated: string; total: number; movies: number; series: number; page: number; items: { id: string; library: string; title: string; type: string; year?: string; tmdbid?: string; episodes: { season_num: number; episode_num: number }[] }[] };
@@ -951,7 +976,7 @@ export type OrganizationHistoryData = { items: OrganizationHistoryItem[]; total:
 export type OrganizationUnknownReview = { jobId: string; state: string; original: { id: number; path: string; dest: string; mode: string; state: string }; current: { id: number; path: string; dest: string; mode: string; state: string } | null; fingerprint: string; eligible: boolean };
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; assignments?: OrganizationMediaAssignment[]; episodeSelection?: OrganizationEpisodeSelection; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
 export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number; partOverride?: string };
-export type OrganizationPlan = { previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; mediaType?: string; category?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
+export type OrganizationPlan = { scraperEnabled?: boolean; previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; mediaType?: string; category?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 export type OrganizationLegacySelection = OrganizationEpisodeRule & { kind?: string; tmdbId?: string; season?: number; episodeDetails?: string; minimumMB?: number };
 export type OrganizationLegacyRenameOptions = { expandedScope?: boolean; preserveUnknown?: boolean };
 export type OrganizationSyncRecord = { id: string; source: string; dest: string; unknown: string; mode: string; compatibility: number; rename: number; enabled: number; locating: number; note: string; nullFields?: string[] };

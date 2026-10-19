@@ -77,12 +77,13 @@ type organizationPlanItem struct {
 	SeasonEpisode string  `json:"seasonEpisode,omitempty"`
 }
 type organizationPlan struct {
-	Items       []organizationPlanItem `json:"items"`
-	Mode        string                 `json:"mode"`
-	PreviewOnly bool                   `json:"previewOnly"`
-	Skipped     int                    `json:"skipped"`
-	Fingerprint string                 `json:"fingerprint"`
-	definition  organization.Definition
+	ScraperEnabled bool                   `json:"scraperEnabled"`
+	Items          []organizationPlanItem `json:"items"`
+	Mode           string                 `json:"mode"`
+	PreviewOnly    bool                   `json:"previewOnly"`
+	Skipped        int                    `json:"skipped"`
+	Fingerprint    string                 `json:"fingerprint"`
+	definition     organization.Definition
 }
 
 func (api organizationAPI) authorize(w http.ResponseWriter, r *http.Request) bool {
@@ -379,6 +380,8 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		return fail(422, "organization roots changed")
 	}
 	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
+	result.ScraperEnabled, _ = media["nfo_poster"].(bool)
+	result.definition.ScraperEnabled = result.ScraperEnabled
 	result.definition.Unknown = unknown
 	result.definition.Sync = input.Sync
 	result.definition.Download = input.Download

@@ -73,6 +73,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitMedia := startMediaSyncWorker(workerContext, runner.mediaSync)
 		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
 		waitSubtitles := startSubtitleWorker(workerContext, runner.subtitles)
+		waitScraper := startIntakeScraper(workerContext, runner.scraper)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -81,6 +82,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitMedia()
 			waitIndexers()
 			waitSubtitles()
+			waitScraper()
 		}
 	}
 	return handler, wait, nil
@@ -506,6 +508,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	nativeScraper := &intakeScraper{organizer: &organizer, system: nativeSystemConfig, transport: transport}
+	rssRunner.scraper = nativeScraper
+	mux.HandleFunc("GET /api/v1/organization/scraper", nativeScraper.serveStatus)
+	mux.HandleFunc("PUT /api/v1/organization/scraper/options", nativeScraper.saveOptions)
+	mux.HandleFunc("PUT /api/v1/organization/scraper/enabled", nativeScraper.setEnabled)
 	if nativeSystemConfig != nil {
 		plugins.subtitles = &subtitleAPI{organizer: &organizer, transport: transport}
 		if organizationJobs != nil {

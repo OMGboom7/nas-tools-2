@@ -232,7 +232,7 @@ func (api *subtitleAPI) tick(ctx context.Context) error {
 	if api == nil || api.organizer == nil || !api.organizer.pureGo || api.queue == nil {
 		return nil
 	}
-	guard, err := api.organizer.jobs.AcquireJob(ctx, "subtitle-csf-outbox")
+	guard, err := api.organizer.jobs.AcquireJob(ctx, "intake-enrichment-outbox")
 	if err != nil {
 		return err
 	}
@@ -244,6 +244,13 @@ func (api *subtitleAPI) tick(ctx context.Context) error {
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		pending, err := api.organizer.jobs.ScrapePending(ctx, row.JobID, row.Ordinal)
+		if err != nil {
+			return err
+		}
+		if pending {
+			continue
 		}
 		valid := false
 		job, err := api.organizer.jobs.Get(ctx, row.JobID)
