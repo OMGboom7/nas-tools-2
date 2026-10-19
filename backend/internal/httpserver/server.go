@@ -72,6 +72,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitNotifications := startBusinessNotificationWorker(workerContext, runner.notifications)
 		waitMedia := startMediaSyncWorker(workerContext, runner.mediaSync)
 		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
+		waitSubtitles := startSubtitleWorker(workerContext, runner.subtitles)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -79,6 +80,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitNotifications()
 			waitMedia()
 			waitIndexers()
+			waitSubtitles()
 		}
 	}
 	return handler, wait, nil
@@ -505,6 +507,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
 	if nativeSystemConfig != nil {
+		plugins.subtitles = &subtitleAPI{organizer: &organizer, transport: transport}
+		if organizationJobs != nil {
+			plugins.subtitles.queue = organizationJobs.Subtitles()
+		}
+		rssRunner.subtitles = plugins.subtitles
+	}
+	if nativeSystemConfig != nil {
 		plugins.indexers = &nativeIndexerPlugins{system: nativeSystemConfig, transport: transport, pureGo: cfg.DisableLegacy}
 		rssRunner.indexerPlugins = plugins.indexers
 	}
@@ -517,7 +526,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 			mux.Handle("POST /api/v1/plugin/"+action, plugins.metadataLegacyRoute(action, legacyFallback))
 		}
 		mux.Handle("POST /api/v1/plugin/list", plugins.metadataLegacyListRoute(legacyFallback))
-		mux.Handle("POST /api/v1/plugin/page", plugins.indexerLegacyPageRoute(legacyFallback))
+		mux.Handle("POST /api/v1/plugin/page", plugins.nativePluginPageRoute(legacyFallback))
 	}
 	mux.HandleFunc("GET /api/v1/plugins", plugins.serveList)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/install", plugins.install)

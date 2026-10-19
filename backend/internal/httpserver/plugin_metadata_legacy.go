@@ -43,6 +43,15 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			service.serveIndexerPlugin(response, probe, nativeAction)
 			return
 		}
+		if service.nativeSubtitle(id) {
+			probe.SetPathValue("id", id)
+			nativeAction := action
+			if action == "config" {
+				nativeAction = "legacy-save"
+			}
+			service.serveSubtitlePlugin(response, probe, nativeAction)
+			return
+		}
 		if !nativeMetadataPlugin(id) {
 			request.Body = io.NopCloser(bytes.NewReader(body))
 			fallback.ServeHTTP(response, request)

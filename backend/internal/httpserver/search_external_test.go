@@ -58,7 +58,7 @@ func TestQuickExternalSearchAndDownloadEndToEndWithoutPython(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	for key, value := range map[string]string{"UserInstalledPlugins": `["Prowlarr"]`, "UserIndexerSites": `["Selected-prowlarr"]`, "plugin.Prowlarr": `{"host":"http://indexer.local","api_key":"private-key"}`} {
+	for key, value := range map[string]string{"UserInstalledPlugins": `["Prowlarr","ChineseSubFinder"]`, "UserIndexerSites": `["Selected-prowlarr"]`, "plugin.Prowlarr": `{"host":"http://indexer.local","api_key":"private-key"}`} {
 		if err := store.Set(t.Context(), key, value); err != nil {
 			t.Fatal(err)
 		}

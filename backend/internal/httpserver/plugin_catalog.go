@@ -56,14 +56,23 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			continue
 		}
 		item.Installed = installedSet[item.ID]
-		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID)
+		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
 		if service.nativeIndexer(item.ID) {
 			item.ActionsAvailable = service.indexers.pureGo
 		}
+		if service.nativeSubtitle(item.ID) {
+			item.ActionsAvailable = service.subtitles.organizer.pureGo
+			item.HasPage = true
+		}
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
+			if service.nativeSubtitle(item.ID) {
+				item.Running, item.StateKnown = service.subtitleSummary(ctx)
+				data.Items = append(data.Items, item)
+				continue
+			}
 			if service.nativeIndexer(item.ID) {
 				item.Running, item.StateKnown = service.indexers.summary(ctx, item.ID)
 				data.Items = append(data.Items, item)

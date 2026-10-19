@@ -21,7 +21,7 @@ func indexerLegacyFields(detail pluginConfigDetail) []any {
 	return []any{map[string]any{"type": "div", "content": rows}}
 }
 
-func (s pluginService) indexerLegacyPageRoute(fallback http.Handler) http.Handler {
+func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
 		if err != nil {
@@ -35,6 +35,11 @@ func (s pluginService) indexerLegacyPageRoute(fallback http.Handler) http.Handle
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeSubtitle(id) {
+			probe.SetPathValue("id", id)
+			s.serveSubtitlePlugin(w, probe, "page")
+			return
+		}
 		if s.nativeIndexer(id) {
 			probe.SetPathValue("id", id)
 			s.serveIndexerPlugin(w, probe, "page")

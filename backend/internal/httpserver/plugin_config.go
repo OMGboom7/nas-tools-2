@@ -48,6 +48,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSubtitle(request.PathValue("id")) {
+		service.serveSubtitlePlugin(response, request, "get")
+		return
+	}
 	if service.nativeIndexer(request.PathValue("id")) {
 		service.serveIndexerPlugin(response, request, "get")
 		return
@@ -84,6 +88,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSubtitle(request.PathValue("id")) {
+		service.serveSubtitlePlugin(response, request, "save")
+		return
+	}
 	if service.nativeIndexer(request.PathValue("id")) {
 		service.serveIndexerPlugin(response, request, "save")
 		return

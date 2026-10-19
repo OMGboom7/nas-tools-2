@@ -20,6 +20,7 @@ import (
 )
 
 type rssRunAPI struct {
+	subtitles      *subtitleAPI
 	indexerPlugins *nativeIndexerPlugins
 	mediaSync      *mediaSyncAPI
 	notifications  *businessNotifications

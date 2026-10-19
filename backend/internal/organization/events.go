@@ -5,12 +5,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/subtitles"
 )
 
-func (s *Store) BusinessEvents() *bus.Store { return bus.New(s.db) }
+func (s *Store) BusinessEvents() *bus.Store  { return bus.New(s.db) }
+func (s *Store) Subtitles() *subtitles.Store { return subtitles.New(s.db) }
+func SubtitleOriginDigest(job Job, item JobItem) string {
+	return Digest([]any{job.Definition, item.Index, item.Proof.Identity, item.Proof.ParentIdentity, item.Proof.Digest, item.Proof.Kind, item.Proof.LinkTarget})
+}
 
 // Emit only after every saved entry and move-cleanup receipt is complete.
 // Do not label a partial media/subtitle group or raw file sync as media intake.
@@ -43,9 +49,21 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 	lines := []string{}
 	first := ""
 	var size int64
-	for _, e := range d.Entries {
+	for ordinal, e := range d.Entries {
 		if e.Kind != "media" {
 			continue
+		}
+		var proofRaw string
+		var proof Proof
+		if err := tx.QueryRowContext(ctx, `SELECT PROOF FROM GO_ORGANIZATION_ITEMS WHERE JOB_ID=? AND ORDINAL=?`, id, ordinal).Scan(&proofRaw); err != nil {
+			return err
+		}
+		if json.Unmarshal([]byte(proofRaw), &proof) != nil {
+			return ErrState
+		}
+		originDigest := SubtitleOriginDigest(Job{Definition: d}, JobItem{Index: ordinal, Proof: proof})
+		if err := subtitles.Emit(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest); err != nil {
+			return err
 		}
 		if first == "" {
 			first = e.Title

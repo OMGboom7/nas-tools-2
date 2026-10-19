@@ -84,13 +84,29 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeSubtitle(id) {
+				raw, err := service.system.Get(request.Context(), "plugin.ChineseSubFinder")
+				values, decodeErr := decodeMetadataConfig(raw)
+				if err != nil || decodeErr != nil {
+					writeAPIError(response, 502, 502, "subtitle configuration unavailable")
+					return
+				}
+				running, known := service.subtitleSummary(request.Context())
+				var state any
+				if known {
+					state = running
+				}
+				detail := subtitleDetail(values)
+				result[id] = map[string]any{"name": id, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": state, "stateKnown": known, "native": true}
+				continue
+			}
 			if service.nativeIndexer(id) {
 				values, _, _, err := service.indexers.read(request.Context(), id)
 				if err != nil {

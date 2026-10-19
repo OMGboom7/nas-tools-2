@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSubtitle(request.PathValue("id")) {
+		service.serveSubtitlePlugin(response, request, "page")
+		return
+	}
 	if service.nativeIndexer(request.PathValue("id")) {
 		service.serveIndexerPlugin(response, request, "page")
 		return
