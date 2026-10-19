@@ -84,13 +84,30 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeIndexer(id) {
+				values, _, _, err := service.indexers.read(request.Context(), id)
+				if err != nil {
+					writeAPIError(response, 502, 502, "indexer configuration unavailable")
+					return
+				}
+				running, known := service.indexers.summary(request.Context(), id)
+				var state any
+				if known {
+					state = running
+				}
+				detail := indexerDetail(id, values)
+				// Never return host, key, password or unknown private caches through
+				// the legacy aggregate list, including for administrators.
+				result[id] = map[string]any{"name": id, "version": "1.5", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": state, "native": true, "stateKnown": known}
+				continue
+			}
 			config, active, err := service.nativeMetadataReadConfig(request.Context(), id)
 			if err != nil {
 				writeAPIError(response, 502, 502, "plugin configuration is unavailable")

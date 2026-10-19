@@ -71,7 +71,15 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitDownloads := startDownloadMonitorWorker(workerContext, runner.organizer)
 		waitNotifications := startBusinessNotificationWorker(workerContext, runner.notifications)
 		waitMedia := startMediaSyncWorker(workerContext, runner.mediaSync)
-		wait = func() { waitExisting(); waitSync(); waitDownloads(); waitNotifications(); waitMedia() }
+		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
+		wait = func() {
+			waitExisting()
+			waitSync()
+			waitDownloads()
+			waitNotifications()
+			waitMedia()
+			waitIndexers()
+		}
 	}
 	return handler, wait, nil
 }
@@ -496,6 +504,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	if nativeSystemConfig != nil {
+		plugins.indexers = &nativeIndexerPlugins{system: nativeSystemConfig, transport: transport, pureGo: cfg.DisableLegacy}
+		rssRunner.indexerPlugins = plugins.indexers
+	}
 	if cfg.HostsPath != "" {
 		plugins.hosts = &nativeHostsPlugin{path: cfg.HostsPath}
 	}
@@ -505,6 +517,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 			mux.Handle("POST /api/v1/plugin/"+action, plugins.metadataLegacyRoute(action, legacyFallback))
 		}
 		mux.Handle("POST /api/v1/plugin/list", plugins.metadataLegacyListRoute(legacyFallback))
+		mux.Handle("POST /api/v1/plugin/page", plugins.indexerLegacyPageRoute(legacyFallback))
 	}
 	mux.HandleFunc("GET /api/v1/plugins", plugins.serveList)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/install", plugins.install)

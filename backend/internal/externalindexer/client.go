@@ -24,6 +24,9 @@ type Indexer struct {
 	Public                           bool
 }
 
+// Validate performs no network access and never returns an endpoint or secret.
+func Validate(cfg Config) error { _, err := baseURL(cfg); return err }
+
 const maxResponse = 2 << 20
 
 func validText(text string, limit int) bool {

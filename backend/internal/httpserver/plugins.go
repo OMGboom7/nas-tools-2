@@ -18,6 +18,7 @@ type pluginService struct {
 	system    *systemconfig.Store
 	auth      *nativeAuthentication
 	hosts     *nativeHostsPlugin
+	indexers  *nativeIndexerPlugins
 }
 
 type pluginSummary struct {
@@ -72,6 +73,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeIndexer(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveIndexerPlugin(response, request, action)
+		return
+	}
 	if service.nativeHosts(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

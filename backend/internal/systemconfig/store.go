@@ -127,3 +127,89 @@ func (store *Store) Update(ctx context.Context, key string, transform func(strin
 func (store *Store) Close() error {
 	return store.database.Close()
 }
+
+// ReadMany observes related settings in one SQLite snapshot without creating
+// records. UpdateMany is the matching atomic read/modify/write boundary.
+func (store *Store) ReadMany(ctx context.Context, keys []string) (map[string]string, error) {
+	tx, err := store.database.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	values, err := readMany(ctx, tx, keys)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func readMany(ctx context.Context, tx *sql.Tx, keys []string) (map[string]string, error) {
+	if len(keys) == 0 || len(keys) > 16 {
+		return nil, ErrInvalidSetting
+	}
+	values := map[string]string{}
+	for _, key := range keys {
+		if key == "" || len(key) > 160 {
+			return nil, ErrInvalidSetting
+		}
+		if _, ok := values[key]; ok {
+			return nil, ErrInvalidSetting
+		}
+		var value string
+		err := tx.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&value)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		values[key] = value
+	}
+	return values, nil
+}
+
+func (store *Store) UpdateMany(ctx context.Context, keys []string, transform func(map[string]string) (map[string]string, error)) error {
+	if transform == nil {
+		return ErrInvalidSetting
+	}
+	tx, err := store.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := readMany(ctx, tx, keys)
+	if err != nil {
+		return err
+	}
+	allowed := map[string]bool{}
+	for _, key := range keys {
+		allowed[key] = true
+	}
+	next, err := transform(current)
+	if err != nil {
+		return err
+	}
+	for key, value := range next {
+		if !allowed[key] || value == "" {
+			return ErrInvalidSetting
+		}
+		result, err := tx.ExecContext(ctx, "UPDATE SYSTEM_DICT SET VALUE=? WHERE TYPE='SystemConfig' AND KEY=?", value, key)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := tx.ExecContext(ctx, "INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE,NOTE) VALUES('SystemConfig',?,?, '')", key, value); err != nil {
+				return err
+			}
+		}
+		var stored string
+		if err := tx.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&stored); err != nil || stored != value {
+			return ErrInvalidSetting
+		}
+	}
+	return tx.Commit()
+}
