@@ -78,6 +78,7 @@ func organizationAssignments(ctx context.Context, input []organizationMediaAssig
 			}
 		}
 		found := false
+		disc := false
 		for _, file := range files {
 			if file.Path != selection.Source {
 				continue
@@ -89,12 +90,17 @@ func organizationAssignments(ctx context.Context, input []organizationMediaAssig
 				return nil, &recognitionFailure{409, "selected source changed; review a fresh preview before assigning identity"}
 			}
 			found = true
+			disc = file.Disc != nil
 			break
 		}
 		if !found {
 			return nil, &recognitionFailure{422, "manual selection is outside the scanned media set"}
 		}
 		if selection.Kind != "movie" {
+			if disc && selection.Episode == nil && selection.EndEpisode == nil && selection.EpisodeFormat == "" && selection.EpisodeOffset == 0 {
+				result[selection.Source] = selection
+				continue
+			}
 			var start int
 			var end *int
 			var err error

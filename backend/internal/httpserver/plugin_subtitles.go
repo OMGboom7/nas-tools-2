@@ -256,7 +256,7 @@ func (api *subtitleAPI) tick(ctx context.Context) error {
 		job, err := api.organizer.jobs.Get(ctx, row.JobID)
 		if err == nil && job.State == "completed" && len(job.Items) == len(job.Definition.Entries) && row.Ordinal >= 0 && row.Ordinal < len(job.Items) {
 			item := job.Items[row.Ordinal]
-			valid = item.Index == row.Ordinal && item.Kind == "media" && item.MediaType == row.MediaType && filepath.Join(job.Definition.TargetRoot, item.Target) == row.LocalPath && organization.SubtitleOriginDigest(job, item) == row.OriginDigest
+			valid = item.Index == row.Ordinal && item.Kind == "media" && row.Payload.Bluray == (item.Disc != nil) && item.MediaType == row.MediaType && filepath.Join(job.Definition.TargetRoot, item.Target) == row.LocalPath && organization.SubtitleOriginDigest(job, item) == row.OriginDigest
 			if valid {
 				valid = api.organizer.validateJobConfiguration(ctx, job) == nil && organization.VerifyCompletedTarget(ctx, job, item) == nil
 			}

@@ -74,6 +74,9 @@ func verifyOriginal(ctx context.Context, parent *os.File, name string, item Entr
 // PrepareMove protects a recovery reference before saving the durable source
 // removal intent. It does not rename/remove the source or complete the history.
 func PrepareMove(ctx context.Context, d Definition, item Entry, p Proof, name string) (Proof, error) {
+	if IsDisc(item) {
+		return prepareDiscMove(ctx, d, item, p, name)
+	}
 	if d.Mode != "move" || !strings.HasPrefix(name, ".nastool-move-") || filepath.Base(name) != name || !validRelative(name) || p.SourceHold != "" {
 		return p, ErrState
 	}
@@ -189,6 +192,9 @@ func ContinueMove(ctx context.Context, d Definition, item Entry, p Proof, quaran
 
 // The hook is only used in tests to exercise a source rename race precisely.
 func continueMove(ctx context.Context, d Definition, item Entry, p Proof, quarantined bool, markQuarantined func() error, beforeRename func() error) error {
+	if IsDisc(item) {
+		return continueDiscMove(ctx, d, item, p, quarantined, markQuarantined)
+	}
 	if !quarantined && markQuarantined == nil {
 		return ErrState
 	}
@@ -278,6 +284,9 @@ func continueMove(ctx context.Context, d Definition, item Entry, p Proof, quaran
 // Positive proof includes a source object actually placed in quarantine, not
 // just the absence of a source filename. No deletion happens during verification.
 func VerifyQuarantined(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		return verifyDiscQuarantined(ctx, d, item, p)
+	}
 	if err := verifyMoveTarget(ctx, d, item, p); err != nil {
 		return err
 	}
@@ -317,6 +326,9 @@ func validateMoveHoldBinding(d Definition, item Entry, p Proof) error {
 // removal confirmation. It never touches the source slot, parent directories,
 // or foreign objects. A failed cleanup keeps the target recovery anchor intact.
 func CleanupMovedSource(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		return cleanupDiscMovedSource(ctx, d, item, p)
+	}
 	if err := verifyMoveTarget(ctx, d, item, p); err != nil {
 		return err
 	}
@@ -380,6 +392,9 @@ func CleanupMovedSource(ctx context.Context, d Definition, item Entry, p Proof) 
 // target anchor. Recheck the published target while that anchor still exists;
 // empty/already removed stages can be retried without guessing file ownership.
 func CleanupMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		return cleanupDiscMoveTarget(ctx, d, item, p)
+	}
 	if d.Mode != "move" {
 		return ErrMode
 	}

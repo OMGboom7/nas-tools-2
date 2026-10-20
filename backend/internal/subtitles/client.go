@@ -146,9 +146,16 @@ func (c Config) Payload(file, mediaType string) (Payload, error) {
 
 // The CSF API represents a Blu-ray movie directory with a virtual .mp4 whose
 // basename matches that directory. Producers must independently prove the
-// Blu-ray source; ordinary Go intake events never infer or use this mode.
-func (c Config) BluRayPayload(directory string) (Payload, error) {
-	p, err := c.Payload(directory, "电影")
+// Blu-ray source; this is not inferred from a filename or extension.
+func (c Config) BluRayPayload(directory string, mediaType ...string) (Payload, error) {
+	kind := "电影"
+	if len(mediaType) > 1 {
+		return Payload{}, ErrConfig
+	}
+	if len(mediaType) == 1 {
+		kind = mediaType[0]
+	}
+	p, err := c.Payload(directory, kind)
 	if err != nil {
 		return p, err
 	}
@@ -183,7 +190,7 @@ func Submit(ctx context.Context, c Config, p Payload, transport http.RoundTrippe
 	if _, err := portablePath(p.Path); err != nil || p.VideoType < 0 || p.VideoType > 1 || p.Priority != 3 || p.MediaID != "" {
 		return "", ErrConfig
 	}
-	if p.Bluray && (p.VideoType != 0 || path.Base(p.Path) != path.Base(path.Dir(p.Path))+".mp4") {
+	if p.Bluray && path.Base(p.Path) != path.Base(path.Dir(p.Path))+".mp4" {
 		return "", ErrConfig
 	}
 	b, err := json.Marshal(p)

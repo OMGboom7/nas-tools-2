@@ -17,6 +17,9 @@ import (
 // removes sources, overwrites a target, or adopts an unjournaled stage. The
 // callback revalidates the prepared ledger immediately before publication.
 func PublishPrepared(ctx context.Context, d Definition, item Entry, p Proof, beforePublish func() error) error {
+	if IsDisc(item) {
+		return publishDiscPrepared(ctx, d, item, p, beforePublish)
+	}
 	if p.Incomplete {
 		return ErrState
 	}

@@ -52,6 +52,13 @@ func (api organizationAPI) planDownload(ctx context.Context, input downloadCompl
 		for _, item := range plan.Items {
 			if item.Status == "filtered" {
 				filtered[item.Source] = true
+				if item.Disc != nil {
+					for _, node := range plan.definition.Discs[item.Source].Nodes {
+						if !node.Directory {
+							filtered[filepath.Join(item.Source, node.Path)] = true
+						}
+					}
+				}
 			}
 			if item.Kind == "media" && item.Status == "available" && !covered[item.Source] {
 				selected[item.Source] = true
@@ -82,6 +89,13 @@ func (api organizationAPI) planDownload(ctx context.Context, input downloadCompl
 			if take {
 				entries = append(entries, entry)
 				covered[entry.Source] = true
+				if entry.Disc != nil {
+					for _, node := range plan.definition.Discs[entry.Source].Nodes {
+						if !node.Directory {
+							covered[filepath.Join(entry.Source, node.Path)] = true
+						}
+					}
+				}
 			}
 		}
 		if len(entries) == 0 {

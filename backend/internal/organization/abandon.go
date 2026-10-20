@@ -194,6 +194,9 @@ func (s *Store) finishAbandon(ctx context.Context, id string) error {
 	if _, err = tx.ExecContext(ctx, `DELETE FROM GO_ORGANIZATION_TARGETS WHERE JOB_ID=?`, id); err != nil {
 		return err
 	}
+	if err := releaseDiscTargets(ctx, tx, id); err != nil {
+		return err
+	}
 	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, id); err != nil {
 		return err
 	}

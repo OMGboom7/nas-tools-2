@@ -18,11 +18,13 @@ var ErrPath = errors.New("invalid or changed organization path")
 var ErrLimit = errors.New("organization scan exceeded limits")
 
 type File struct {
-	Path     string `json:"path"`
-	Kind     string `json:"kind"`
-	Size     int64  `json:"size"`
-	Modified int64  `json:"modified"`
-	Identity string `json:"identity"`
+	Disc     *DiscManifest `json:"-"`
+	DiscInfo *DiscInfo     `json:"disc,omitempty"`
+	Path     string        `json:"path"`
+	Kind     string        `json:"kind"`
+	Size     int64         `json:"size"`
+	Modified int64         `json:"modified"`
+	Identity string        `json:"identity"`
 }
 
 type ScanResult struct {
@@ -111,6 +113,33 @@ func ScanDirectory(ctx context.Context, base, selected string) (ScanResult, erro
 	return scan(ctx, base, selected, false, true)
 }
 
+// SnapshotSelected observes exactly one explicitly advertised downloader file,
+// including its hidden ancillary files. It never traverses a shared directory
+// or turns an unselected neighbor into task authority.
+func SnapshotSelected(ctx context.Context, base, path string) (File, error) {
+	if ctx.Err() != nil {
+		return File{}, ctx.Err()
+	}
+	if !validRelative(path) || path == "." {
+		return File{}, ErrPath
+	}
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if strings.HasPrefix(part, ".nastool-") {
+			return File{}, ErrPath
+		}
+	}
+	root, err := OpenRoot(base)
+	if err != nil {
+		return File{}, err
+	}
+	defer root.Close()
+	info, err := noLinks(root, path)
+	if err != nil || !info.Mode().IsRegular() {
+		return File{}, ErrPath
+	}
+	return File{Path: path, Kind: "file", Size: info.Size(), Modified: info.ModTime().UnixNano(), Identity: Identity(info)}, nil
+}
+
 // ScanSelected never walks the shared download directory. Even unsupported
 // side files remain bound to the reviewed snapshot, but are not guessed media.
 func ScanSelected(ctx context.Context, base string, expected []File) (ScanResult, error) {
@@ -119,23 +148,57 @@ func ScanSelected(ctx context.Context, base string, expected []File) (ScanResult
 		return result, ErrLimit
 	}
 	seen := map[string]bool{}
+	approved := map[string]File{}
 	for _, file := range expected {
 		if seen[file.Path] {
 			return ScanResult{}, ErrPath
 		}
 		seen[file.Path] = true
-		scan, err := ScanAll(ctx, base, file.Path)
+		actual, err := SnapshotSelected(ctx, base, file.Path)
 		if err != nil {
 			return ScanResult{}, err
 		}
-		if len(scan.Files) != 1 {
-			return ScanResult{}, ErrPath
-		}
-		actual := scan.Files[0]
 		if actual.Path != file.Path || actual.Identity != file.Identity || actual.Size != file.Size || actual.Modified != file.Modified {
 			return ScanResult{}, ErrPath
 		}
 		actual.Kind = FileKind(actual.Path)
+		approved[actual.Path] = actual
+	}
+	root, err := OpenRoot(base)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	defer root.Close()
+	discs := map[string]bool{}
+	for _, file := range expected {
+		if ctx.Err() != nil {
+			return ScanResult{}, ctx.Err()
+		}
+		actual := approved[file.Path]
+		if parent := discAncestor(root, file.Path); parent != "" {
+			if discs[parent] {
+				continue
+			}
+			disc, err := discFile(ctx, base, parent, false)
+			if err != nil {
+				return ScanResult{}, err
+			}
+			// Downloader authority is its exact file list, not the neighboring
+			// directory. A partial selection must never absorb unselected files.
+			for _, node := range disc.Disc.Nodes {
+				if node.Directory {
+					continue
+				}
+				path := filepath.Join(parent, node.Path)
+				want, ok := approved[path]
+				if !ok || want.Identity != node.Node.Identity || want.Size != node.Node.Size || want.Modified != node.Node.Modified {
+					return ScanResult{}, ErrPath
+				}
+			}
+			discs[parent] = true
+			result.Files = append(result.Files, disc)
+			continue
+		}
 		if actual.Kind == "" {
 			result.Skipped++
 			continue
@@ -159,6 +222,24 @@ func scan(ctx context.Context, base, selected string, all, shallow bool) (ScanRe
 	info, err := noLinks(root, selected)
 	if err != nil {
 		return result, ErrPath
+	}
+	if !all {
+		if parent := discAncestor(root, selected); parent != "" {
+			file, err := discFile(ctx, base, parent, parent != selected)
+			if err != nil {
+				return result, err
+			}
+			result.Files = append(result.Files, file)
+			return result, nil
+		}
+		if info.IsDir() && discCandidate(root, selected) {
+			file, err := discFile(ctx, base, selected, false)
+			if err != nil {
+				return result, err
+			}
+			result.Files = append(result.Files, file)
+			return result, nil
+		}
 	}
 	visited := 0
 	var walk func(string, fs.FileInfo, int) error
@@ -188,6 +269,21 @@ func scan(ctx context.Context, base, selected string, all, shallow bool) (ScanRe
 				return ErrLimit
 			}
 			result.Files = append(result.Files, File{Path: name, Kind: kind, Size: info.Size(), Modified: info.ModTime().UnixNano(), Identity: Identity(info)})
+			return nil
+		}
+		if !all && discCandidate(root, name) {
+			file, err := discFile(ctx, base, name, false)
+			if err != nil {
+				return err
+			}
+			if len(result.Files) >= 1000 {
+				return ErrLimit
+			}
+			visited += len(file.Disc.Nodes)
+			if visited > 20000 {
+				return ErrLimit
+			}
+			result.Files = append(result.Files, file)
 			return nil
 		}
 		if shallow && depth > 0 {

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 )
@@ -283,7 +282,7 @@ func (api organizationAPI) serveLegacyIdentification(w http.ResponseWriter, r *h
 		writeAPIError(w, 401, 401, "invalid or expired authorization")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), organization.ExecutionTimeout)
 	defer cancel()
 	planner := api.legacyCustomPlan
 	if linked {

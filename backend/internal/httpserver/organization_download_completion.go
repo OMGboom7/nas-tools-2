@@ -146,23 +146,27 @@ func (api organizationAPI) reviewDownloadCompletion(ctx context.Context, input d
 		}
 		relative := filepath.Join(relativeDir, filepath.FromSlash(file.Path))
 		if !safeCompletionRelative(relative) {
-			return fail(422, "selected task path is hidden, temporary or reserved; no directory expansion")
+			if !safeCompletionRelative(relative, true) {
+				return fail(422, "selected task path is temporary or reserved; no directory expansion")
+			}
+			if _, err := organization.DiscContaining(ctx, physical, relative); err != nil {
+				return fail(422, "hidden selected file is not a verified Blu-ray ancillary file; no directory expansion")
+			}
 		}
 		fileInfo, err := bound.Lstat(relative)
 		if err != nil || !fileInfo.Mode().IsRegular() {
 			return fail(422, "selected task entry is not an existing regular file; no directory expansion")
 		}
-		scan, err := organization.ScanAll(ctx, physical, relative)
+		local, err := organization.SnapshotSelected(ctx, physical, relative)
 		if err != nil {
 			if ctx.Err() != nil {
 				return fail(504, "local completion review cancelled or timed out")
 			}
 			return fail(422, "selected task file is missing or unsafe; no alternative path is guessed")
 		}
-		if len(scan.Files) != 1 || scan.Files[0].Path != relative {
+		if local.Path != relative {
 			return fail(422, "selected task file is hidden, temporary or not a safe regular file")
 		}
-		local := scan.Files[0]
 		local.Kind = organization.FileKind(local.Path)
 		if local.Kind == "" {
 			local.Kind = "file"
@@ -183,11 +187,10 @@ func (api organizationAPI) reviewDownloadCompletion(ctx context.Context, input d
 		return fail(409, "downloader task changed during completion review; no old evidence reused")
 	}
 	for _, file := range review.Files {
-		scan, err := organization.ScanAll(ctx, physical, file.Path)
-		if err != nil || len(scan.Files) != 1 {
+		current, err := organization.SnapshotSelected(ctx, physical, file.Path)
+		if err != nil {
 			return fail(409, "local completion evidence changed during review")
 		}
-		current := scan.Files[0]
 		if file.Identity != current.Identity || file.Size != current.Size || file.Modified != current.Modified {
 			return fail(409, "local completion evidence changed during review")
 		}
@@ -209,12 +212,12 @@ func (api organizationAPI) reviewDownloadCompletion(ctx context.Context, input d
 	return review, nil
 }
 
-func safeCompletionRelative(relative string) bool {
+func safeCompletionRelative(relative string, hidden ...bool) bool {
 	if !downloadcompletion.Relative(filepath.ToSlash(relative)) {
 		return false
 	}
 	for _, part := range strings.Split(filepath.ToSlash(relative), "/") {
-		if strings.HasPrefix(part, ".") || part == "@Recycle" || part == "#recycle" || part == "$Recycle.Bin" || strings.HasPrefix(part, "@eaDir") || strings.Contains(strings.ToLower(part), ".!qb") {
+		if strings.HasPrefix(part, ".") && !(len(hidden) == 1 && hidden[0]) || strings.HasPrefix(part, ".nastool-") || part == "@Recycle" || part == "#recycle" || part == "$Recycle.Bin" || strings.HasPrefix(part, "@eaDir") || strings.Contains(strings.ToLower(part), ".!qb") {
 			return false
 		}
 	}

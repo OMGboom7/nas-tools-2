@@ -21,7 +21,10 @@ var seasonArtworkName = regexp.MustCompile(`^season[0-9]{2}-(poster|banner|lands
 // Capture inode/size/mtime/ctime (not atime, which our hash read can update).
 // This surrounds the full digest verification and detects subsequent content,
 // link-count or permission changes during sidecar preparation/publication.
-func sidecarMediaStamp(job Job, item JobItem) (string, error) {
+func sidecarMediaStamp(ctx context.Context, job Job, item JobItem) (string, error) {
+	if IsDisc(item.Entry) {
+		return discMediaStamp(ctx, job, item)
+	}
 	if err := validateDestinationBinding(job.Definition, item.Entry, item.Proof); err != nil {
 		return "", err
 	}
@@ -67,6 +70,9 @@ func sidecarTarget(item JobItem, scope, name string) (string, error) {
 	}
 	dir := filepath.Dir(item.Target)
 	stem := strings.TrimSuffix(filepath.Base(item.Target), filepath.Ext(item.Target))
+	if IsDisc(item.Entry) {
+		dir, stem = item.Target, filepath.Base(item.Target)
+	}
 	tv := item.MediaType == "电视剧" || item.MediaType == "动漫"
 	ext := strings.ToLower(filepath.Ext(name))
 	base := strings.TrimSuffix(name, filepath.Ext(name))
@@ -110,14 +116,14 @@ func PublishSidecar(ctx context.Context, job Job, item JobItem, scope, name stri
 	if err := ctx.Err(); err != nil {
 		return proof, state, err
 	}
-	mediaStamp, err := sidecarMediaStamp(job, item)
+	mediaStamp, err := sidecarMediaStamp(ctx, job, item)
 	if err != nil {
 		return proof, state, err
 	}
 	if err := VerifyCompletedTarget(ctx, job, item); err != nil {
 		return proof, state, err
 	}
-	if after, err := sidecarMediaStamp(job, item); err != nil || after != mediaStamp {
+	if after, err := sidecarMediaStamp(ctx, job, item); err != nil || after != mediaStamp {
 		return proof, state, ErrState
 	}
 	if err := validateDestinationBinding(job.Definition, item.Entry, item.Proof); err != nil {
@@ -222,7 +228,7 @@ func PublishSidecar(ctx context.Context, job Job, item JobItem, scope, name stri
 		return proof, state, err
 	}
 	check := func() error {
-		if stamp, err := sidecarMediaStamp(job, item); err != nil || stamp != mediaStamp {
+		if stamp, err := sidecarMediaStamp(ctx, job, item); err != nil || stamp != mediaStamp {
 			return ErrState
 		}
 		current, err := anchoredRoot(job.Definition.TargetRoot, job.Definition.TargetIdentity)

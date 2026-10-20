@@ -28,6 +28,7 @@ type Client struct {
 type Input struct {
 	Kind, ID, Stem      string
 	Season, First, Last int
+	Directory           bool
 }
 type Artifact struct {
 	Scope, Name, URL string
@@ -152,6 +153,22 @@ func (c Client) Build(ctx context.Context, in Input, o Options, now time.Time) (
 		return plan, ErrMetadata
 	}
 	n, p := o.NFO[in.Kind], o.Pictures[in.Kind]
+	if in.Directory && in.Kind == "tv" {
+		// A disc has no proven clip-to-episode mapping. Keep show/season
+		// metadata, but never invent an episode NFO or decode an arbitrary clip.
+		if n["episode_basic"] || n["episode_credits"] || p["episode_thumb"] {
+			plan.Warnings = append(plan.Warnings, "Blu-ray episode mapping unavailable; per-episode sidecars and thumbnails omitted")
+		}
+		copyFlags := func(flags Flags) Flags {
+			out := Flags{}
+			for k, v := range flags {
+				out[k] = v
+			}
+			return out
+		}
+		n, p = copyFlags(n), copyFlags(p)
+		n["episode_basic"], n["episode_credits"], p["episode_thumb"] = false, false, false
+	}
 	addNFO := func(scope, name string, b []byte, err error) error {
 		if err != nil {
 			return err
@@ -191,7 +208,7 @@ func (c Client) Build(ctx context.Context, in Input, o Options, now time.Time) (
 			}
 			seen[*ep.Number] = true
 		}
-		for number := in.First; number <= in.Last; number++ {
+		for number := in.First; !in.Directory && number <= in.Last; number++ {
 			found := false
 			for _, ep := range season.Episodes {
 				if *ep.Number == number {

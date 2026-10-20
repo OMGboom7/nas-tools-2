@@ -239,7 +239,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, 400, 400, "explicit detach confirmation, reviewed snapshot and reason are required")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), organization.ExecutionTimeout)
 	defer cancel()
 	job, err := api.jobs.Get(ctx, r.PathValue("id"))
 	if err != nil {

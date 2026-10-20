@@ -236,12 +236,19 @@ func (api *intakeScraper) run(ctx context.Context, job organization.Job, item or
 	}
 	kind := displayMediaKind(item.MediaType)
 	in := scraper.Input{Kind: kind, ID: item.TMDBID, Stem: strings.TrimSuffix(filepath.Base(item.Target), filepath.Ext(item.Target))}
+	if item.Disc != nil {
+		in.Stem = filepath.Base(item.Target)
+		in.Directory = true
+	}
 	if kind == "tv" {
 		ep, err := mediameta.Episodes(item.SeasonEpisode, "")
-		if err != nil || ep.Season == nil || ep.Episode == nil || ep.EndSeason != nil {
+		if err != nil || ep.Season == nil || ep.Episode == nil && item.Disc == nil || ep.EndSeason != nil {
 			return "blocked", "saved season and episode identity unavailable"
 		}
-		in.Season, in.First, in.Last = *ep.Season, *ep.Episode, *ep.Episode
+		in.Season = *ep.Season
+		if ep.Episode != nil {
+			in.First, in.Last = *ep.Episode, *ep.Episode
+		}
 		if ep.EndEpisode != nil {
 			in.Last = *ep.EndEpisode
 		}

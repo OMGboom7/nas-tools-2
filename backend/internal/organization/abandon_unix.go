@@ -18,6 +18,9 @@ import (
 // and any saved witness must exist (full digest or exact source prefix). No
 // recursive removal, source unlink, or target unlink.
 func inspectUnpublished(ctx context.Context, d Definition, item Entry, p Proof, intent bool, beforeDelete func() error) error {
+	if IsDisc(item) {
+		return inspectDiscUnpublished(ctx, d, item, p, intent, beforeDelete)
+	}
 	if !SupportedMode(d.Mode) {
 		return ErrMode
 	}
@@ -191,6 +194,9 @@ func inspectDiscarded(ctx context.Context, d Definition, item Entry, p Proof) er
 // including when a durable-intent stage is already gone. Target absence alone
 // never proves a cancelled transfer, and equal-content replacement is rejected.
 func unpublishedBoundary(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		return discUnpublishedBoundary(ctx, d, item, p)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

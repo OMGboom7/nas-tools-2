@@ -40,6 +40,7 @@ type organizationRoots struct {
 	ExecutionModes   []string           `json:"executionModes"`
 }
 type organizationPlanInput struct {
+	AllowDiscExpansion    bool                               `json:"allowDiscExpansion,omitempty"`
 	Download              *organization.DownloadOrigin       `json:"-"`
 	Sync                  *organization.SyncOrigin           `json:"-"`
 	LegacyTargetOverride  bool                               `json:"-"`
@@ -56,25 +57,26 @@ type organizationPlanInput struct {
 	Assignments           []organizationMediaAssignment      `json:"assignments,omitempty"`
 }
 type organizationPlanItem struct {
-	PartOverride  *string `json:"partOverride,omitempty"`
-	EpisodeFormat string  `json:"episodeFormat,omitempty"`
-	EpisodeOffset int     `json:"episodeOffset,omitempty"`
-	Part          string  `json:"part,omitempty"`
-	Assigned      bool    `json:"assigned,omitempty"`
-	Source        string  `json:"source"`
-	Target        string  `json:"target,omitempty"`
-	Kind          string  `json:"kind"`
-	Size          int64   `json:"size"`
-	Modified      string  `json:"modified"`
-	Status        string  `json:"status"`
-	Reason        string  `json:"reason,omitempty"`
-	TMDBID        string  `json:"tmdbId,omitempty"`
-	Identity      string  `json:"identity"`
-	Title         string  `json:"title,omitempty"`
-	Year          string  `json:"year,omitempty"`
-	MediaType     string  `json:"mediaType,omitempty"`
-	Category      string  `json:"category,omitempty"`
-	SeasonEpisode string  `json:"seasonEpisode,omitempty"`
+	Disc          *organization.DiscInfo `json:"disc,omitempty"`
+	PartOverride  *string                `json:"partOverride,omitempty"`
+	EpisodeFormat string                 `json:"episodeFormat,omitempty"`
+	EpisodeOffset int                    `json:"episodeOffset,omitempty"`
+	Part          string                 `json:"part,omitempty"`
+	Assigned      bool                   `json:"assigned,omitempty"`
+	Source        string                 `json:"source"`
+	Target        string                 `json:"target,omitempty"`
+	Kind          string                 `json:"kind"`
+	Size          int64                  `json:"size"`
+	Modified      string                 `json:"modified"`
+	Status        string                 `json:"status"`
+	Reason        string                 `json:"reason,omitempty"`
+	TMDBID        string                 `json:"tmdbId,omitempty"`
+	Identity      string                 `json:"identity"`
+	Title         string                 `json:"title,omitempty"`
+	Year          string                 `json:"year,omitempty"`
+	MediaType     string                 `json:"mediaType,omitempty"`
+	Category      string                 `json:"category,omitempty"`
+	SeasonEpisode string                 `json:"seasonEpisode,omitempty"`
 }
 type organizationPlan struct {
 	ScraperEnabled bool                   `json:"scraperEnabled"`
@@ -379,7 +381,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if e1 != nil || e2 != nil || !sourceInfo.IsDir() || !targetInfo.IsDir() || os.SameFile(sourceInfo, targetInfo) {
 		return fail(422, "organization roots changed")
 	}
-	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode}
+	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode, Discs: map[string]organization.DiscManifest{}, AllowDiscExpansion: input.AllowDiscExpansion}
 	result.ScraperEnabled, _ = media["nfo_poster"].(bool)
 	result.definition.ScraperEnabled = result.ScraperEnabled
 	result.definition.Unknown = unknown
@@ -422,9 +424,26 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
 		}
-		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Identity: file.Identity, Status: "unmatched"}
+		item := organizationPlanItem{Source: file.Path, Kind: file.Kind, Size: file.Size, Modified: strconv.FormatInt(file.Modified, 10), Identity: file.Identity, Status: "unmatched", Disc: file.DiscInfo}
+		if file.Disc != nil {
+			result.definition.Discs[file.Path] = *file.Disc
+			if file.DiscInfo.Expanded && !input.AllowDiscExpansion {
+				return fail(422, "selected object belongs to a Blu-ray disc; explicitly authorize whole-disc expansion and review its full scope")
+			}
+		}
+		if file.Disc != nil && file.DiscInfo.Expanded && unknown != nil {
+			return fail(422, "select the whole Blu-ray directory as a new manual task; an individual unknown-record scope cannot silently cover the rest of a disc")
+		}
 		if input.Sync != nil || input.Download != nil {
 			ignored, err := syncRules.ignored(ctx, filepath.Join(source.Path, file.Path))
+			if err == nil && !ignored && file.Disc != nil {
+				for _, node := range file.Disc.Nodes {
+					ignored, err = syncRules.ignored(ctx, filepath.Join(source.Path, file.Path, node.Path))
+					if err != nil || ignored {
+						break
+					}
+				}
+			}
 			if err != nil {
 				return fail(422, "sync ignore matching failed; no execution")
 			}
@@ -454,21 +473,25 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 				bluray = true
 			}
 		}
-		if bluray {
+		if bluray && file.Disc == nil {
 			item.Status, item.Reason = "blocked", "Blu-ray directory organization is not migrated"
 			result.Items = append(result.Items, item)
 			continue
 		}
 		var recognition *nativeRecognition
 		var failure *recognitionFailure
+		title := filepath.Base(file.Path)
+		if file.Path == "." {
+			title = filepath.Base(sourcePath)
+		}
 		if assignment, exists := assignments[file.Path]; exists {
 			item.Assigned = true
 			item.PartOverride = assignment.PartOverride
 			item.EpisodeFormat, item.EpisodeOffset = assignment.EpisodeFormat, assignment.EpisodeOffset
-			recognition, failure = api.recognition.recognizeAssigned(ctx, filepath.Base(file.Path), assignment)
+			recognition, failure = api.recognition.recognizeAssigned(ctx, title, assignment)
 		} else if input.LegacySelection != nil {
 			var filtered bool
-			recognition, failure, filtered = api.legacySelectedRecognition(ctx, filepath.Base(file.Path), input.LegacySelection)
+			recognition, failure, filtered = api.legacySelectedRecognition(ctx, title, input.LegacySelection)
 			item.Assigned = input.LegacySelection.TMDBID != ""
 			item.PartOverride = input.LegacySelection.PartOverride
 			item.EpisodeFormat, item.EpisodeOffset = input.LegacySelection.EpisodeFormat, input.LegacySelection.EpisodeOffset
@@ -478,7 +501,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 				continue
 			}
 		} else {
-			recognition, failure = api.recognition.recognize(ctx, filepath.Base(file.Path), "")
+			recognition, failure = api.recognition.recognize(ctx, title, "")
 		}
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
@@ -506,7 +529,11 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			result.Items = append(result.Items, item)
 			continue
 		}
-		relative, err := api.targetName(ctx, media, recognition, filepath.Ext(file.Path))
+		ext := filepath.Ext(file.Path)
+		if file.Disc != nil {
+			ext = ""
+		}
+		relative, err := api.targetName(ctx, media, recognition, ext, file.Disc != nil)
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
 		}
@@ -543,6 +570,9 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		}
 		var matches []organizationPlanItem
 		for _, video := range result.Items {
+			if video.Disc != nil {
+				continue
+			}
 			if video.Kind != "media" || filepath.Dir(video.Source) != filepath.Dir(item.Source) {
 				continue
 			}
@@ -608,7 +638,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 }
 
 func (item organizationPlanItem) entry() organization.Entry {
-	return organization.Entry{Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part, EpisodeFormat: item.EpisodeFormat, EpisodeOffset: item.EpisodeOffset, PartOverride: item.PartOverride}
+	return organization.Entry{Disc: item.Disc, Source: item.Source, Target: item.Target, Kind: item.Kind, Size: item.Size, Modified: item.Modified, Identity: item.Identity, TMDBID: item.TMDBID, Title: item.Title, Year: item.Year, MediaType: item.MediaType, Category: item.Category, SeasonEpisode: item.SeasonEpisode, Assigned: item.Assigned, Part: item.Part, EpisodeFormat: item.EpisodeFormat, EpisodeOffset: item.EpisodeOffset, PartOverride: item.PartOverride}
 }
 
 func markOrganizationConflicts(items []organizationPlanItem) {
@@ -617,7 +647,7 @@ func markOrganizationConflicts(items []organizationPlanItem) {
 			continue
 		}
 		for j := i + 1; j < len(items); j++ {
-			if items[i].Target == items[j].Target {
+			if items[i].Target == items[j].Target || items[i].Target != "" && items[j].Target != "" && (items[i].Disc != nil || items[j].Disc != nil) && organization.DiscTargetOverlap(items[i].Target, items[j].Target) {
 				items[i].Status, items[j].Status = "conflict", "conflict"
 				items[i].Reason, items[j].Reason = "multiple sources share a target", "multiple sources share a target"
 			}
@@ -625,8 +655,14 @@ func markOrganizationConflicts(items []organizationPlanItem) {
 	}
 }
 
-func (api organizationAPI) targetName(ctx context.Context, media map[string]any, r *nativeRecognition, extension string) (string, error) {
+func (api organizationAPI) targetName(ctx context.Context, media map[string]any, r *nativeRecognition, extension string, directory ...bool) (string, error) {
 	format := localNamingTemplate(media, r.kind == "tv")
+	disc := len(directory) > 0 && directory[0]
+	if disc {
+		if i := strings.LastIndex(format, "/"); i > 0 {
+			format = format[:i]
+		}
+	}
 	values := map[string]string{"title": localLibraryName(text(r.data["title"]), media), "name": localLibraryName(r.meta.Title, media), "year": text(r.data["year"]), "tmdbid": text(r.data["tmdbid"]), "original_title": localLibraryName(text(r.detail.Attributes["original_title"]), media), "part": r.meta.Part, "videoFormat": r.meta.Resolution, "videoCodec": r.meta.VideoCodec, "audioCodec": r.meta.AudioCodec, "resourceType": r.meta.Source, "resolution": r.meta.Resolution, "effect": r.meta.Effect, "season_episode": text(r.data["season_episode"]), "releaseGroup": localLibraryName(r.meta.Team, media), "customization": localLibraryName(r.meta.Customization, media)}
 	year, _ := strconv.Atoi(values["year"])
 	decade := year / 10 * 10
@@ -651,23 +687,30 @@ func (api organizationAPI) targetName(ctx context.Context, media map[string]any,
 	}
 	if r.kind == "tv" {
 		e := r.meta.Episodes
-		if e.Season == nil || e.Episode == nil || e.EndSeason != nil {
+		if e.Season == nil || e.Episode == nil && !disc || e.EndSeason != nil {
 			return "", errLibraryFormat
 		}
-		last := *e.Episode
+		first := 1
+		if e.Episode != nil {
+			first = *e.Episode
+		}
+		last := first
 		if e.EndEpisode != nil {
 			last = *e.EndEpisode
 		}
 		verified := false
 		for _, season := range r.detail.Seasons {
-			if season.Number == *e.Season && season.Episodes != nil && *e.Episode > 0 && last >= *e.Episode && last <= *season.Episodes {
+			if season.Number == *e.Season && season.Episodes != nil && first > 0 && last >= first && last <= *season.Episodes {
 				verified = true
 			}
 		}
 		if !verified {
 			return "", errLibraryFormat
 		}
-		values["season"], values["episode"] = strconv.Itoa(*e.Season), strconv.Itoa(*e.Episode)
+		values["season"] = strconv.Itoa(*e.Season)
+		if e.Episode != nil {
+			values["episode"] = strconv.Itoa(*e.Episode)
+		}
 		if e.EndEpisode != nil {
 			values["episode"] += "-" + strconv.Itoa(*e.EndEpisode)
 		}

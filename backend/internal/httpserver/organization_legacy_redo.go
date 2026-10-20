@@ -261,7 +261,7 @@ func (api organizationAPI) serveLegacyRedo(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, 401, 401, "invalid or expired authorization")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), organization.ExecutionTimeout)
 	defer cancel()
 	plans := make([]organizationPlan, len(selectors))
 	failures := make([]*recognitionFailure, len(selectors))

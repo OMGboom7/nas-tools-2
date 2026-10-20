@@ -46,14 +46,18 @@ func ReadCompletedMedia(ctx context.Context, job Job, item JobItem, consume func
 	if job.State != "completed" || item.Kind != "media" || consume == nil {
 		return nil, ErrState
 	}
-	stamp, err := sidecarMediaStamp(job, item)
+	// No unverified STREAM clip is selected as a representative episode.
+	if IsDisc(item.Entry) {
+		return nil, ErrMode
+	}
+	stamp, err := sidecarMediaStamp(ctx, job, item)
 	if err != nil {
 		return nil, err
 	}
 	if err := VerifyCompletedTarget(ctx, job, item); err != nil {
 		return nil, err
 	}
-	if after, err := sidecarMediaStamp(job, item); err != nil || stamp != after {
+	if after, err := sidecarMediaStamp(ctx, job, item); err != nil || stamp != after {
 		return nil, ErrState
 	}
 	d := job.Definition
@@ -87,7 +91,7 @@ func ReadCompletedMedia(ctx context.Context, job Job, item JobItem, consume func
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if after, err := sidecarMediaStamp(job, item); err != nil || stamp != after {
+	if after, err := sidecarMediaStamp(ctx, job, item); err != nil || stamp != after {
 		return nil, ErrState
 	}
 	return data, nil

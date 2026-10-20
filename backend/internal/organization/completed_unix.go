@@ -11,6 +11,12 @@ import (
 // after its staging anchor has legitimately been cleaned up. Never use it to
 // adopt an uncertain/prepared publication or infer source removal from absence.
 func VerifyCompletedTarget(ctx context.Context, job Job, item JobItem) error {
+	if IsDisc(item.Entry) {
+		if item.State != "completed" || item.Reason != "" {
+			return ErrState
+		}
+		return verifyDiscPublished(ctx, job.Definition, item.Entry, item.Proof, false, true)
+	}
 	d := job.Definition
 	p := item.Proof
 	if item.State != "completed" || item.Reason != "" || p.Incomplete || p.Identity == "" || len(p.Digest) != 64 || p.ParentIdentity == "" || !SupportedMode(d.Mode) {

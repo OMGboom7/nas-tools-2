@@ -218,7 +218,7 @@ func (api organizationAPI) serveDownloadBatchAction(w http.ResponseWriter, r *ht
 		return
 	}
 	input.actor = claims.Username
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), organization.ExecutionTimeout)
 	defer cancel()
 	b, err := api.jobs.GetDownloadBatch(ctx, r.PathValue("id"))
 	if err != nil {

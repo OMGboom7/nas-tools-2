@@ -123,7 +123,11 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 		if usable == 0 {
 			return fail(422, "no existing configured destination is available; activation creates no directories")
 		}
-		scan, err := organization.ScanAll(ctx, source, ".")
+		scanFunc := organization.ScanAll
+		if record.Rename == 1 {
+			scanFunc = organization.Scan
+		}
+		scan, err := scanFunc(ctx, source, ".")
 		if err != nil {
 			return fail(422, "monitor scan is unsafe or exceeds bounds; narrow the configured source")
 		}
@@ -138,11 +142,16 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 			}
 			scope := file.Path
 			if record.Rename == 1 {
-				file.Kind = organization.FileKind(file.Path)
+				if file.DiscInfo == nil {
+					file.Kind = organization.FileKind(file.Path)
+				}
 				if file.Kind == "" {
 					continue
 				}
 				scope = filepath.Dir(file.Path)
+				if file.DiscInfo != nil {
+					scope = file.Path
+				}
 			}
 			groups[scope] = append(groups[scope], file)
 		}
@@ -509,6 +518,9 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 		quiet := true
 		for _, file := range event.Snapshot.Files {
 			quiet = quiet && now.Sub(time.Unix(0, file.Modified)) >= 30*time.Second
+			if file.DiscInfo != nil {
+				quiet = quiet && now.Sub(time.Unix(0, file.DiscInfo.LatestModified)) >= 30*time.Second
+			}
 		}
 		if !quiet {
 			continue
@@ -546,7 +558,7 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 		for _, plan := range fresh {
 			for _, entry := range plan.definition.Entries {
 				file, ok := observed[entry.Source]
-				if !ok || file.Identity != entry.Identity || file.Size != entry.Size || strconv.FormatInt(file.Modified, 10) != entry.Modified {
+				if !ok || file.Identity != entry.Identity || file.Size != entry.Size || strconv.FormatInt(file.Modified, 10) != entry.Modified || organization.Digest(file.DiscInfo) != organization.Digest(entry.Disc) {
 					return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "source is not the exact twice-observed snapshot")
 				}
 			}
@@ -622,7 +634,7 @@ func startSyncMonitorWorker(ctx context.Context, api *organizationAPI) func() {
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				run, cancel := context.WithTimeout(ctx, 20*time.Minute)
+				run, cancel := context.WithTimeout(ctx, organization.ExecutionTimeout)
 				err := api.syncMonitorTick(run, now)
 				cancel()
 				if err != nil && !errors.Is(err, organization.ErrBusy) && !errors.Is(err, context.Canceled) {

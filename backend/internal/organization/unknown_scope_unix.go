@@ -26,6 +26,13 @@ func verifyUnknownScope(ctx context.Context, job Job) error {
 	}
 	defer root.Close()
 	info, err := root.Lstat(d.UnknownScope)
+	if errors.Is(err, os.ErrNotExist) && d.Mode == "move" {
+		for _, item := range job.Items {
+			if IsDisc(item.Entry) && item.Source == d.UnknownScope && item.Identity == d.UnknownScopeIdentity && item.State == "completed" && item.Reason == "" {
+				return VerifyCompletedTarget(ctx, job, item)
+			}
+		}
+	}
 	if errors.Is(err, os.ErrNotExist) && !d.UnknownDirectory && d.Mode == "move" {
 		return nil
 	}
@@ -47,6 +54,12 @@ func verifyUnknownScope(ctx context.Context, job Job) error {
 		item, ok := known[file.Path]
 		if !ok || item.Identity != file.Identity || item.Size != file.Size || item.Modified != strconv.FormatInt(file.Modified, 10) || item.Kind != file.Kind || item.Proof.Incomplete || len(item.Proof.Digest) != 64 {
 			return ErrState
+		}
+		if IsDisc(item.Entry) {
+			if _, err := discSourceStamp(ctx, d, item.Entry, &item.Proof, true, true); err != nil {
+				return err
+			}
+			continue
 		}
 		parent, name, err := anchoredParent(anchor, item.Source, false)
 		if err != nil {

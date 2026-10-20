@@ -203,6 +203,20 @@ test("record mutation errors never retry, restore automatically or fall back to 
 const eligibility = ts.transpileModule(readFileSync(new URL("../src/pages/organizationState.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } = await import(`data:text/javascript;base64,${Buffer.from(eligibility.outputText).toString("base64")}`);
 
+test("Blu-ray scope consent is preserved through preview and draft without executing", async (t) => {
+  const input = { sourceId: "source", targetId: "target", path: "Movie/BDMV/STREAM/00000.m2ts", mode: "copy", allowDiscExpansion: true };
+  const disc = { files: 7, directories: 5, expanded: true, fingerprint: "a".repeat(64), latestModified: 1 };
+  let calls = 0;
+  t.mock.method(globalThis,"fetch",async (url,options)=>{calls++;assert.equal(url,calls===1?"/api/v1/organization/plan":"/api/v1/organization/jobs");assert.deepEqual(JSON.parse(options.body),calls===1?input:{...input,fingerprint:"b".repeat(64)});return new Response(JSON.stringify({code:0,success:true,data:calls===1?{previewOnly:true,fingerprint:"b".repeat(64),items:[{source:"Movie",disc}]}:{id:"disc-job",state:"ready",items:[{source:"Movie",disc}]}}));});
+  assert.deepEqual((await previewOrganization("token",input)).items[0].disc,disc);
+  assert.deepEqual((await createOrganizationJob("token",{...input,fingerprint:"b".repeat(64)})).items[0].disc,disc);assert.equal(calls,2);
+});
+test("only a reviewed Blu-ray directory permits season-only identity, not ordinary video",()=>{
+  const file={source:"Show.S01",kind:"media",identity:"1:2",size:100,modified:"123",disc:{files:7,directories:5,expanded:false,fingerprint:"a".repeat(64),latestModified:1}};
+  const assigned=buildOrganizationAssignment(file,"tv","200","1","","");assert.equal(assigned.season,1);assert.equal(assigned.episode,undefined);assert.equal(assigned.disc,undefined);
+  assert.throws(()=>buildOrganizationAssignment({...file,disc:undefined},"tv","200","1","",""));
+});
+
 test("anime identity uses TV episode rules without asserting final metadata classification", () => {
   const file = { source: "Show.11.mkv", kind: "media", identity: "1:2", size: 100, modified: "123" };
   assert.deepEqual(buildOrganizationAssignment(file, "anime", "200", "1", "", "", "Show.{ep}.mkv", "-10"), { ...file, kind: "anime", tmdbId: "200", season: 1, episodeFormat: "Show.{ep}.mkv", episodeOffset: -10 });

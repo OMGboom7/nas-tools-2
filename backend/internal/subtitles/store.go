@@ -80,7 +80,7 @@ func configured(ctx context.Context, tx *sql.Tx) (Config, string, bool, error) {
 
 // Emit is called inside the successful intake transaction. Configuration errors
 // create blocked local receipts, not failed media intake or invented requests.
-func Emit(ctx context.Context, tx *sql.Tx, jobID string, ordinal int, name, file, kind, originDigest string) error {
+func Emit(ctx context.Context, tx *sql.Tx, jobID string, ordinal int, name, file, kind, originDigest string, disc ...bool) error {
 	c, digest, enabled, err := configured(ctx, tx)
 	if err != nil && !errors.Is(err, ErrConfig) {
 		return err
@@ -94,6 +94,9 @@ func Emit(ctx context.Context, tx *sql.Tx, jobID string, ordinal int, name, file
 		state, reason = "blocked", "plugin configuration unavailable; no submission attempted"
 	} else {
 		payload, err = c.Payload(file, kind)
+		if len(disc) == 1 && disc[0] {
+			payload, err = c.BluRayPayload(file, kind)
+		}
 		if err != nil {
 			state, reason = "blocked", "unsupported media path or type; no submission attempted"
 		}
@@ -184,6 +187,9 @@ func (s *Store) Claim(ctx context.Context, expected Receipt) (Config, Receipt, e
 	}
 	state, reason := "sending", ""
 	payload, payloadErr := c.Payload(r.LocalPath, r.MediaType)
+	if r.Payload.Bluray {
+		payload, payloadErr = c.BluRayPayload(r.LocalPath, r.MediaType)
+	}
 	if err != nil || !enabled || digest != r.ConfigDigest || payloadErr != nil || bus.Hash(payload) != bus.Hash(r.Payload) {
 		state, reason = "blocked", "plugin configuration or mapping changed; no submission attempted"
 	}

@@ -61,6 +61,13 @@ func anchoredParent(root *os.File, relative string, create bool) (*os.File, stri
 				unix.Close(fd)
 				return nil, "", err
 			}
+			// Publishing/syncing a child is not enough to persist a newly
+			// created ancestor's name across a power loss. Flush each link in
+			// the target path before a move may dispose its original source.
+			if err := unix.Fsync(fd); err != nil {
+				unix.Close(fd)
+				return nil, "", err
+			}
 		}
 		next, err := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		unix.Close(fd)
@@ -126,6 +133,9 @@ func TransferJournaled(ctx context.Context, d Definition, item Entry, tempName s
 }
 
 func transfer(ctx context.Context, d Definition, item Entry, tempName string, staging, prepared func(Proof) error) (Proof, error) {
+	if IsDisc(item) {
+		return transferDisc(ctx, d, item, tempName, staging, prepared)
+	}
 	var proof Proof
 	if !SupportedMode(d.Mode) || d.Mode == "move" {
 		return proof, ErrMode
@@ -353,6 +363,9 @@ func transfer(ctx context.Context, d Definition, item Entry, tempName string, st
 // VerifyPublished proves ownership, not mere existence/equal size. An unrelated
 // target or a partial staging file can never be reconciled into successful history.
 func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		return verifyDiscPublished(ctx, d, item, p, true, false)
+	}
 	if p.Incomplete {
 		return ErrState
 	}
@@ -454,6 +467,9 @@ func VerifyPublished(ctx context.Context, d Definition, item Entry, p Proof) err
 // Cleanup is optional and only touches this job's verified private staging name.
 // It must run after successful state/history persistence, never as rollback.
 func Cleanup(d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		return cleanupDisc(context.Background(), d, item, p)
+	}
 	if p.Incomplete {
 		return ErrState
 	}

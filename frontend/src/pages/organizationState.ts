@@ -41,7 +41,7 @@ export function canAbandonOrganizationJob(job: { state: string; items: Array<{ s
     && job.items.every((item) => item.state === "planned" || item.state === "prepared" || item.state === "staging"));
 }
 
-export function buildOrganizationAssignment(file: { source: string; kind: string; identity: string; modified: string; size: number }, kind: "movie" | "tv" | "anime", id: string, season: string, episode: string, endEpisode: string, episodeFormat = "", episodeOffset = "", partMode: "auto" | "set" | "clear" = "auto", part = "") {
+export function buildOrganizationAssignment(file: { source: string; kind: string; identity: string; modified: string; size: number; disc?: import("../api/client").OrganizationDisc }, kind: "movie" | "tv" | "anime", id: string, season: string, episode: string, endEpisode: string, episodeFormat = "", episodeOffset = "", partMode: "auto" | "set" | "clear" = "auto", part = "") {
   const tmdbId = id.trim();
   if (file.kind !== "media" || !file.identity || !file.modified || !Number.isSafeInteger(file.size) || file.size < 0) throw new Error("请从当前预览选择媒体文件；文件快照缺失时请重新预览。");
   if (!/^[1-9]\d{0,18}$/.test(tmdbId) || BigInt(tmdbId) > 9223372036854775807n) throw new Error("请输入有效的 TMDB 数字 ID。");
@@ -60,6 +60,7 @@ export function buildOrganizationAssignment(file: { source: string; kind: string
       return number;
     };
     assignment.season = parse(season, 0, 99);
+    if(file.disc && !episode.trim() && !endEpisode.trim() && !episodeFormat && !episodeOffset.trim()) return assignment;
     if (episodeFormat) {
       if (new TextEncoder().encode(episodeFormat).length > 512 || !hasEpisodeTemplateField(episodeFormat)) throw new Error("文件名模板须包含文字型 ep 字段，且不超过 512 字节。");
       assignment.episodeFormat = episodeFormat;

@@ -32,6 +32,14 @@ func modeOperationError(err error) error {
 // ValidateMode is read-only. For hard links, the nearest existing target
 // ancestor determines the device of directories we will create later.
 func ValidateMode(ctx context.Context, d Definition, item Entry) error {
+	if IsDisc(item) {
+		if _, err := discManifest(d, item); err != nil {
+			return err
+		}
+		if d.Mode == "move" && item.Source == "." {
+			return ErrMode
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -304,6 +312,14 @@ func verifySoftlink(ctx context.Context, d Definition, item Entry, p Proof, pare
 }
 
 func validateSourceBinding(d Definition, item Entry) error {
+	if IsDisc(item) {
+		f, err := discSource(context.Background(), d, item)
+		if err != nil {
+			return err
+		}
+		f.Close()
+		return nil
+	}
 	root, err := anchoredRoot(d.SourceRoot, d.SourceIdentity)
 	if err != nil {
 		return err
@@ -327,6 +343,23 @@ func validateSourceBinding(d Definition, item Entry) error {
 }
 
 func validateDestinationBinding(d Definition, item Entry, p Proof) error {
+	if IsDisc(item) {
+		parent, name, err := discTargetParent(d, item, &p, false)
+		if err != nil {
+			return err
+		}
+		defer parent.Close()
+		f, err := discDir(parent, name)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil || Identity(info) != p.Identity {
+			return ErrState
+		}
+		return nil
+	}
 	root, err := anchoredRoot(d.TargetRoot, d.TargetIdentity)
 	if err != nil {
 		return err

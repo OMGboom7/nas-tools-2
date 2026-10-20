@@ -67,7 +67,7 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 				return err
 			}
 		}
-		if err := subtitles.Emit(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest); err != nil {
+		if err := subtitles.Emit(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest, IsDisc(e)); err != nil {
 			return err
 		}
 		if first == "" {

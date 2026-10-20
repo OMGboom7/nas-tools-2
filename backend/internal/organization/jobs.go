@@ -32,28 +32,33 @@ func SupportedMode(mode string) bool {
 const MoveSourceCleanupPending = "Move source recovery cleanup pending; explicit source-removal confirmation required"
 const MoveTargetCleanupPending = "Move target recovery cleanup pending"
 
+// Whole-disc hash/copy/verification can exceed ordinary request timeouts on a
+// NAS. Cancellation still propagates; this does not authorize automatic replay.
+const ExecutionTimeout = 2 * time.Hour
+
 func ModeLabel(mode string) string {
 	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动"}[mode]
 }
 
 type Entry struct {
-	PartOverride  *string `json:"partOverride,omitempty"`
-	EpisodeFormat string  `json:"episodeFormat,omitempty"`
-	EpisodeOffset int     `json:"episodeOffset,omitempty"`
-	Part          string  `json:"part,omitempty"`
-	Assigned      bool    `json:"assigned,omitempty"`
-	Source        string  `json:"source"`
-	Target        string  `json:"target"`
-	Kind          string  `json:"kind"`
-	Size          int64   `json:"size"`
-	Modified      string  `json:"modified"`
-	Identity      string  `json:"identity"`
-	TMDBID        string  `json:"tmdbId"`
-	Title         string  `json:"title"`
-	Year          string  `json:"year"`
-	MediaType     string  `json:"mediaType"`
-	Category      string  `json:"category"`
-	SeasonEpisode string  `json:"seasonEpisode"`
+	Disc          *DiscInfo `json:"disc,omitempty"`
+	PartOverride  *string   `json:"partOverride,omitempty"`
+	EpisodeFormat string    `json:"episodeFormat,omitempty"`
+	EpisodeOffset int       `json:"episodeOffset,omitempty"`
+	Part          string    `json:"part,omitempty"`
+	Assigned      bool      `json:"assigned,omitempty"`
+	Source        string    `json:"source"`
+	Target        string    `json:"target"`
+	Kind          string    `json:"kind"`
+	Size          int64     `json:"size"`
+	Modified      string    `json:"modified"`
+	Identity      string    `json:"identity"`
+	TMDBID        string    `json:"tmdbId"`
+	Title         string    `json:"title"`
+	Year          string    `json:"year"`
+	MediaType     string    `json:"mediaType"`
+	Category      string    `json:"category"`
+	SeasonEpisode string    `json:"seasonEpisode"`
 }
 
 type EpisodeSelection struct {
@@ -92,6 +97,8 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	AllowDiscExpansion    bool                      `json:"allowDiscExpansion,omitempty"`
+	Discs                 map[string]DiscManifest   `json:"discs,omitempty"`
 	ScraperEnabled        bool                      `json:"scraperEnabled,omitempty"`
 	Download              *DownloadOrigin           `json:"download,omitempty"`
 	Sync                  *SyncOrigin               `json:"sync,omitempty"`
@@ -118,18 +125,19 @@ type Definition struct {
 }
 
 type Proof struct {
-	Incomplete           bool   `json:"incomplete,omitempty"`
-	Anchor               bool   `json:"anchor,omitempty"`
-	Temp                 string `json:"temp"`
-	Identity             string `json:"identity"`
-	ParentIdentity       string `json:"parentIdentity"`
-	StagingIdentity      string `json:"stagingIdentity"`
-	Digest               string `json:"digest"`
-	Kind                 string `json:"kind,omitempty"`
-	LinkTarget           string `json:"linkTarget,omitempty"`
-	SourceHold           string `json:"sourceHold,omitempty"`
-	SourceHoldIdentity   string `json:"sourceHoldIdentity,omitempty"`
-	SourceParentIdentity string `json:"sourceParentIdentity,omitempty"`
+	Disc                 *DiscProof `json:"disc,omitempty"`
+	Incomplete           bool       `json:"incomplete,omitempty"`
+	Anchor               bool       `json:"anchor,omitempty"`
+	Temp                 string     `json:"temp"`
+	Identity             string     `json:"identity"`
+	ParentIdentity       string     `json:"parentIdentity"`
+	StagingIdentity      string     `json:"stagingIdentity"`
+	Digest               string     `json:"digest"`
+	Kind                 string     `json:"kind,omitempty"`
+	LinkTarget           string     `json:"linkTarget,omitempty"`
+	SourceHold           string     `json:"sourceHold,omitempty"`
+	SourceHoldIdentity   string     `json:"sourceHoldIdentity,omitempty"`
+	SourceParentIdentity string     `json:"sourceParentIdentity,omitempty"`
 }
 
 type JobItem struct {
@@ -265,8 +273,19 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 		return "", ErrPath
 	}
 	for _, entry := range d.Entries {
-		if !validRelative(entry.Source) || !validRelative(entry.Target) || entry.Source == "." || entry.Target == "." || entry.Identity == "" || entry.Size < 0 {
+		if !validRelative(entry.Source) || !validRelative(entry.Target) || entry.Source == "." && !IsDisc(entry) || entry.Target == "." || entry.Identity == "" || entry.Size < 0 {
 			return "", ErrPath
+		}
+		if IsDisc(entry) {
+			if entry.Disc.Expanded && !d.AllowDiscExpansion {
+				return "", ErrState
+			}
+			if _, err := discManifestDefinition(d, entry); err != nil {
+				return "", err
+			}
+			if d.Mode == "move" && entry.Source == "." {
+				return "", ErrMode
+			}
 		}
 	}
 	if err := verifySyncRecord(ctx, tx, d); err != nil {
@@ -353,6 +372,9 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 		if _, err = tx.ExecContext(ctx, `INSERT INTO GO_ORGANIZATION_ITEMS (JOB_ID,ORDINAL,STATE) VALUES (?,?,'planned')`, id, index); err != nil {
 			return "", err
 		}
+	}
+	if err := reserveDiscTargets(ctx, tx, id, d); err != nil {
+		return "", err
 	}
 	return id, nil
 }
@@ -602,6 +624,9 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM GO_ORGANIZATION_TARGETS WHERE JOB_ID=?`, id); err != nil {
+		return err
+	}
+	if err := releaseDiscTargets(ctx, tx, id); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, id); err != nil {

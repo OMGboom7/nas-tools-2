@@ -35,6 +35,13 @@ func libraryRoot(roots []LibraryRoot, id string) (LibraryRoot, bool) {
 }
 func captureLibraryMedia(d LibraryDefinition, path string) (LibraryMedia, error) {
 	m := LibraryMedia{Path: path}
+	// Whole-disc intake has its own frozen directory proof. Bulk library
+	// rewriting must not reinterpret its STREAM clips as standalone movies.
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if strings.EqualFold(part, "BDMV") || strings.EqualFold(part, "CERTIFICATE") {
+			return m, ErrMode
+		}
+	}
 	if !validRelative(path) || path == "." || FileKind(path) != "media" {
 		return m, ErrPath
 	}
@@ -254,6 +261,9 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 				media, e := captureLibraryMedia(d, relative)
 				if e != nil {
 					media = LibraryMedia{Path: relative, Blocked: "unsafe or unreadable media source; no file operations permitted"}
+					if errors.Is(e, ErrMode) {
+						media.Blocked = "Blu-ray whole-disc library rescraping is not yet migrated; STREAM clips are not standalone media"
+					}
 				}
 				result.Files = append(result.Files, media)
 				if len(result.Files) > 50_000 {
