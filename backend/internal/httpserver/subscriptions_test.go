@@ -658,7 +658,7 @@ func TestDoubanSubscriptionResolvesThroughVerifiedTMDBMatch(t *testing.T) {
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
 		case "/api/v2/movie/123":
-			if request.URL.Host != "frodo.douban.com" || request.URL.Query().Get("apiKey") != doubanFrodoKey || request.URL.Query().Get("_sig") == "" || request.URL.Query().Get("_ts") == "" || request.Header.Get("User-Agent") != "MicroMessenger/" {
+			if request.URL.Host != "frodo.douban.com" || request.URL.Query().Get("apiKey") != "054022eaeae0b00e0fc068c0c0a2102a" || request.URL.Query().Get("_sig") == "" || request.URL.Query().Get("_ts") == "" || request.Header.Get("User-Agent") != "MicroMessenger/" {
 				t.Errorf("unexpected Douban request: %s", request.URL.String())
 			}
 			return jsonResponse(request, `{"id":"123","title":"电影中文名","original_title":"Original Movie","year":"2025"}`), nil

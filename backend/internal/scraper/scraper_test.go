@@ -174,10 +174,21 @@ func TestOptionsKeepFalseFlagsAndReportUnsupportedCapabilities(t *testing.T) {
 		t.Fatal("unknown patch accepted")
 	}
 	c, _ := scraperClient(t)
+	base := c.Transport
+	c.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "frodo.douban.com" {
+			return response(r, `{"items":[]}`), nil
+		}
+		if strings.HasPrefix(r.URL.Path, "/3/person/") {
+			id := strings.TrimPrefix(r.URL.Path, "/3/person/")
+			return response(r, `{"id":`+id+`,"also_known_as":[]}`), nil
+		}
+		return base.RoundTrip(r)
+	})
 	o, _, _ = Parse(`{"scraper_nfo":{"movie":{"basic":true,"credits":true,"credits_chinese":true}}}`)
 	p, err := c.Build(t.Context(), Input{Kind: "movie", ID: "100", Stem: "Movie"}, o, time.Now())
 	if err != nil || len(p.Warnings) == 0 {
-		t.Fatal("unmigrated localization silently accepted", err)
+		t.Fatal("missing Chinese names silently accepted", err)
 	}
 }
 
@@ -188,5 +199,21 @@ func TestMissingCreditsAreNotReportedAsVerifiedEmpty(t *testing.T) {
 	p, err := c.Build(t.Context(), Input{Kind: "movie", ID: "100", Stem: "Movie"}, o, time.Now())
 	if err != nil || len(p.Artifacts) != 1 || len(p.Warnings) == 0 {
 		t.Fatal(p, err)
+	}
+}
+
+func TestMalformedStillDoesNotEnableLocalThumbnailFallback(t *testing.T) {
+	c, _ := scraperClient(t)
+	base := c.Transport
+	c.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/3/tv/200/season/0" {
+			return response(r, strings.Replace(season, "/still.png", "https://attacker.test/image.jpg", 1)), nil
+		}
+		return base.RoundTrip(r)
+	})
+	o, _, _ := Parse(`{"scraper_pic":{"tv":{"episode_thumb":true,"episode_thumb_ffmpeg":true}}}`)
+	p, err := c.Build(t.Context(), Input{Kind: "tv", ID: "200", Stem: "Show", Season: 0, First: 1, Last: 1}, o, time.Now())
+	if err != nil || len(p.Artifacts) != 0 || len(p.Warnings) == 0 {
+		t.Fatal("invalid remote metadata caused local decoding", p, err)
 	}
 }

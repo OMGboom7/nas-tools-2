@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ type intakeScraper struct {
 	organizer *organizationAPI
 	system    *systemconfig.Store
 	transport http.RoundTripper
+	thumbnail func(context.Context, *os.File) ([]byte, error)
 }
 
 func (api *intakeScraper) authorize(w http.ResponseWriter, r *http.Request) bool {
@@ -259,6 +261,34 @@ func (api *intakeScraper) run(ctx context.Context, job organization.Job, item or
 			break
 		}
 		data := artifact.Data
+		if artifact.Thumbnail {
+			present, checkErr := organization.ExistingSidecar(ctx, job, item, artifact.Scope, artifact.Name)
+			if checkErr == nil && present {
+				if err := api.organizer.jobs.SaveScrapeOutput(ctx, row.ID, organization.SidecarRecord{Name: artifact.Name, Scope: artifact.Scope, State: "preserved"}); err != nil {
+					return "partial", "existing thumbnail receipt could not be saved"
+				}
+				continue
+			}
+			if checkErr != nil || api.current(ctx, job, row) != nil {
+				return "partial", "thumbnail scope changed; video reader not started"
+			}
+			render := api.thumbnail
+			if render == nil {
+				render = scraper.RenderThumbnail
+			}
+			data, err = organization.ReadCompletedMedia(ctx, job, item, func(file *os.File) ([]byte, error) { return render(ctx, file) })
+			if err != nil || scraper.ValidateImage(data, ".jpg") != nil {
+				out := organization.SidecarRecord{Name: artifact.Name, Scope: artifact.Scope, State: "blocked", Reason: "video thumbnail unavailable or media changed; no image published"}
+				persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				err = api.organizer.jobs.SaveScrapeOutput(persist, row.ID, out)
+				cancel()
+				if err != nil {
+					return "partial", "thumbnail failure receipt could not be saved"
+				}
+				warnings = append(warnings, out.Reason)
+				continue
+			}
+		}
 		if artifact.URL != "" {
 			data, err = client.Download(ctx, artifact.URL)
 			if err != nil {

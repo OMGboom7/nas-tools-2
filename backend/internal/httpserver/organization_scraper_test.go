@@ -98,7 +98,7 @@ type intakeScrapeFixture struct {
 	badImage                   bool
 }
 
-func newIntakeScrapeFixture(t *testing.T, mode string, tv bool) *intakeScrapeFixture {
+func newIntakeScrapeFixture(t *testing.T, mode string, tv bool, prepare ...func(string)) *intakeScrapeFixture {
 	t.Helper()
 	f, source, target, input := organizationFixture(t)
 	x := &intakeScrapeFixture{f: f, source: source, target: target}
@@ -113,6 +113,11 @@ func newIntakeScrapeFixture(t *testing.T, mode string, tv bool) *intakeScrapeFix
 	}
 	for _, name := range files {
 		organizationFile(t, source, name)
+	}
+	for _, hook := range prepare {
+		hook(source)
+	}
+	for _, name := range files {
 		old := time.Now().Add(-time.Hour)
 		os.Chtimes(filepath.Join(source, name), old, old)
 	}

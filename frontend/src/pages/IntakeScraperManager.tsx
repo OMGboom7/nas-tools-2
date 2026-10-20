@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, getIntakeScraper, saveIntakeScraperOptions, setIntakeScraperEnabled, type ScraperOptions, type ScraperStatus } from "../api/client";
 
-const labels: Record<string,string> = { basic:"基础信息", credits:"演职人员", credits_chinese:"中文演职员（尚待迁移，保留 TMDB 原名并提示）", season_basic:"季信息", episode_basic:"集信息", episode_credits:"集演职人员", poster:"海报", backdrop:"背景图 fanart", background:"背景图 background", logo:"标志", disc:"光盘图", clearart:"透明图", banner:"横幅", thumb:"缩略图", season_poster:"季海报", season_banner:"季横幅", season_thumb:"季缩略图", episode_thumb:"集缩略图", episode_thumb_ffmpeg:"FFmpeg 缺图回退（尚待迁移，不调用视频）" };
+const labels: Record<string,string> = { basic:"基础信息", credits:"演职人员", credits_chinese:"中文演职员（豆瓣唯一匹配／TMDB 别名，繁体转简体）", season_basic:"季信息", episode_basic:"集信息", episode_credits:"集演职人员", poster:"海报", backdrop:"背景图 fanart", background:"背景图 background", logo:"标志", disc:"光盘图", clearart:"透明图", banner:"横幅", thumb:"缩略图", season_poster:"季海报", season_banner:"季横幅", season_thumb:"季缩略图", episode_thumb:"集缩略图", episode_thumb_ffmpeg:"集图缺失时用 FFmpeg 只读截帧（第 181 秒）" };
 const states: Record<string,string> = { pending:"等待处理", running:"执行中或中断，禁止自动重跑", completed:"所选项目处理完成", partial:"部分完成／有缺口，需核查", blocked:"已阻止", writing:"写入意图已保存，结果需核查", created:"已生成", preserved:"原文件保留（未验证原内容）", uncertain:"结果不确定，禁止重发" };
 
 export function IntakeScraperManager({ token, enabled, onSessionExpired, onChanged }: { token:string; enabled:boolean; onSessionExpired:()=>void; onChanged:()=>void }) {
@@ -32,6 +32,7 @@ export function IntakeScraperManager({ token, enabled, onSessionExpired, onChang
   function toggle(family:keyof ScraperOptions,kind:string,name:string,value:boolean){setOptions({...options,[family]:{...options[family],[kind]:{...options[family][kind],[name]:value}}});setSaveConsent(false);}
   return <section aria-label="入库刮削与回执"><h2>入库 NFO 与图片</h2>
     <p>读取原有刮削配置。仅处理新审核并完整完成的原生入库任务；保存选项不会启用后台写入。已有文件和媒体文件不覆盖，普通文件同步不刮削，中断回执不自动重跑；此处不扫描整个媒体库、不执行强制覆盖刮削。</p>
+    <p>中文名无法可靠匹配时保留原名并提示。仅在集图来源缺失且选中回退时读取已核验视频截帧；不调用命令行模板、不读取网络视频。缺少 FFmpeg、视频过短或生成失败会留下部分完成回执，不改视频、不自动重试。</p>
     {error && <p role="alert">{error}</p>}
     <button type="button" disabled={!enabled || busy} onClick={()=>void operate("load")}>只读刷新刮削配置与回执</button>
     {status && <><p>后续新任务入库刮削：{status.enabled ? "已启用" : "已停用"}。配置变更会使旧待处理范围失效，请重新审核尚未执行的整理计划。</p>

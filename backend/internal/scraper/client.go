@@ -32,6 +32,7 @@ type Input struct {
 type Artifact struct {
 	Scope, Name, URL string
 	Data             []byte
+	Thumbnail        bool
 }
 type Plan struct {
 	Artifacts []Artifact
@@ -117,16 +118,24 @@ func (c Client) Download(ctx context.Context, address string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := ValidateImage(b, strings.ToLower(path.Ext(u.Path))); err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+func ValidateImage(b []byte, ext string) error {
+	if len(b) == 0 || len(b) > 16<<20 {
+		return ErrMetadata
+	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(b))
-	ext := strings.ToLower(path.Ext(u.Path))
 	if err != nil || cfg.Width < 1 || cfg.Height < 1 || cfg.Width > 20000 || cfg.Height > 20000 || int64(cfg.Width)*int64(cfg.Height) > 80_000_000 || format != "jpeg" && format != "png" || format == "jpeg" && ext != ".jpg" && ext != ".jpeg" || format == "png" && ext != ".png" {
-		return nil, ErrMetadata
+		return ErrMetadata
 	}
 	decoded, decodedFormat, err := image.Decode(bytes.NewReader(b))
 	if err != nil || decodedFormat != format || decoded.Bounds().Dx() != cfg.Width || decoded.Bounds().Dy() != cfg.Height {
-		return nil, ErrMetadata
+		return ErrMetadata
 	}
-	return b, nil
+	return nil
 }
 
 func (c Client) Build(ctx context.Context, in Input, o Options, now time.Time) (Plan, error) {
@@ -154,6 +163,9 @@ func (c Client) Build(ctx context.Context, in Input, o Options, now time.Time) (
 		if n["credits"] && (d.Credits.Cast == nil || d.Credits.Crew == nil) {
 			plan.Warnings = append(plan.Warnings, "complete cast/crew metadata unavailable; missing credits were not treated as verified empty")
 		}
+		if n["credits"] && n["credits_chinese"] {
+			plan.Warnings = append(plan.Warnings, c.localizePeople(ctx, &d, in.Kind)...)
+		}
 		scope, name := "media", in.Stem+".nfo"
 		if in.Kind == "tv" {
 			scope, name = "show", "tvshow.nfo"
@@ -161,9 +173,6 @@ func (c Client) Build(ctx context.Context, in Input, o Options, now time.Time) (
 		b, err := NFO(d, in.Kind, n, c.Image, now)
 		if err = addNFO(scope, name, b, err); err != nil {
 			return plan, err
-		}
-		if n["credits"] && n["credits_chinese"] {
-			plan.Warnings = append(plan.Warnings, "Douban/Chinese people localization is not migrated; original TMDB names retained")
 		}
 	}
 	var season Season
@@ -314,12 +323,17 @@ func (c Client) Build(ctx context.Context, in Input, o Options, now time.Time) (
 		}
 		if p["episode_thumb"] {
 			address := ""
+			rawStill := ""
 			if len(selected) > 0 {
-				address = c.Image(selected[0].Still)
+				rawStill = selected[0].Still
+				address = c.Image(rawStill)
 			}
-			addImage("media", in.Stem+"-thumb", address)
-			if address == "" && p["episode_thumb_ffmpeg"] {
-				plan.Warnings = append(plan.Warnings, "FFmpeg thumbnail fallback is not migrated; video was not invoked or modified")
+			if rawStill != "" && address == "" {
+				plan.Warnings = append(plan.Warnings, "episode image path rejected; malformed metadata was not treated as permission to decode video")
+			} else if address == "" && p["episode_thumb_ffmpeg"] {
+				plan.Artifacts = append(plan.Artifacts, Artifact{Scope: "media", Name: in.Stem + "-thumb.jpg", Thumbnail: true})
+			} else {
+				addImage("media", in.Stem+"-thumb", address)
 			}
 		}
 	}

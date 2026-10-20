@@ -11,14 +11,19 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/nas-tools-go ./cmd/server
+RUN mkdir -p /out/licenses \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/longbridgeapp/opencc)/LICENSE" /out/licenses/opencc-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/da)/LICENSE" /out/licenses/da-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/cedar-go)/LICENSE.md" /out/licenses/cedar-go-LICENSE
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata ffmpeg \
     && addgroup -S -g 911 nt \
     && adduser -S -u 911 -G nt -h /app nt
 WORKDIR /app
 COPY --from=frontend-builder /build/frontend/dist /app/frontend/dist
 COPY --from=backend-builder /out/nas-tools-go /usr/local/bin/nas-tools-go
+COPY --from=backend-builder /out/licenses /usr/share/licenses/nas-tools-go
 COPY web/backend/user.sites.bin /app/user.sites.bin
 COPY config/default-category.yaml /app/default-category.yaml
 ENV NASTOOL_GO_ADDRESS="0.0.0.0:3000" \
