@@ -149,6 +149,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	SourceRestore        *SourceRestoreReceipt     `json:"sourceRestore,omitempty"`
 	DownloadGeneration   string                    `json:"-"`
 	Download             *DownloadOrigin           `json:"download,omitempty"`
 	AutomaticGeneration  string                    `json:"-"`
@@ -204,6 +205,7 @@ func OpenStore(path string) (*Store, error) {
 		`CREATE UNIQUE INDEX IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_PENDING ON GO_ORGANIZATION_UNKNOWN_LINKS(RECORD_ID) WHERE STATE='pending'`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_DETACH (JOB_ID TEXT PRIMARY KEY, RECEIPT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_DELETE (ID TEXT PRIMARY KEY,RECORD_ID INTEGER NOT NULL,RECEIPT TEXT NOT NULL,RESTORE TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_SOURCE_RESTORE (JOB_ID TEXT PRIMARY KEY,DOCUMENT TEXT NOT NULL)`,
 	} {
 		if _, err = db.Exec(statement); err != nil {
 			db.Close()
@@ -446,6 +448,17 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 				return job, err
 			}
 		}
+	}
+	if job.State == SourceRestoring || job.State == SourceRestored {
+		doc, err := s.sourceRestoreDocument(ctx, job)
+		if err != nil {
+			return job, err
+		}
+		if doc == nil {
+			return job, ErrState
+		}
+		job.SourceRestore = &doc.Receipt
+		return job, nil
 	}
 	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" {
 		return job, nil

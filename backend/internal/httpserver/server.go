@@ -398,6 +398,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/organization/jobs", organizer.serveCreateJob)
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}", organizer.serveJob)
 	mux.HandleFunc("GET /api/v1/organization/jobs/{id}/unknown-status", organizer.serveUnknownReview)
+	mux.HandleFunc("GET /api/v1/organization/jobs/{id}/source-restore", organizer.serveSourceRestoreReview)
 	mux.HandleFunc("POST /api/v1/organization/jobs/{id}/{action}", organizer.serveJobAction)
 	rssRunner := &rssRunAPI{mediaSync: &mediaSync, organizer: &organizer, pureGo: cfg.DisableLegacy, filters: nativeFilters,
 		preview:     rssPreviewAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, config: nativeConfig, transport: transport},

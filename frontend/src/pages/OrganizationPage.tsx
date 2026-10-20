@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { reviewOrganizationSourceRestore, restoreOrganizationSource, type OrganizationSourceRestoreReview } from "../api/client";
 import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationJob, getOrganizationUnknown, getOrganizationHistory, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment, type OrganizationUnknownItem, type OrganizationUnknownData, type OrganizationUnknownReview, type OrganizationHistoryItem, type OrganizationHistoryData } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { UnknownRecordManager } from "./UnknownRecordManager";
@@ -21,11 +22,18 @@ jobLabels.abandoning = "放弃意图已保存，暂存清理待核实";
 jobLabels.discarding = "暂存清理待回执";
 jobLabels.abandoned = "已明确放弃，未记录整理成功";
 jobLabels.staging = "写入前凭证已保存，尚未完整准备";
+jobLabels.source_restoring = "原源恢复意图已保存，须明确续办";
+jobLabels.source_restored = "原源恢复回执已保存，不再执行此任务";
+jobLabels.source_restore_pending = "原源恢复／停止待回执";
+jobLabels.source_restore_stopped = "未完成项目已停止，所有目标与证据保留";
+const sourceOutcomes:Record<string,string>={pending:"待明确续办",blocked:"证据不足，不允许恢复",not_started:"未执行项停止（不声称已核验文件）",completed_retained:"已有成功项目及历史保持原状",source_in_place:"原源正向核验在位",isolated_source:"原源完整保存在隔离目录",witness_only:"仅剩已核验的原节点见证，可防覆盖恢复"};
 const jobReasonLabels: Record<string, string> = {
   "Move source recovery cleanup pending; explicit source-removal confirmation required": "历史已提交，源恢复备份清理尚未确认完成；请检查后明确授权续办。",
   "Move target recovery cleanup pending": "源恢复备份已清理，目标暂存清理尚未确认完成；请核验续办。",
   "Execution interrupted or failed; verify the saved proof before any retry": "操作已中断或失败；必须核验保存凭证，不能盲目重试。",
   "Explicit unpublished staging disposal requested; no successful transfer recorded": "管理员已明确放弃未发布暂存；不是整理成功记录。",
+  "Source restoration intent saved; no further transfer or source cleanup permitted":"原源恢复意图已保存，后续整理及源清理均停止。",
+  "Source restoration closed this unfinished transfer; target, staging and recovery evidence retained":"此未完成项目已关闭；目标、暂存及恢复证据保留，不记成功历史。",
 };
 
 export function OrganizationPage({ session, currentPath, onNavigate, onLogout, onSessionExpired }: Props) {
@@ -81,7 +89,12 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [sourceRemoval, setSourceRemoval] = useState(false);
   const [discardStaging, setDiscardStaging] = useState(false);
   const [oldExecutorsStopped, setOldExecutorsStopped] = useState(false);
+  const [sourceReview,setSourceReview]=useState<OrganizationSourceRestoreReview|null>(null);
+  const [restoreReason,setRestoreReason]=useState("");
+  const [restoreConfirmed,setRestoreConfirmed]=useState(false),[restoreStopped,setRestoreStopped]=useState(false);
+  const sourceRestoreGeneration=useRef(0),sourceRestoreInFlight=useRef(false);
   const job = jobs.find((item) => item.id === jobId);
+  useEffect(()=>{sourceRestoreGeneration.current++;sourceRestoreInFlight.current=false;setSourceReview(null);setRestoreConfirmed(false);setRestoreStopped(false);setRestoreReason(job?.sourceRestore?.reason||"");return()=>{sourceRestoreGeneration.current++;};},[jobId,session.token,job?.sourceRestore?.created]);
   const manualDisc = plan?.items.find((item)=>item.source===manualSource)?.disc;
   const selectedDest = selectedUnknown?.dest || selectedHistory?.dest;
   useEffect(() => { setConfirmed(false); setSourceRemoval(false); }, [jobId, session.token]);
@@ -199,11 +212,21 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       else { setError(err instanceof Error ? err.message : "关联处置失败"); try { const saved = await getOrganizationJobs(session.token); if (generation === detachGeneration.current) setJobs(saved); } catch { /* never retry a mutation */ } }
     } finally { if (generation === detachGeneration.current) setBusy(false); }
   }
+  async function sourceRestoreOperation(apply:boolean){
+    if(busy || sourceRestoreInFlight.current || !job || apply && (!sourceReview?.canRestore || sourceReview.jobId!==jobId || !restoreConfirmed || !restoreStopped || !restoreReason.trim()))return;
+    const version=++sourceRestoreGeneration.current;sourceRestoreInFlight.current=true;setBusy(true);setError("");setRestoreConfirmed(false);setRestoreStopped(false);
+    try{
+      if(!apply){setSourceReview(null);const review=await reviewOrganizationSourceRestore(session.token,jobId);if(version===sourceRestoreGeneration.current)setSourceReview(review);}
+      else{const saved=await restoreOrganizationSource(session.token,sourceReview!,restoreReason,true,true);if(version!==sourceRestoreGeneration.current)return;setJobs(current=>[saved,...current.filter(j=>j.id!==saved.id)]);setSourceReview(null);setConfirmed(false);setSourceRemoval(false);}
+    }catch(err){if(version!==sourceRestoreGeneration.current)return;setSourceReview(null);if(err instanceof ApiError && err.code===401)onSessionExpired();else setError((err instanceof Error?err.message:"原源恢复未核实")+(apply?"。请只读刷新任务和审核，不要重发。":""));}
+    finally{if(version===sourceRestoreGeneration.current){sourceRestoreInFlight.current=false;setBusy(false);}}
+  }
   async function jobOperation(operation: "create" | "refresh" | "execute" | "reconcile" | "cancel" | "resume-move" | "resume-publication" | "abandon-unpublished" | "reconcile-unknown") {
     if (operation === "reconcile-unknown" && !confirmed) return;
     if (operation === "abandon-unpublished" && (!discardStaging || !oldExecutorsStopped || !job?.sourceRoot || !job.targetRoot)) return;
     if (operation === "resume-publication" && (!confirmed || !job?.sourceRoot || !job.targetRoot)) return;
     if ((operation === "execute" || operation === "resume-move" || operation === "resume-publication") && job?.mode === "move" && (!confirmed || !sourceRemoval || !job.sourceRoot || !job.targetRoot)) return;
+    setSourceReview(null);setRestoreConfirmed(false);setRestoreStopped(false);
     setBusy(true); setError("");
     try {
       if (operation === "refresh") { setJobs(await getOrganizationJobs(session.token)); return; }
@@ -314,6 +337,17 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
           {job.episodeSelection && <p>已保存批量 TV 规则：TMDB {job.episodeSelection.tmdbId} · 季 {job.episodeSelection.season} · {job.episodeSelection.episodeFormat} · 偏移 {job.episodeSelection.episodeOffset || 0} · 偏移前起始集筛选 {job.episodeSelection.startEpisode === undefined ? "不限制" : `${job.episodeSelection.startEpisode}–${job.episodeSelection.endEpisode}`}。只执行已保存项目，不重扫或扩大目录范围。</p>}
           {job.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.index}`}>已保存分段覆盖：{item.source} → {item.partOverride || "明确清空"}</p>)}
           {job.items.filter((item)=>item.disc).map((item)=><p key={`disc-${item.index}`}>已保存蓝光整盘：{item.source} → {item.target}，{item.disc!.files} 个文件、{item.disc!.directories} 个子目录。{item.disc!.expanded && "此任务已明确审核从内部选择扩展至整盘。"}恢复只核对这份保存的目录清单，不重新扫描扩大范围。</p>)}
+          {job.mode==="move" && ["needs_review","source_restoring","source_restored"].includes(job.state) && <section aria-label="恢复失败移动的原源"><h3>恢复原源并停止此任务</h3><p>这是继续移动的独立替代操作。只将已核验的原文件／整盘恢复到原位置，不覆盖新到同名对象；普通文件可从仍固定原节点的完整见证恢复。目标即使不可用也不会被删除、重写或冒认为已核验。所有暂存、备份、目标预留和既有成功历史保留，占用磁盘；未开始项目停止，不生成新的成功历史／入库事件，不重新授权监控或下载器回写。</p>
+            {job.state!=="source_restored" && <><button type="button" disabled={busy} onClick={()=>void sourceRestoreOperation(false)}>只读核对原源恢复条件（可能需要读取完整文件）</button>
+              {sourceReview && <><p>{sourceReview.canRestore?"当前原源证据可供本次恢复审核":"当前证据不允许恢复"} · {sourceReview.reason}</p><ul>{sourceReview.items.map(i=><li key={i.index}>{i.source} · {sourceOutcomes[i.outcome]||i.outcome}</li>)}</ul>
+                <label>处置原因<input value={restoreReason} maxLength={128} disabled={busy || !!job.sourceRestore} onChange={e=>{setRestoreReason(e.target.value);setRestoreConfirmed(false);setRestoreStopped(false);}}/></label>
+                <label><input type="checkbox" checked={restoreStopped} disabled={busy || !sourceReview.canRestore} onChange={e=>setRestoreStopped(e.target.checked)}/>我已实际停止旧整理执行器、其他实例及会写这些源／恢复路径的下载器任务或外部程序；此操作不会替我停止它们。</label>
+                <label><input type="checkbox" checked={restoreConfirmed} disabled={busy || !sourceReview.canRestore || !restoreReason.trim()} onChange={e=>setRestoreConfirmed(e.target.checked)}/>我同意按这份新审核恢复原源并停止所有未完成项目，保留目标和全部恢复证据，不继续转移、不授权源移除或暂存删除。</label>
+                <button type="button" disabled={busy || !sourceReview.canRestore || !restoreConfirmed || !restoreStopped || !restoreReason.trim()} onClick={()=>void sourceRestoreOperation(true)}>确认{job.state==="source_restoring"?"续办":"进行"}原源恢复并保存回执</button>
+              </>}
+            </>}
+            {job.sourceRestore && <><p>原源恢复回执：{job.sourceRestore.actor} · {job.sourceRestore.created} · {job.sourceRestore.reason} · {jobLabels[job.sourceRestore.state]||job.sourceRestore.state}。这是保存时的历史回执，不保证之后的外部改动；刷新不重跑文件操作。</p><ul>{job.sourceRestore.items.map(i=><li key={i.index}>{i.source} · {sourceOutcomes[i.outcome]||i.outcome}</li>)}</ul></>}
+          </section>}
           {job.historyRecordId && <p>由原历史 #{job.historyRecordId} 重新规划。原历史保留，只有新的核验转移成功才追加新历史；不是覆盖原媒体的授权。</p>}
           {job.unknownRecordId && <p>关联旧记录 #{job.unknownRecordId}：{job.unknownState === "resolved" ? "已根据完整成功回执更新为已处理" : job.unknownState === "preserved" ? "选中条目回执已完成，原记录状态保持不变，不能视为整条已处理" : job.unknownState === "cancelled" ? "已取消关联，旧记录仍保留" : job.unknownState === "detached" ? "管理员已明确解除关联，未标记旧记录成功" : "仍待处理；全部项目与清理回执完成后才更新"}。</p>}
           {job.unknownDetach && <p>解除关联回执：{job.unknownDetach.actor} · {job.unknownDetach.created} · {job.unknownDetach.reason}。不代表旧记录已处理。</p>}

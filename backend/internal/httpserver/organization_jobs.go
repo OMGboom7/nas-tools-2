@@ -209,7 +209,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" && action != "detach-unknown" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" && action != "detach-unknown" && action != "restore-source" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
@@ -218,6 +218,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	var input struct {
 		Confirm                    bool   `json:"confirm"`
 		ConfirmSourceRemoval       bool   `json:"confirmSourceRemoval"`
+		ConfirmRestoreSource       bool   `json:"confirmRestoreSource"`
 		ConfirmDiscardStaging      bool   `json:"confirmDiscardStaging"`
 		ConfirmOldExecutorsStopped bool   `json:"confirmOldExecutorsStopped"`
 		ConfirmDetachUnknown       bool   `json:"confirmDetachUnknown"`
@@ -233,6 +234,10 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	}
 	if action == "abandon-unpublished" && (!input.ConfirmDiscardStaging || !input.ConfirmOldExecutorsStopped) {
 		writeAPIError(w, 400, 400, "separate staging-disposal consent and confirmation that old executors are stopped are required")
+		return
+	}
+	if action == "restore-source" && (!input.ConfirmRestoreSource || !input.ConfirmOldExecutorsStopped || len(input.ReviewFingerprint) != 64 || input.Reason == "" || len(input.Reason) > 512) {
+		writeAPIError(w, 400, 400, "reviewed source evidence, separate restoration consent, stopped writers and reason are required")
 		return
 	}
 	if action == "detach-unknown" && (!input.ConfirmDetachUnknown || len(input.ReviewFingerprint) != 64 || input.Reason == "" || len(input.Reason) > 512) {
@@ -275,7 +280,14 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		writeOrganizationError(w, err)
 		return
 	}
-	if action == "cancel" {
+	if action == "restore-source" {
+		claims, authErr := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
+		if authErr != nil {
+			writeAPIError(w, 401, 401, "authorization expired")
+			return
+		}
+		err = api.jobs.RestoreSource(ctx, job, input.ReviewFingerprint, claims.Username, input.Reason, func() error { return api.validateSourceRestoreConfiguration(ctx, job, claims.Username) })
+	} else if action == "cancel" {
 		err = api.jobs.Cancel(ctx, job.ID)
 	} else if action == "reconcile-unknown" {
 		err = api.jobs.ResolveUnknown(ctx, job)
@@ -294,7 +306,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	} else {
 		err = api.validateJob(ctx, job)
 		if err == nil {
-			if job.State == "abandoning" || job.State == "abandoned" {
+			if job.State == "abandoning" || job.State == "abandoned" || job.State == organization.SourceRestoring || job.State == organization.SourceRestored {
 				err = organization.ErrState
 			} else if action == "resume-move" {
 				err = api.resumeMove(ctx, job)
@@ -305,7 +317,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	if err == nil && action != "cancel" && action != "abandon-unpublished" && action != "detach-unknown" {
+	if err == nil && action != "cancel" && action != "abandon-unpublished" && action != "detach-unknown" && action != "restore-source" {
 		err = api.jobs.ResolveUnknown(ctx, job)
 	}
 	if err != nil {
@@ -326,7 +338,7 @@ func (api organizationAPI) runJob(ctx context.Context, job organization.Job, rec
 		return err
 	}
 	defer close()
-	if !organization.SupportedMode(job.Definition.Mode) || job.State == "cancelled" {
+	if !organization.SupportedMode(job.Definition.Mode) || job.State == "cancelled" || job.State == organization.SourceRestoring || job.State == organization.SourceRestored {
 		return organization.ErrState
 	}
 	for _, item := range job.Items {
