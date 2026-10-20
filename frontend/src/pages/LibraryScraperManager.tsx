@@ -30,7 +30,7 @@ export function LibraryScraperManager({token,enabled,onSessionExpired}:{token:st
   return <section aria-label="已有媒体库手动刮削"><h2>已有媒体库手动刮削</h2>
     <p>只修改配置媒体库范围内的所选 NFO／图片，不整理、删除或移动视频，不新增入库历史。先只读扫描并审核，再单独提交一次后台任务（通常 15 秒内开始）。不依赖入库刮削开关；选项沿用上方配置。</p>
     <p>剧集／动漫会按选项处理关联的剧、季共享元数据，可能位于所选目录的上一级，但不会越出媒体库。仅补缺失时优先读取已有 NFO 的明确 TMDB ID；两种重写模式会忽略旧 NFO ID，重新识别名称。</p>
-    <p>覆盖前将原文件交换到同目录的私有备份中，占用额外磁盘；备份不会自动删除。恢复须逐个核查并确认，不会强行覆盖后来改动的文件。中断任务不自动续跑；定时插件调度尚未迁移。</p>
+    <p>覆盖前将原文件交换到同目录的私有备份中，占用额外磁盘；备份不会自动删除。恢复须逐个核查并确认，不会强行覆盖后来改动的文件。中断任务不自动续跑；定时和仅运行一次在插件管理的“媒体库刮削”中独立授权。停止单个任务不会隐式停用已授权周期。</p>
     {error && <p role="alert">{error}</p>}
     <button type="button" disabled={!enabled || busy} onClick={()=>void operate(load)}>只读刷新媒体库与任务</button>
     {status && <><fieldset disabled={!enabled || busy || unknownSubmit}><legend>本次相对范围（最多 50,000 个媒体文件）</legend>

@@ -72,6 +72,21 @@ func libraryExists(ctx context.Context, db *sql.DB) (bool, error) {
 	return b, err
 }
 func (s *Store) CreateLibraryJob(ctx context.Context, fingerprint string, d LibraryDefinition, files []LibraryMedia) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	id, err := createLibraryJob(ctx, tx, fingerprint, d, files)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+func createLibraryJob(ctx context.Context, tx *sql.Tx, fingerprint string, d LibraryDefinition, files []LibraryMedia) (string, error) {
 	if len(fingerprint) != 64 || len(files) == 0 || len(files) > 50_000 || d.Count != len(files) || !LibraryMode(d.Mode) || d.Actor == "" || len(d.RequestID) != 32 {
 		return "", ErrState
 	}
@@ -79,11 +94,6 @@ func (s *Store) CreateLibraryJob(ctx context.Context, fingerprint string, d Libr
 	if err != nil || len(definition) > 1<<20 {
 		return "", ErrState
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
 	if err := librarySchema(ctx, tx); err != nil {
 		return "", err
 	}
@@ -129,9 +139,6 @@ func (s *Store) CreateLibraryJob(ctx context.Context, fingerprint string, d Libr
 	var savedDefinition, savedState string
 	if err := tx.QueryRowContext(ctx, `SELECT DEFINITION,STATE FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, id).Scan(&savedDefinition, &savedState); err != nil || savedDefinition != string(definition) || savedState != "ready" {
 		return "", ErrState
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
 	}
 	return id, nil
 }
@@ -255,6 +262,9 @@ func (s *Store) libraryChange(ctx context.Context, id, from, to, reason string) 
 	var state string
 	if err := tx.QueryRowContext(ctx, `SELECT STATE FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, id).Scan(&state); err != nil || state != to {
 		return ErrState
+	}
+	if err := finishLibraryEvent(ctx, tx, id, to, reason); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

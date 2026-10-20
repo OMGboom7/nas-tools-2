@@ -57,7 +57,7 @@ func NFOIdentity(data []byte, kind string) (string, error) {
 					if a.Name.Local == "type" {
 						types++
 					}
-					if a.Name.Local == "type" && a.Value == "tmdb" {
+					if a.Name.Local == "type" && strings.EqualFold(a.Value, "tmdb") {
 						want = true
 					}
 				}

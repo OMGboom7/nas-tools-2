@@ -2,7 +2,7 @@
 
 2026-10-20：在原生入库刮削之外，接入已有媒体库的只读扫描、一次人工审核执行、三种模式、逐文件回执和单个元数据恢复。沿用 `UserScraperConf` 的生成选项、TMDB/Fanart 图片、中文演职员与固定只读视频句柄的 FFmpeg 缺图回退；手动任务不依赖 `media.nfo_poster` 开关。
 
-本批不是 `LibraryScraper` 插件全部迁移。旧插件的 cron、onlyonce、安装/卸载及 `MediaScrapStart`／旧 Ajax 调度入口继续列为下一批，不把现代手动入口伪装成它们已被接管；旧 Python 暂不删除。
+此手动批次不包含 `LibraryScraper` 插件全部功能。后续已接入 cron、onlyonce、安装／卸载及事件／旧 Ajax 触发，具体接管协议和验证边界见 [媒体库刮削插件](library-scraper-plugin.md)；旧 Python 暂不删除。
 
 ## 审核与执行范围
 

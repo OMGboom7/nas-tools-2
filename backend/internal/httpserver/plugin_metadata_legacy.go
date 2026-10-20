@@ -34,6 +34,15 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			service.serveHostsPlugin(response, probe, action)
 			return
 		}
+		if service.nativeLibrary(id) {
+			probe.SetPathValue("id", id)
+			nativeAction := action
+			if action == "config" {
+				nativeAction = "legacy-save"
+			}
+			service.serveLibraryPlugin(response, probe, nativeAction)
+			return
+		}
 		if service.nativeIndexer(id) {
 			probe.SetPathValue("id", id)
 			nativeAction := action

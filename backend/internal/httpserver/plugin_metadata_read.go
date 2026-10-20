@@ -84,13 +84,40 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeLibrary(id) {
+				if !service.library.authorize(response, request) {
+					return
+				}
+				raw, err := service.system.ReadMany(request.Context(), libraryPluginKeys)
+				if err != nil {
+					writeOrganizationError(response, err)
+					return
+				}
+				values, err := decodeMetadataConfig(raw[libraryPluginKey])
+				if err != nil {
+					writeOrganizationError(response, err)
+					return
+				}
+				detail, err := service.library.libraryDetail(request.Context(), values, raw)
+				if err != nil {
+					writeOrganizationError(response, err)
+					return
+				}
+				running, known := service.librarySummary(request.Context())
+				var state any
+				if known {
+					state = running
+				}
+				result[id] = map[string]any{"name": "媒体库刮削", "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": state, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeSubtitle(id) {
 				raw, err := service.system.Get(request.Context(), "plugin.ChineseSubFinder")
 				values, decodeErr := decodeMetadataConfig(raw)

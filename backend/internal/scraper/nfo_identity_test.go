@@ -9,6 +9,7 @@ func TestNFOIdentitySelectsOnlyConsistentExplicitTMDBIDs(t *testing.T) {
 	for _, tc := range []struct{ xml, kind, id string }{
 		{`<?xml version="1.0"?><movie><uniqueid type="imdb">tt100</uniqueid><uniqueid type="tmdb">123</uniqueid><tmdbid>123</tmdbid></movie>`, "movie", "123"},
 		{`<tvshow><tmdbid>200</tmdbid></tvshow>`, "tv", "200"},
+		{`<movie><uniqueid type="Tmdb">101</uniqueid><uniqueid type="TMDB">101</uniqueid></movie>`, "movie", "101"},
 		{`<movie><id>100</id><uniqueid type="imdb">tt100</uniqueid></movie>`, "movie", ""},
 		{`<movie><actor><tmdbid>400</tmdbid></actor></movie>`, "movie", ""},
 	} {

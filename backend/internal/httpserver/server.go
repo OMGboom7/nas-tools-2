@@ -514,9 +514,14 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.scraper = nativeScraper
 	nativeLibrary := &libraryScraper{intake: nativeScraper}
 	rssRunner.library = nativeLibrary
+	if nativeSystemConfig != nil {
+		plugins.library = nativeLibrary
+	}
 	mux.HandleFunc("GET /api/v1/organization/library-scraper", nativeLibrary.serveStatus)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/preview", nativeLibrary.servePreview)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/jobs", nativeLibrary.serveCreate)
+	mux.HandleFunc("POST /do", nativeLibrary.serveLegacyScrape)
+	mux.HandleFunc("POST /api/v1/organization/library-scraper/event", nativeLibrary.serveScrapeEvent)
 	mux.HandleFunc("GET /api/v1/organization/library-scraper/jobs/{id}", nativeLibrary.serveJob)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/jobs/{id}/cancel", nativeLibrary.serveCancel)
 	mux.HandleFunc("GET /api/v1/organization/library-scraper/outputs/{output}", nativeLibrary.serveOutput)

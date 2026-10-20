@@ -810,10 +810,11 @@ export type PluginConfigDetail = {
   name: string;
   fields: PluginConfigField[];
   values: Record<string, string | boolean | string[]>;
-  meta: { hasPage: boolean };
+  meta: { hasPage: boolean; fingerprint?: string };
 };
 
 export type PluginConfigInput = {
+  fingerprint?: string;
   values: Record<string, string | boolean | string[]>;
   clearConfig: string[];
 };
@@ -1458,6 +1459,7 @@ export async function getPluginConfig(token: string, id: string): Promise<Plugin
 }
 
 export async function savePluginConfig(token: string, id: string, input: PluginConfigInput): Promise<void> {
+  if (id === "LibraryScraper" && !/^[a-f0-9]{64}$/.test(input.fingerprint || "")) throw new ApiError("请只读刷新媒体库刮削配置后再明确授权", 400);
   const response = await fetch(`/api/v1/plugins/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { Authorization: token, "Content-Type": "application/json" },

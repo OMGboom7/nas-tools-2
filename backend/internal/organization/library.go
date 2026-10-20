@@ -28,6 +28,11 @@ type LibraryDefinition struct {
 	Mode, ConfigDigest, Settings, SettingsDigest, Actor string
 	RequestID                                           string
 	Count                                               int
+	Schedule                                            *LibraryScheduleOrigin
+}
+type LibraryScheduleOrigin struct {
+	Epoch, Batch string
+	Event        bool
 }
 type LibraryScan struct {
 	Files   []LibraryMedia

@@ -39,15 +39,21 @@ type pluginConfigDetail struct {
 }
 
 type pluginConfigDetailMeta struct {
-	HasPage bool `json:"hasPage"`
+	HasPage     bool   `json:"hasPage"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 type pluginConfigRequest struct {
+	Fingerprint string         `json:"fingerprint,omitempty"`
 	Values      map[string]any `json:"values"`
 	ClearConfig []string       `json:"clearConfig"`
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeLibrary(request.PathValue("id")) {
+		service.serveLibraryPlugin(response, request, "get")
+		return
+	}
 	if service.nativeSubtitle(request.PathValue("id")) {
 		service.serveSubtitlePlugin(response, request, "get")
 		return
@@ -88,6 +94,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeLibrary(request.PathValue("id")) {
+		service.serveLibraryPlugin(response, request, "save")
+		return
+	}
 	if service.nativeSubtitle(request.PathValue("id")) {
 		service.serveSubtitlePlugin(response, request, "save")
 		return

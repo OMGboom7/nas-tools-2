@@ -10,13 +10,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/scraper"
 )
 
-type libraryScraper struct{ intake *intakeScraper }
+type libraryScraper struct {
+	intake  *intakeScraper
+	workers atomic.Int32
+}
 type libraryPlanInput struct {
 	RootID    string   `json:"rootId"`
 	Path      string   `json:"path"`
@@ -44,7 +48,24 @@ func (api *libraryScraper) authorize(w http.ResponseWriter, r *http.Request) boo
 		writeAPIError(w, 503, 503, "native library scraper unavailable")
 		return false
 	}
-	return api.intake.authorize(w, r)
+	if !api.intake.authorize(w, r) {
+		return false
+	}
+	claims, err := api.intake.organizer.auth.service.VerifyToken(r.Header.Get("Authorization"))
+	if err != nil {
+		writeAPIError(w, 401, 401, "authorization expired")
+		return false
+	}
+	snapshot, err := api.intake.organizer.service.configStore.Snapshot()
+	if err != nil {
+		writeAPIError(w, 503, 503, "application configuration unavailable")
+		return false
+	}
+	if text(objectValue(snapshot["app"])["login_user"]) != claims.Username {
+		writeAPIError(w, 403, 403, "current administrator authority required")
+		return false
+	}
+	return true
 }
 func libraryRootSnapshot(root organizationRoot) (organization.LibraryRoot, error) {
 	p, err := filepath.EvalSymlinks(root.Path)
@@ -61,7 +82,7 @@ func libraryRootSnapshot(root organizationRoot) (organization.LibraryRoot, error
 	}
 	return organization.LibraryRoot{ID: root.ID, Path: p, Identity: organization.Identity(info), Kind: kind}, nil
 }
-func (api *libraryScraper) plan(ctx context.Context, input libraryPlanInput, actor string) (libraryPreview, error) {
+func (api *libraryScraper) definition(ctx context.Context, input libraryPlanInput, actor string) (libraryPreview, error) {
 	p := libraryPreview{Input: input, Sample: []libraryPreviewItem{}}
 	if p.Input.Path == "" {
 		p.Input.Path = "."
@@ -110,6 +131,15 @@ func (api *libraryScraper) plan(ctx context.Context, input libraryPlanInput, act
 	if _, _, err := scraper.Parse(d.Settings); err != nil {
 		return p, err
 	}
+	p.definition = d
+	return p, nil
+}
+func (api *libraryScraper) plan(ctx context.Context, input libraryPlanInput, actor string) (libraryPreview, error) {
+	p, err := api.definition(ctx, input, actor)
+	if err != nil {
+		return p, err
+	}
+	d := p.definition
 	scan, err := organization.ScanLibrary(ctx, d)
 	if err != nil {
 		return p, err
@@ -319,7 +349,7 @@ func (api *libraryScraper) rootCurrent(ctx context.Context, d organization.Libra
 	for _, root := range roots.Targets {
 		if root.ID == d.Root.ID {
 			current, err := libraryRootSnapshot(root)
-			if err == nil && current == d.Root {
+			if err == nil && (current == d.Root || d.Root.Kind == "auto" && current.ID == d.Root.ID && current.Path == d.Root.Path && current.Identity == d.Root.Identity) {
 				return nil
 			}
 		}
@@ -332,6 +362,11 @@ func (api *libraryScraper) current(ctx context.Context, job organization.Library
 	}
 	if err := api.intake.organizer.jobs.CheckLibraryRunning(ctx, job.ID); err != nil {
 		return err
+	}
+	if job.Definition.Schedule != nil {
+		if err := api.pluginOriginCurrent(ctx, job.Definition.Schedule); err != nil {
+			return err
+		}
 	}
 	snapshot, err := api.intake.organizer.service.configStore.Snapshot()
 	if err != nil {

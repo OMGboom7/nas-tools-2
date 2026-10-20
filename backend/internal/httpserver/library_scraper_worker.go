@@ -17,6 +17,18 @@ import (
 
 func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryDefinition, m organization.LibraryMedia) (scraper.Input, error) {
 	in := scraper.Input{Kind: d.Root.Kind, Stem: strings.TrimSuffix(filepath.Base(m.Path), filepath.Ext(m.Path))}
+	auto := in.Kind == "auto"
+	if auto {
+		ep, err := mediameta.Episodes(in.Stem, filepath.Base(filepath.Dir(m.Path)))
+		if err != nil {
+			return in, err
+		}
+		in.Kind = "movie"
+		if ep.TV {
+			in.Kind = "tv"
+		}
+		d.Root.Kind = in.Kind
+	}
 	var episodes *mediameta.EpisodeInfo
 	if in.Kind == "tv" {
 		ep, err := mediameta.Episodes(in.Stem, "")
@@ -29,6 +41,13 @@ func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryD
 				return in, organization.ErrState
 			}
 			ep.Season = parent.Season
+		}
+		// The folder scraper's documented legacy default is season one. This
+		// applies only to its automatic classifier, with an explicit episode;
+		// the scraper client still verifies every requested episode in TMDB.
+		if auto && ep.Season == nil && ep.Episode != nil {
+			season := 1
+			ep.Season = &season
 		}
 		if ep.Season == nil || ep.Episode == nil || ep.EndSeason != nil {
 			return in, organization.ErrState
@@ -88,9 +107,26 @@ func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryD
 			title = filepath.Base(folder)
 		}
 	}
-	result, failure := api.intake.organizer.recognition.recognizeSelected(ctx, title, "", in.Kind, in.ID, episodes, nil)
-	if failure != nil || result == nil || result.kind != in.Kind {
+	forced := in.Kind
+	if auto && in.ID == "" {
+		forced = ""
+	}
+	result, failure := api.intake.organizer.recognition.recognizeSelected(ctx, title, "", forced, in.ID, episodes, nil)
+	if failure != nil || result == nil || !auto && result.kind != in.Kind {
 		return in, organization.ErrState
+	}
+	if auto && result.kind != in.Kind {
+		in.Kind = result.kind
+		if in.Kind == "tv" {
+			ep := result.meta.Episodes
+			if ep.Season == nil || ep.Episode == nil || ep.EndSeason != nil {
+				return in, organization.ErrState
+			}
+			in.Season, in.First, in.Last = *ep.Season, *ep.Episode, *ep.Episode
+			if ep.EndEpisode != nil {
+				in.Last = *ep.EndEpisode
+			}
+		}
 	}
 	in.ID = strconv.FormatInt(result.detail.ID, 10)
 	return in, nil
@@ -120,6 +156,7 @@ func (api *libraryScraper) runMedia(ctx context.Context, job organization.Librar
 	if err != nil {
 		return "blocked", "media identity or existing NFO could not be verified; no metadata written"
 	}
+	d.Root.Kind = in.Kind
 	opts, warnings, err := scraper.Parse(d.Settings)
 	if err != nil {
 		return "blocked", "scraper options invalid"
@@ -321,21 +358,31 @@ func startLibraryScraper(ctx context.Context, api *libraryScraper) func() {
 		return func() {}
 	}
 	done := make(chan struct{})
+	api.workers.Add(1)
 	go func() {
 		defer close(done)
+		defer api.workers.Add(-1)
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
-		for {
-			if ctx.Err() != nil {
-				return
-			}
-			_ = api.tick(ctx)
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
+		runLibraryScraper(ctx, api, time.Now(), ticker.C)
 	}()
 	return func() { <-done }
+}
+func runLibraryScraper(ctx context.Context, api *libraryScraper, now time.Time, ticks <-chan time.Time) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		_ = api.pluginTick(ctx, now)
+		_ = api.tick(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case t, ok := <-ticks:
+			if !ok {
+				return
+			}
+			now = t
+		}
+	}
 }
