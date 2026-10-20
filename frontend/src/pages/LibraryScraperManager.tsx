@@ -6,6 +6,8 @@ const modes:Record<string,string>={no_force:"仅补齐缺失文件",force_nfo:"�
 
 export function LibraryScraperManager({token,enabled,onSessionExpired}:{token:string;enabled:boolean;onSessionExpired:()=>void}){
   const [status,setStatus]=useState<LibraryScrapeStatus|null>(null),[rootId,setRoot]=useState(""),[path,setPath]=useState("."),[mode,setMode]=useState<LibraryScrapeInput["mode"]>("no_force"),[exclude,setExclude]=useState("");
+  const [allowDiscExpansion,setAllowDiscExpansion]=useState(false);
+  useEffect(()=>{setAllowDiscExpansion(false);},[rootId,path,token]);
   const [preview,setPreview]=useState<LibraryScrapePreview|null>(null),[detail,setDetail]=useState<LibraryScrapeDetail|null>(null),[recovery,setRecovery]=useState<LibraryScrapeRecovery|null>(null);
   const [consent,setConsent]=useState(false),[stopped,setStopped]=useState(false),[overwrite,setOverwrite]=useState(false),[recoverConsent,setRecoverConsent]=useState(false),[recoverStopped,setRecoverStopped]=useState(false);
   const [cancelConsent,setCancelConsent]=useState(false);
@@ -21,7 +23,7 @@ export function LibraryScraperManager({token,enabled,onSessionExpired}:{token:st
   }
   async function load(){const v=generation.current;const next=await getLibraryScraper(token);if(v!==generation.current)return;setStatus(next);setUnknownSubmit(false);invalidate();setRecovery(null);setRecoverConsent(false);setRecoverStopped(false);}
   async function view(id:string,page=1,outputPage=1){const v=generation.current;const d=await getLibraryScrapeJob(token,id,page,outputPage);if(v!==generation.current)return;setDetail(d);setCancelConsent(false);setRecovery(null);setRecoverConsent(false);setRecoverStopped(false);}
-  async function makePreview(){const v=generation.current;invalidate();const p=await previewLibraryScrape(token,{rootId,path,mode,excludes:exclude.split("\n").map(s=>s.trim()).filter(Boolean)});if(v===generation.current)setPreview(p);}
+  async function makePreview(){const v=generation.current;invalidate();const p=await previewLibraryScrape(token,{rootId,path,mode,allowDiscExpansion,excludes:exclude.split("\n").map(s=>s.trim()).filter(Boolean)});if(v===generation.current)setPreview(p);}
   async function submit(){if(!preview)return;const v=generation.current;const saved=await createLibraryScrape(token,preview,consent,stopped,overwrite);if(v!==generation.current)return;invalidate();setDetail(null);setStatus(s=>s?{...s,jobs:[saved,...s.jobs.filter(j=>j.id!==saved.id)]}:s);}
   async function stop(){if(!detail)return;const v=generation.current;const d=await cancelLibraryScrape(token,detail.job.id,cancelConsent);if(v!==generation.current)return;setDetail(d);setCancelConsent(false);setRecovery(null);}
   async function inspect(id:string){const v=generation.current;setRecovery(null);setRecoverConsent(false);setRecoverStopped(false);const r=await reviewLibraryScrapeOutput(token,id);if(v===generation.current)setRecovery(r);}
@@ -30,17 +32,19 @@ export function LibraryScraperManager({token,enabled,onSessionExpired}:{token:st
   return <section aria-label="已有媒体库手动刮削"><h2>已有媒体库手动刮削</h2>
     <p>只修改配置媒体库范围内的所选 NFO／图片，不整理、删除或移动视频，不新增入库历史。先只读扫描并审核，再单独提交一次后台任务（通常 15 秒内开始）。不依赖入库刮削开关；选项沿用上方配置。</p>
     <p>剧集／动漫会按选项处理关联的剧、季共享元数据，可能位于所选目录的上一级，但不会越出媒体库。仅补缺失时优先读取已有 NFO 的明确 TMDB ID；两种重写模式会忽略旧 NFO ID，重新识别名称。</p>
+    <p>蓝光整盘按一个媒体对象审核，菜单、证书和片段只读；NFO／图片写在整盘根或节目目录，不向 BDMV／STREAM 写入。TV 整盘没有片段到剧集的核实映射时，只处理节目／季元数据，并明确记录逐集信息未生成。</p>
     <p>覆盖前将原文件交换到同目录的私有备份中，占用额外磁盘；备份不会自动删除。恢复须逐个核查并确认，不会强行覆盖后来改动的文件。中断任务不自动续跑；定时和仅运行一次在插件管理的“媒体库刮削”中独立授权。停止单个任务不会隐式停用已授权周期。</p>
     {error && <p role="alert">{error}</p>}
     <button type="button" disabled={!enabled || busy} onClick={()=>void operate(load)}>只读刷新媒体库与任务</button>
     {status && <><fieldset disabled={!enabled || busy || unknownSubmit}><legend>本次相对范围（最多 50,000 个媒体文件）</legend>
       <label>媒体库<select value={rootId} onChange={e=>{setRoot(e.target.value);invalidate();}}><option value="">请选择</option>{status.roots.map(r=><option key={r.id} value={r.id}>{r.label} · {r.path}</option>)}</select></label>
       <label>相对目录或单个媒体文件<input value={path} onChange={e=>{setPath(e.target.value);invalidate();}} placeholder=". 或 影片/影片.mkv"/></label>
+      <label><input type="checkbox" checked={allowDiscExpansion} onChange={e=>{setAllowDiscExpansion(e.target.checked);invalidate();}}/>选择的是蓝光内部文件／目录时，我同意扩大到整盘重新审核；此选项不执行写入，仍须确认下面的新清单</label>
       <label>模式<select value={mode} onChange={e=>{setMode(e.target.value as LibraryScrapeInput["mode"]);invalidate();}}>{Object.entries(modes).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
       <label>排除的相对路径（每行一个，按完整路径边界匹配）<textarea value={exclude} onChange={e=>{setExclude(e.target.value);invalidate();}}/></label>
       <button type="button" disabled={!rootId || !path} onClick={()=>void operate(makePreview)}>只读扫描并生成新审核</button>
     </fieldset>
-    {preview && <fieldset disabled={!enabled || busy || unknownSubmit}><legend>本次审核 · {modes[preview.input.mode]}</legend><p>范围：{preview.input.path}；媒体 {preview.total} 个，阻止 {preview.blocked} 个，跳过 {preview.skipped} 个对象。仅展示前 200 个，提交会再次核对全部文件。新增文件不自动扩入已保存任务。</p><ul>{preview.sample.map(m=><li key={m.path}>{m.path}{m.blocked && <small> · {m.blocked}</small>}</li>)}</ul>
+    {preview && <fieldset disabled={!enabled || busy || unknownSubmit}><legend>本次审核 · {modes[preview.input.mode]}</legend><p>范围：{preview.input.path}；媒体 {preview.total} 个，阻止 {preview.blocked} 个，跳过 {preview.skipped} 个对象。仅展示前 200 个，提交会再次核对全部文件。新增文件不自动扩入已保存任务。</p><ul>{preview.sample.map(m=><li key={m.path}>{m.path}{m.disc && <small> · 蓝光整盘：{m.disc.files} 个只读文件、{m.disc.directories} 个子目录{m.disc.expanded?"，已从内部选择扩展至整盘":""}</small>}{m.blocked && <small> · {m.blocked}</small>}</li>)}</ul>
       <label><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>确认此范围按上方已保存选项进行一次刮削，在线识别失败保留失败回执</label>
       <label><input type="checkbox" checked={stopped} onChange={e=>setStopped(e.target.checked)}/>确认旧 Python 刮削、其他实例及外部元数据写入器已实际停止</label>
       {preview.input.mode!=="no_force" && <label><input type="checkbox" checked={overwrite} onChange={e=>setOverwrite(e.target.checked)}/>独立同意覆盖本范围内的所选元数据，并保留占用磁盘的原文件备份</label>}
@@ -51,7 +55,7 @@ export function LibraryScraperManager({token,enabled,onSessionExpired}:{token:st
     {detail && <><h3>任务 {detail.job.id.slice(0,12)} · {states[detail.job.state]||detail.job.state}</h3><p>{detail.job.reason} · 完成 {detail.job.done}/{detail.job.total}，缺口 {detail.job.blocked}</p>
       <button type="button" disabled={!enabled || busy} onClick={()=>void operate(()=>view(detail.job.id,detail.page,detail.outputPage))}>只读刷新当前任务</button>
       {["ready","running","needs_review"].includes(detail.job.state) && <fieldset disabled={!enabled || busy}><legend>独立停止</legend><label><input type="checkbox" checked={cancelConsent} onChange={e=>setCancelConsent(e.target.checked)}/>确认停止后续写入，已生成文件、备份和不确定占用均保留</label><button type="button" disabled={!cancelConsent} onClick={()=>void operate(stop,true)}>确认停止此任务</button></fieldset>}
-      <p>媒体回执第 {detail.page} 页，每页 100 条</p><ul>{detail.items.map(i=><li key={i.ordinal}>{i.path} · {states[i.state]||i.state} · {i.reason}</li>)}</ul>
+      <p>媒体回执第 {detail.page} 页，每页 100 条</p><ul>{detail.items.map(i=><li key={i.ordinal}>{i.path}{i.disc && ` · 蓝光整盘（${i.disc.files} 个只读文件）`} · {states[i.state]||i.state} · {i.reason}</li>)}</ul>
       <button type="button" disabled={!enabled || busy || detail.page<=1} onClick={()=>void operate(()=>view(detail.job.id,detail.page-1,detail.outputPage))}>上一页媒体</button><button type="button" disabled={!enabled || busy || detail.page*100>=detail.job.total} onClick={()=>void operate(()=>view(detail.job.id,detail.page+1,detail.outputPage))}>下一页媒体</button>
       <p>元数据回执第 {detail.outputPage} 页，每页 100 条。恢复或核对前先停止任务；只核对不会重写文件。</p><ul>{detail.outputs.map(o=><li key={o.id}>{o.target} · {states[o.state]||o.state} · {o.reason}{["replaced","writing","uncertain","restore_running"].includes(o.state) && <button type="button" disabled={!enabled || busy || !!active} onClick={()=>void operate(()=>inspect(o.id))}>只读核查此文件的恢复证据</button>}</li>)}</ul>
       <button type="button" disabled={!enabled || busy || detail.outputPage<=1} onClick={()=>void operate(()=>view(detail.job.id,detail.page,detail.outputPage-1))}>上一页元数据</button><button type="button" disabled={!enabled || busy || detail.outputs.length<100} onClick={()=>void operate(()=>view(detail.job.id,detail.page,detail.outputPage+1))}>下一页元数据</button>

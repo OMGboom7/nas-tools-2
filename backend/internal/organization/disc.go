@@ -127,6 +127,20 @@ func discFile(ctx context.Context, base, path string, expanded bool) (File, erro
 	return File{Path: path, Kind: "media", Size: size, Modified: m.Root.Modified, Identity: m.Root.Identity, Disc: &m, DiscInfo: summary}, nil
 }
 func IsDisc(item Entry) bool { return item.Disc != nil }
+func discMetadataName(stem, name string) bool {
+	if filepath.Dir(name) != "." {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	if ext == ".nfo" {
+		return base == stem || base == "movie" || base == "tvshow" || base == "season"
+	}
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" {
+		return false
+	}
+	return map[string]bool{"poster": true, "fanart": true, "background": true, "logo": true, "disc": true, "clearart": true, "banner": true, "thumb": true}[base] || seasonArtworkNamePattern.MatchString(base)
+}
 func DiscContaining(ctx context.Context, base, path string) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()

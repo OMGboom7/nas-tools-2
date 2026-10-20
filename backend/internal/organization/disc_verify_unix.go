@@ -7,21 +7,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
 func discMetadata(e Entry, path string) bool {
-	if filepath.Dir(path) != "." {
-		return false
-	}
-	ext := strings.ToLower(filepath.Ext(path))
-	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	if ext == ".nfo" {
-		return stem == filepath.Base(e.Target) || stem == "movie" || stem == "tvshow" || stem == "season"
-	}
-	return (ext == ".jpg" || ext == ".jpeg" || ext == ".png") && (map[string]bool{"poster": true, "fanart": true, "background": true, "logo": true, "disc": true, "clearart": true, "banner": true, "thumb": true}[stem] || seasonArtworkName.MatchString(stem))
+	return discMetadataName(filepath.Base(e.Target), path)
 }
 func discVerifyNodes(ctx context.Context, d Definition, e Entry, p Proof, root *os.File, dirs map[string]string, partial, metadata, hash bool) error {
 	if err := discProofValid(d, e, p); err != nil {

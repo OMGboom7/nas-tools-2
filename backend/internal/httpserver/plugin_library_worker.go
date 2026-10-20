@@ -181,6 +181,7 @@ func (api *libraryScraper) pluginTick(ctx context.Context, now time.Time) error 
 	plans := []organization.LibraryPrepared{}
 	queuedIDs := []string{}
 	count := 0
+	snapshotBytes := 0
 	for _, template := range c.Lease.Templates {
 		if scanCtx.Err() != nil {
 			err = scanCtx.Err()
@@ -195,7 +196,8 @@ func (api *libraryScraper) pluginTick(ctx context.Context, now time.Time) error 
 			break
 		}
 		count += len(scan.Files)
-		if count > 50000 {
+		snapshotBytes += scan.SnapshotBytes
+		if count > 50000 || snapshotBytes > organization.LibraryWorklistBytes {
 			err = organization.ErrLimit
 			break
 		}

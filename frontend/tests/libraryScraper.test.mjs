@@ -51,3 +51,49 @@ test("cross-job and cross-output recovery responses are rejected",async(t)=>{
   t.mock.method(globalThis,"fetch",async()=>response({...review,output:{...output,id:"d".repeat(64)}}));await assert.rejects(reviewLibraryScrapeOutput("token",output.id));
   t.mock.method(globalThis,"fetch",async()=>response({...output,state:"restored",target:"another.nfo"}));await assert.rejects(recoverLibraryScrapeOutput("token",review,"restore",true,true));
 });
+
+const disc={files:7,directories:5,expanded:false,fingerprint:"e".repeat(64),latestModified:1_792_000_000_000_000_000};
+test("one reviewed Blu-ray directory is submitted once with explicit expansion and its receipt summary",async(t)=>{
+  const selected={...input,path:"Folder/BDMV/STREAM/00000.m2ts",allowDiscExpansion:true};
+  const p={...preview,input:{...selected,requestId:preview.input.requestId},sample:[{path:"Folder",disc:{...disc,expanded:true}}]};
+  let calls=0;t.mock.method(globalThis,"fetch",async(path,options)=>{
+    calls++;
+    if(calls===1){assert.equal(path,base+"/preview");assert.deepEqual(JSON.parse(options.body),selected);return response(p);}
+    if(calls===2){assert.equal(path,base+"/jobs");assert.deepEqual(JSON.parse(options.body),{...p.input,fingerprint:hash,confirm:true,confirmOldExecutorsStopped:true,confirmOverwrite:true});return response(job);}
+    assert.equal(options.method,undefined);return response({job,items:[{ordinal:0,path:"Folder",state:"pending",reason:"",disc:{...disc,expanded:true}}],outputs:[],page:1,outputPage:1});
+  });
+  const reviewed=await previewLibraryScrape("token",selected);assert.equal(reviewed.sample[0].disc.files,7);
+  await createLibraryScrape("token",reviewed,true,true,true);
+  assert.equal((await getLibraryScrapeJob("token",hash)).items[0].disc.expanded,true);assert.equal(calls,3);
+});
+test("a disc root remains in its full directory and is not silently expanded",async(t)=>{
+  const selected={...input,path:"."};
+  const p={...preview,input:{...selected,requestId:preview.input.requestId},sample:[{path:".",disc}]};
+  t.mock.method(globalThis,"fetch",async()=>response(p));
+  assert.equal((await previewLibraryScrape("token",selected)).sample[0].disc.expanded,false);
+});
+test("expanded discs require matching scope, explicit expansion and a fresh review",async(t)=>{
+  const selected={...input,path:"Folder/BDMV/STREAM/00000.m2ts",allowDiscExpansion:true};
+  const p={...preview,input:{...selected,requestId:preview.input.requestId},sample:[{path:"Folder",disc:{...disc,expanded:true}}]};
+  for(const bad of [
+    {...p,input:{...p.input,allowDiscExpansion:false}},
+    {...p,input:{...p.input,rootId:"another"}},
+    {...p,input:{...p.input,path:"another"}},
+    {...p,input:{...p.input,mode:"no_force"}},
+    {...p,input:{...p.input,excludes:[]}},
+    {...p,sample:[{path:"another",disc:{...disc,expanded:true}}]},
+    {...p,sample:[{path:"Folder",disc}]},
+    {...p,sample:[{path:"../Folder",disc:{...disc,expanded:true}}]},
+  ]){t.mock.method(globalThis,"fetch",async()=>response(bad));await assert.rejects(previewLibraryScrape("token",selected));}
+  t.mock.method(globalThis,"fetch",async()=>response(p));await assert.rejects(previewLibraryScrape("token",{...selected,allowDiscExpansion:false}));
+  let calls=0;t.mock.method(globalThis,"fetch",async()=>{calls++;return response(job);});
+  await assert.rejects(createLibraryScrape("token",{...p,input:{...p.input,allowDiscExpansion:false}},true,true,true));assert.equal(calls,0);
+});
+test("malformed Blu-ray manifests never appear as verified previews, details or cancellation receipts",async(t)=>{
+  for(const bad of [null,{...disc,files:0},{...disc,directories:-1},{...disc,files:20000},{...disc,expanded:"yes"},{...disc,fingerprint:"bad"},{...disc,latestModified:-1}]){
+    t.mock.method(globalThis,"fetch",async()=>response({...preview,sample:[{path:"Folder",disc:bad}]}));await assert.rejects(previewLibraryScrape("token",input));
+    const data={job,items:[{ordinal:0,path:"Folder",state:"pending",reason:"",disc:bad}],outputs:[],page:1,outputPage:1};
+    t.mock.method(globalThis,"fetch",async()=>response(data));await assert.rejects(getLibraryScrapeJob("token",hash));
+    t.mock.method(globalThis,"fetch",async()=>response({...data,job:{...job,state:"cancelled"}}));await assert.rejects(cancelLibraryScrape("token",hash,true));
+  }
+});

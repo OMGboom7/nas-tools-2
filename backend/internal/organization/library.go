@@ -12,6 +12,7 @@ type LibraryNode struct {
 	Links            uint64
 }
 type LibraryMedia struct {
+	Disc      *LibraryDisc `json:",omitempty"`
 	Path      string
 	Blocked   string
 	Node      LibraryNode
@@ -21,6 +22,7 @@ type LibraryMedia struct {
 	Input     LibraryNode
 }
 type LibraryDefinition struct {
+	AllowDiscExpansion                                  bool `json:",omitempty"`
 	Root                                                LibraryRoot
 	Allowed                                             []LibraryRoot
 	Selection                                           string
@@ -35,10 +37,12 @@ type LibraryScheduleOrigin struct {
 	Event        bool
 }
 type LibraryScan struct {
-	Files   []LibraryMedia
-	Skipped int
+	Files         []LibraryMedia
+	Skipped       int
+	SnapshotBytes int
 }
 type LibraryOutputProof struct {
+	OldLink                                                              string `json:",omitempty"`
 	Target, Stage, StageIdentity, ParentIdentity, NewIdentity, NewDigest string
 	NewSize                                                              int64
 	Old                                                                  LibraryNode

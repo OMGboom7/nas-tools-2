@@ -42,7 +42,14 @@ func captureLibraryMedia(d LibraryDefinition, path string) (LibraryMedia, error)
 			return m, ErrMode
 		}
 	}
-	if !validRelative(path) || path == "." || FileKind(path) != "media" {
+	if FileKind(path) != "media" {
+		return m, ErrPath
+	}
+	return captureLibraryFile(d, path)
+}
+func captureLibraryFile(d LibraryDefinition, path string) (LibraryMedia, error) {
+	m := LibraryMedia{Path: path}
+	if !validRelative(path) || path == "." {
 		return m, ErrPath
 	}
 	r, err := anchoredRoot(d.Root.Path, d.Root.Identity)
@@ -109,6 +116,9 @@ func VerifyLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia
 	if m.Blocked != "" {
 		return ErrState
 	}
+	if m.Disc != nil {
+		return verifyLibraryDisc(ctx, d, m)
+	}
 	actual, err := captureLibraryMedia(d, m.Path)
 	if err != nil {
 		return err
@@ -119,6 +129,9 @@ func VerifyLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia
 	return nil
 }
 func ReadLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia, consume func(*os.File) ([]byte, error)) ([]byte, error) {
+	if m.Disc != nil {
+		return nil, ErrMode
+	} // Never guess a representative STREAM clip.
 	if consume == nil || VerifyLibraryMedia(ctx, d, m) != nil {
 		return nil, ErrState
 	}
@@ -163,6 +176,9 @@ func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, re
 	if VerifyLibraryMedia(ctx, d, m) != nil || !validRelative(relative) || filepath.Ext(relative) != ".nfo" {
 		return nil, ErrState
 	}
+	if m.Disc != nil {
+		return libraryReadDiscNFO(ctx, d, m, relative)
+	}
 	r, err := anchoredRoot(d.Root.Path, d.Root.Identity)
 	if err != nil {
 		return nil, err
@@ -201,6 +217,10 @@ func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, re
 }
 func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) {
 	result := LibraryScan{Files: []LibraryMedia{}}
+	base := filepath.Base(d.Root.Path)
+	if strings.EqualFold(base, "BDMV") || strings.EqualFold(base, "STREAM") && strings.EqualFold(filepath.Base(filepath.Dir(d.Root.Path)), "BDMV") {
+		return result, ErrPath
+	}
 	if !LibraryMode(d.Mode) || !validRelative(d.Selection) || len(d.Excludes) > 128 {
 		return result, ErrPath
 	}
@@ -215,6 +235,35 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 	}
 	defer root.Close()
 	visited := 0
+	appendMedia := func(m LibraryMedia) error {
+		raw, err := libraryMediaDocument(m)
+		if err != nil {
+			return err
+		}
+		result.SnapshotBytes += len(raw)
+		if result.SnapshotBytes > LibraryWorklistBytes || len(result.Files) >= 50_000 {
+			return ErrLimit
+		}
+		result.Files = append(result.Files, m)
+		return nil
+	}
+	selection := d.Selection
+	for _, excluded := range d.Excludes {
+		if sourceUnder(selection, excluded) {
+			result.Skipped++
+			return result, nil
+		}
+	}
+	ancestor, err := libraryDiscAncestor(ctx, d)
+	if err != nil {
+		return result, err
+	}
+	if ancestor != "" && ancestor != selection {
+		if !d.AllowDiscExpansion {
+			return result, ErrPath
+		}
+		selection = ancestor
+	}
 	var walk func(string, int) error
 	walk = func(relative string, depth int) error {
 		if ctx.Err() != nil {
@@ -262,14 +311,10 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 				if e != nil {
 					media = LibraryMedia{Path: relative, Blocked: "unsafe or unreadable media source; no file operations permitted"}
 					if errors.Is(e, ErrMode) {
-						media.Blocked = "Blu-ray whole-disc library rescraping is not yet migrated; STREAM clips are not standalone media"
+						media.Blocked = "incomplete or unsupported Blu-ray directory; STREAM clips are not standalone media"
 					}
 				}
-				result.Files = append(result.Files, media)
-				if len(result.Files) > 50_000 {
-					return ErrLimit
-				}
-				return nil
+				return appendMedia(media)
 			}
 			fd, e := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 			parent.Close()
@@ -279,6 +324,29 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 			directory = os.NewFile(uintptr(fd), relative)
 		}
 		defer directory.Close()
+		if libraryDiscCandidate(directory) {
+			if libraryDiscExcluded(d, relative) {
+				result.Skipped++
+				return nil
+			}
+			media, err := captureLibraryDisc(ctx, d, relative)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if errors.Is(err, ErrLimit) {
+					return err
+				}
+				media = LibraryMedia{Path: relative, Blocked: "unsafe, changed or incomplete Blu-ray inventory/input binding; no file operations permitted"}
+			} else {
+				media.Disc.Expanded = ancestor != "" && ancestor != d.Selection
+				visited += media.Disc.visited
+				if visited > 1_000_000 {
+					return ErrLimit
+				}
+			}
+			return appendMedia(media)
+		}
 		for {
 			entries, e := directory.ReadDir(256)
 			if e != nil && !errors.Is(e, io.EOF) {
@@ -295,7 +363,7 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 		}
 		return nil
 	}
-	if err := walk(d.Selection, 0); err != nil {
+	if err := walk(selection, 0); err != nil {
 		return LibraryScan{}, err
 	}
 	sort.Slice(result.Files, func(i, j int) bool { return result.Files[i].Path < result.Files[j].Path })

@@ -17,6 +17,10 @@ import (
 
 func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryDefinition, m organization.LibraryMedia) (scraper.Input, error) {
 	in := scraper.Input{Kind: d.Root.Kind, Stem: strings.TrimSuffix(filepath.Base(m.Path), filepath.Ext(m.Path))}
+	if m.Disc != nil {
+		in.Stem = organization.LibraryDiscStem(d, m)
+		in.Directory = true
+	}
 	auto := in.Kind == "auto"
 	if auto {
 		ep, err := mediameta.Episodes(in.Stem, filepath.Base(filepath.Dir(m.Path)))
@@ -45,15 +49,18 @@ func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryD
 		// The folder scraper's documented legacy default is season one. This
 		// applies only to its automatic classifier, with an explicit episode;
 		// the scraper client still verifies every requested episode in TMDB.
-		if auto && ep.Season == nil && ep.Episode != nil {
+		if auto && m.Disc == nil && ep.Season == nil && ep.Episode != nil {
 			season := 1
 			ep.Season = &season
 		}
-		if ep.Season == nil || ep.Episode == nil || ep.EndSeason != nil {
+		if ep.Season == nil || ep.Episode == nil && m.Disc == nil || ep.EndSeason != nil {
 			return in, organization.ErrState
 		}
 		ep.TV = true
-		in.Season, in.First, in.Last = *ep.Season, *ep.Episode, *ep.Episode
+		in.Season = *ep.Season
+		if ep.Episode != nil {
+			in.First, in.Last = *ep.Episode, *ep.Episode
+		}
 		if ep.EndEpisode != nil {
 			in.Last = *ep.EndEpisode
 		}
@@ -61,6 +68,9 @@ func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryD
 	}
 	if d.Mode == "no_force" {
 		candidates := []string{filepath.Join(filepath.Dir(m.Path), "movie.nfo"), strings.TrimSuffix(m.Path, filepath.Ext(m.Path)) + ".nfo"}
+		if m.Disc != nil {
+			candidates = []string{filepath.Join(m.Path, "movie.nfo"), filepath.Join(m.Path, in.Stem+".nfo")}
+		}
 		if in.Kind == "tv" {
 			target, err := organization.LibraryTarget(d, m, "show", "tvshow.nfo")
 			if err != nil {
@@ -119,13 +129,27 @@ func (api *libraryScraper) identify(ctx context.Context, d organization.LibraryD
 		in.Kind = result.kind
 		if in.Kind == "tv" {
 			ep := result.meta.Episodes
-			if ep.Season == nil || ep.Episode == nil || ep.EndSeason != nil {
+			if ep.Season == nil || ep.Episode == nil && m.Disc == nil || ep.EndSeason != nil {
 				return in, organization.ErrState
 			}
-			in.Season, in.First, in.Last = *ep.Season, *ep.Episode, *ep.Episode
+			in.Season = *ep.Season
+			if ep.Episode != nil {
+				in.First, in.Last = *ep.Episode, *ep.Episode
+			}
 			if ep.EndEpisode != nil {
 				in.Last = *ep.EndEpisode
 			}
+		}
+	}
+	if m.Disc != nil && in.Kind == "tv" {
+		valid := false
+		for _, s := range result.detail.Seasons {
+			if s.Number == in.Season && s.Episodes != nil && *s.Episodes >= 0 {
+				valid = true
+			}
+		}
+		if !valid {
+			return in, organization.ErrState
 		}
 	}
 	in.ID = strconv.FormatInt(result.detail.ID, 10)

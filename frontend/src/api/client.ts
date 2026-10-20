@@ -4,15 +4,32 @@ export type UserInfo = {
   userpris: string[];
 };
 
-export type LibraryScrapeInput = { rootId: string; path: string; mode: "no_force" | "force_nfo" | "force_all"; excludes: string[]; requestId?: string };
-export type LibraryScrapePreview = { input: LibraryScrapeInput & { requestId: string }; fingerprint: string; total: number; skipped: number; blocked: number; sample: { path: string; blocked?: string }[] };
+export type LibraryScrapeInput = { rootId: string; path: string; mode: "no_force" | "force_nfo" | "force_all"; excludes: string[]; requestId?: string; allowDiscExpansion?: boolean };
+export type LibraryScrapePreview = { input: LibraryScrapeInput & { requestId: string }; fingerprint: string; total: number; skipped: number; blocked: number; sample: { path: string; blocked?: string; disc?: OrganizationDisc }[] };
 export type LibraryScrapeJob = { id: string; state: string; mode: string; rootId?: string; path?: string; created: string; updated: string; reason: string; total: number; done: number; blocked: number };
 export type LibraryScrapeOutput = { id: string; jobId: string; target: string; state: string; reason: string };
 export type LibraryScrapeStatus = { roots: OrganizationRoot[]; jobs: LibraryScrapeJob[] };
-export type LibraryScrapeDetail = { job: LibraryScrapeJob; items: { ordinal: number; path: string; state: string; reason: string }[]; outputs: LibraryScrapeOutput[]; page: number; outputPage: number };
+export type LibraryScrapeDetail = { job: LibraryScrapeJob; items: { ordinal: number; path: string; state: string; reason: string; disc?: OrganizationDisc }[]; outputs: LibraryScrapeOutput[]; page: number; outputPage: number };
 export type LibraryScrapeRecovery = { output: LibraryScrapeOutput; evidence: string; fingerprint: string; canRestore: boolean; canReconcile: boolean };
 const libraryScrapeBase = "/api/v1/organization/library-scraper";
 const libraryHash = (s: unknown): s is string => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
+const libraryDiscValid = (s: unknown): boolean => {
+  if(s===undefined)return true;
+  const d=s as OrganizationDisc|null;
+  return !!d && Number.isSafeInteger(d.files) && d.files>0 && Number.isSafeInteger(d.directories) && d.directories>=0 && d.files+d.directories+1<=20000 && typeof d.expanded==="boolean" && libraryHash(d.fingerprint) && Number.isFinite(d.latestModified) && d.latestModified>=0;
+};
+const libraryRelativePath = (s: unknown): s is string => typeof s==="string" && s.length>0 && (s==="." || !s.startsWith("/") && s.split("/").every(p=>p!=="" && p!=="." && p!=="..")) && !s.includes("\0");
+const libraryPreviewValid = (p: LibraryScrapePreview, input: LibraryScrapeInput): boolean => {
+  const selected=input.path||".";
+  return !!p && libraryHash(p.fingerprint) && /^[a-f0-9]{32}$/.test(p.input?.requestId) && libraryRelativePath(selected)
+    && [p.total,p.blocked,p.skipped].every(n=>Number.isSafeInteger(n) && n>=0) && p.total<=50000 && p.blocked<=p.total
+    && Array.isArray(p.sample) && p.sample.length<=Math.min(200,p.total) && p.sample.every(m=>!!m && libraryRelativePath(m.path) && (m.blocked===undefined || typeof m.blocked==="string") && libraryDiscValid(m.disc)
+      && (m.disc?.expanded ? p.input.allowDiscExpansion===true && selected!==m.path && (m.path==="." || selected.startsWith(m.path+"/")) : selected==="." || m.path===selected || m.path.startsWith(selected+"/")))
+    && p.input.rootId===input.rootId && p.input.mode===input.mode && p.input.path===selected && (p.input.allowDiscExpansion===undefined || typeof p.input.allowDiscExpansion==="boolean") && !!p.input.allowDiscExpansion===!!input.allowDiscExpansion
+    && (input.requestId===undefined || input.requestId===p.input.requestId) && Array.isArray(p.input.excludes) && p.input.excludes.every(libraryRelativePath) && Array.isArray(input.excludes)
+    && [...p.input.excludes].sort().join("\0")===[...input.excludes].sort().join("\0");
+};
+const libraryItemValid = (i: LibraryScrapeDetail["items"][number]): boolean => !!i && libraryRelativePath(i.path) && typeof i.state==="string" && typeof i.reason==="string" && Number.isSafeInteger(i.ordinal) && i.ordinal>=0 && libraryDiscValid(i.disc);
 const libraryJobValid = (s: unknown): s is LibraryScrapeJob => {
   const j = s as LibraryScrapeJob | null;
   return !!j && libraryHash(j.id) && ["ready","running","completed","partial","needs_review","cancelled"].includes(j.state) && ["no_force","force_nfo","force_all"].includes(j.mode) && [j.total,j.done,j.blocked].every((v)=>Number.isSafeInteger(v) && v>=0) && j.done+j.blocked<=j.total;
@@ -29,20 +46,20 @@ export async function getLibraryScraper(token:string):Promise<LibraryScrapeStatu
 }
 export async function previewLibraryScrape(token:string,input:LibraryScrapeInput):Promise<LibraryScrapePreview>{
   const p=await libraryRequest<LibraryScrapePreview>(token,"/preview",input);
-  if(!libraryHash(p.fingerprint) || !/^[a-f0-9]{32}$/.test(p.input?.requestId) || !Number.isSafeInteger(p.total) || p.total<0 || !Array.isArray(p.sample))throw new ApiError("媒体库范围审核不完整",503);return p;
+  if(!libraryPreviewValid(p,input))throw new ApiError("媒体库范围审核不完整",503);return p;
 }
 export async function createLibraryScrape(token:string,preview:LibraryScrapePreview,confirm=false,confirmOldExecutorsStopped=false,confirmOverwrite=false):Promise<LibraryScrapeJob>{
-  if(!confirm || !confirmOldExecutorsStopped || preview.input.mode!=="no_force" && !confirmOverwrite || !libraryHash(preview.fingerprint) || !/^[a-f0-9]{32}$/.test(preview.input.requestId))throw new ApiError("请先审核范围、停止旧执行器并独立确认覆盖",400);
+  if(!confirm || !confirmOldExecutorsStopped || preview.input.mode!=="no_force" && !confirmOverwrite || !libraryPreviewValid(preview,preview.input))throw new ApiError("请先审核范围、停止旧执行器并独立确认覆盖",400);
   const job=await libraryRequest<LibraryScrapeJob>(token,"/jobs",{...preview.input,fingerprint:preview.fingerprint,confirm,confirmOldExecutorsStopped,confirmOverwrite});if(!libraryJobValid(job) || job.mode!==preview.input.mode || job.total!==preview.total)throw new ApiError("任务提交回执未核实，请只读刷新",503);return job;
 }
 export async function getLibraryScrapeJob(token:string,id:string,page=1,outputPage=1):Promise<LibraryScrapeDetail>{
   if(!libraryHash(id) || !Number.isSafeInteger(page) || page<1 || !Number.isSafeInteger(outputPage) || outputPage<1)throw new ApiError("无效任务或页码",400);
   const d=await libraryRequest<LibraryScrapeDetail>(token,`/jobs/${id}?${new URLSearchParams({page:String(page),outputPage:String(outputPage)})}`);
-  if(!libraryJobValid(d.job) || d.job.id!==id || !Array.isArray(d.items) || !d.items.every(i=>typeof i.path==="string" && typeof i.state==="string" && typeof i.reason==="string" && Number.isSafeInteger(i.ordinal)) || !Array.isArray(d.outputs) || !d.outputs.every(o=>libraryOutputValid(o) && o.jobId===id) || d.page!==page || d.outputPage!==outputPage)throw new ApiError("任务详情未核实",503);return d;
+  if(!libraryJobValid(d.job) || d.job.id!==id || !Array.isArray(d.items) || !d.items.every(libraryItemValid) || !Array.isArray(d.outputs) || !d.outputs.every(o=>libraryOutputValid(o) && o.jobId===id) || d.page!==page || d.outputPage!==outputPage)throw new ApiError("任务详情未核实",503);return d;
 }
 export async function cancelLibraryScrape(token:string,id:string,confirm=false):Promise<LibraryScrapeDetail>{
   if(!confirm || !libraryHash(id))throw new ApiError("请明确确认停止后续写入",400);
-  const d=await libraryRequest<LibraryScrapeDetail>(token,`/jobs/${id}/cancel`,{confirm});if(!libraryJobValid(d.job) || d.job.id!==id || d.job.state!=="cancelled" || !Array.isArray(d.items) || !Array.isArray(d.outputs) || !d.outputs.every(o=>libraryOutputValid(o) && o.jobId===id))throw new ApiError("停止回执未核实，请只读刷新",503);return d;
+  const d=await libraryRequest<LibraryScrapeDetail>(token,`/jobs/${id}/cancel`,{confirm});if(!libraryJobValid(d.job) || d.job.id!==id || d.job.state!=="cancelled" || !Array.isArray(d.items) || !d.items.every(libraryItemValid) || !Array.isArray(d.outputs) || !d.outputs.every(o=>libraryOutputValid(o) && o.jobId===id))throw new ApiError("停止回执未核实，请只读刷新",503);return d;
 }
 export async function reviewLibraryScrapeOutput(token:string,id:string):Promise<LibraryScrapeRecovery>{
   if(!libraryHash(id))throw new ApiError("无效输出回执",400);

@@ -607,17 +607,17 @@ func TestDiscAbandonIntentRecoveryHandlesOnlyMissingKnownLeaves(t *testing.T) {
 		})
 	}
 }
-func TestDiscStreamClipsAreNotStandaloneLibraryScraperMovies(t *testing.T) {
+func TestDiscStreamClipsAreOneReadonlyLibraryDisc(t *testing.T) {
 	d, e, _ := discFixture(t, "copy")
 	info, _ := os.Stat(d.SourceRoot)
 	library := LibraryDefinition{Root: LibraryRoot{ID: "test", Path: d.SourceRoot, Identity: Identity(info), Kind: "movie"}, Selection: e.Source, Mode: "no_force"}
 	scan, err := ScanLibrary(t.Context(), library)
-	if err != nil || len(scan.Files) != 2 {
+	if err != nil || len(scan.Files) != 1 || scan.Files[0].Disc == nil {
 		t.Fatal(scan, err)
 	}
 	for _, m := range scan.Files {
-		if m.Blocked == "" || VerifyLibraryMedia(t.Context(), library, m) == nil {
-			t.Fatal("STREAM clip considered a standalone movie", m)
+		if m.Path != e.Source || m.Blocked != "" || VerifyLibraryMedia(t.Context(), library, m) != nil {
+			t.Fatal("disc was not adopted as one readonly directory", m)
 		}
 	}
 }

@@ -22,15 +22,17 @@ type libraryScraper struct {
 	workers atomic.Int32
 }
 type libraryPlanInput struct {
-	RootID    string   `json:"rootId"`
-	Path      string   `json:"path"`
-	Mode      string   `json:"mode"`
-	Excludes  []string `json:"excludes"`
-	RequestID string   `json:"requestId"`
+	AllowDiscExpansion bool     `json:"allowDiscExpansion,omitempty"`
+	RootID             string   `json:"rootId"`
+	Path               string   `json:"path"`
+	Mode               string   `json:"mode"`
+	Excludes           []string `json:"excludes"`
+	RequestID          string   `json:"requestId"`
 }
 type libraryPreviewItem struct {
-	Path    string `json:"path"`
-	Blocked string `json:"blocked,omitempty"`
+	Disc    *organization.DiscInfo `json:"disc,omitempty"`
+	Path    string                 `json:"path"`
+	Blocked string                 `json:"blocked,omitempty"`
 }
 type libraryPreview struct {
 	Input       libraryPlanInput     `json:"input"`
@@ -98,7 +100,7 @@ func (api *libraryScraper) definition(ctx context.Context, input libraryPlanInpu
 	if err != nil {
 		return p, err
 	}
-	d := organization.LibraryDefinition{Selection: p.Input.Path, Mode: input.Mode, Excludes: p.Input.Excludes, Actor: actor, RequestID: input.RequestID, Allowed: []organization.LibraryRoot{}}
+	d := organization.LibraryDefinition{AllowDiscExpansion: input.AllowDiscExpansion, Selection: p.Input.Path, Mode: input.Mode, Excludes: p.Input.Excludes, Actor: actor, RequestID: input.RequestID, Allowed: []organization.LibraryRoot{}}
 	for _, root := range roots.Targets {
 		if root.ID == input.RootID && (root.Type == "MOV" || root.Type == "TV" || root.Type == "ANIME") {
 			d.Root, err = libraryRootSnapshot(root)
@@ -151,7 +153,7 @@ func (api *libraryScraper) plan(ctx context.Context, input libraryPlanInput, act
 			p.Blocked++
 		}
 		if len(p.Sample) < 200 {
-			p.Sample = append(p.Sample, libraryPreviewItem{m.Path, m.Blocked})
+			p.Sample = append(p.Sample, libraryPreviewItem{Path: m.Path, Blocked: m.Blocked, Disc: organization.LibraryDiscSummary(m)})
 		}
 	}
 	p.definition, p.files = d, scan.Files

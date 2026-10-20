@@ -27,6 +27,7 @@ type LibraryJob struct {
 	Definition LibraryDefinition `json:"-"`
 }
 type LibraryItem struct {
+	Disc    *DiscInfo    `json:"disc,omitempty"`
 	Ordinal int          `json:"ordinal"`
 	Path    string       `json:"path"`
 	State   string       `json:"state"`
@@ -119,10 +120,20 @@ func createLibraryJob(ctx context.Context, tx *sql.Tx, fingerprint string, d Lib
 		return "", err
 	}
 	defer stmt.Close()
+	worklistBytes := 0
 	for i, m := range files {
-		data, err := json.Marshal(m)
-		if err != nil || len(data) > 64<<10 {
-			return "", ErrState
+		if m.Disc != nil {
+			if err := libraryDiscDefinition(d, m); err != nil {
+				return "", err
+			}
+		}
+		data, err := libraryMediaDocument(m)
+		if err != nil {
+			return "", err
+		}
+		worklistBytes += len(data)
+		if worklistBytes > LibraryWorklistBytes {
+			return "", ErrLimit
 		}
 		if _, err := stmt.ExecContext(ctx, id, i, m.Path, string(data)); err != nil {
 			return "", err
@@ -236,9 +247,20 @@ func (s *Store) LibraryItems(ctx context.Context, id string, page int) ([]Librar
 		if err := rows.Scan(&r.Ordinal, &r.Path, &raw, &r.State, &r.Reason); err != nil {
 			return nil, err
 		}
-		if json.Unmarshal([]byte(raw), &r.Media) != nil {
+		if len(raw) > libraryDiscDocument || json.Unmarshal([]byte(raw), &r.Media) != nil {
 			return nil, ErrState
 		}
+		if r.Media.Path != r.Path {
+			return nil, ErrState
+		}
+		if r.Media.Disc != nil {
+			if err := libraryDiscInventory(r.Media); err != nil {
+				return nil, err
+			}
+		} else if len(raw) > 64<<10 {
+			return nil, ErrLimit
+		}
+		r.Disc = LibraryDiscSummary(r.Media)
 		result = append(result, r)
 	}
 	return result, rows.Err()

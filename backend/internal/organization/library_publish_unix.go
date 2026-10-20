@@ -20,7 +20,24 @@ func LibraryTarget(d LibraryDefinition, m LibraryMedia, scope, name string) (str
 	if d.Root.Kind != "movie" {
 		kind = "电视剧"
 	}
-	return sidecarTarget(JobItem{Entry: Entry{Target: m.Path, Kind: "media", MediaType: kind}}, scope, name)
+	entry := Entry{Target: m.Path, Kind: "media", MediaType: kind}
+	if m.Disc != nil {
+		entry.Disc = &DiscInfo{}
+		if m.Path == "." {
+			// A configured root can itself be a disc. Its movie metadata stays
+			// inside that root; never invent a writable show parent outside it.
+			if scope != "media" {
+				return "", ErrPath
+			}
+			entry.Target = LibraryDiscStem(d, m)
+			target, err := sidecarTarget(JobItem{Entry: entry}, scope, name)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Base(target), nil
+		}
+	}
+	return sidecarTarget(JobItem{Entry: entry}, scope, name)
 }
 func libraryHash(ctx context.Context, parent *os.File, name string) (LibraryNode, string, error) {
 	before, kind, err := libraryNode(parent, name)
@@ -48,6 +65,39 @@ func libraryHash(ctx context.Context, parent *os.File, name string) (LibraryNode
 		return before, "", ErrState
 	}
 	return before, hash, nil
+}
+
+func libraryLinkHash(parent *os.File, name, expected string) (LibraryNode, string, error) {
+	before, kind, err := libraryNode(parent, name)
+	if err != nil || kind != unix.S_IFLNK {
+		return before, "", ErrState
+	}
+	link, err := readLinkAt(parent, name)
+	if err != nil || link != expected {
+		return before, "", ErrState
+	}
+	after, _, err := libraryNode(parent, name)
+	if err != nil || before != after {
+		return before, "", ErrState
+	}
+	sum := sha256.Sum256([]byte(link))
+	return before, hex.EncodeToString(sum[:]), nil
+}
+func libraryOldHash(ctx context.Context, parent *os.File, name string, p LibraryOutputProof) (LibraryNode, string, error) {
+	if p.OldLink != "" {
+		return libraryLinkHash(parent, name, p.OldLink)
+	}
+	return libraryHash(ctx, parent, name)
+}
+
+// Recovery can observe the new regular file or the original symlink. Never
+// follow that link; the exact inode and old/new digest must still match.
+func libraryRecoveryHash(ctx context.Context, parent *os.File, name string, p LibraryOutputProof) (LibraryNode, string, error) {
+	node, hash, err := libraryHash(ctx, parent, name)
+	if err != nil && p.OldLink != "" {
+		return libraryLinkHash(parent, name, p.OldLink)
+	}
+	return node, hash, err
 }
 func libraryOpenStage(parent *os.File, p LibraryOutputProof) (*os.File, error) {
 	if !strings.HasPrefix(p.Stage, ".nastool-library-") || filepath.Base(p.Stage) != p.Stage {
@@ -126,11 +176,17 @@ func PublishLibrarySidecar(ctx context.Context, d LibraryDefinition, m LibraryMe
 			return proof, state, e
 		}
 	}
-	if _, _, e := libraryNode(parent, leaf); e == nil {
+	if _, kind, e := libraryNode(parent, leaf); e == nil {
 		if !overwrite {
 			return proof, "preserved", nil
 		}
-		proof.Old, proof.OldDigest, err = libraryHash(ctx, parent, leaf)
+		if kind == unix.S_IFLNK && m.Disc != nil {
+			proof.OldLink, err = readLinkAt(parent, leaf)
+			if err != nil || proof.OldLink == "" {
+				return proof, state, ErrState
+			}
+		}
+		proof.Old, proof.OldDigest, err = libraryOldHash(ctx, parent, leaf, proof)
 		if err != nil {
 			return proof, state, err
 		}
@@ -237,7 +293,7 @@ func PublishLibrarySidecar(ctx context.Context, d LibraryDefinition, m LibraryMe
 		return proof, state, ErrState
 	}
 	if proof.Old.Identity != "" {
-		node, hash, err := libraryHash(ctx, parent, leaf)
+		node, hash, err := libraryOldHash(ctx, parent, leaf, proof)
 		if err != nil || node != proof.Old || hash != proof.OldDigest {
 			return proof, state, ErrState
 		}
@@ -287,7 +343,7 @@ func PublishLibrarySidecar(ctx context.Context, d LibraryDefinition, m LibraryMe
 		return proof, state, ErrState
 	}
 	if proof.Old.Identity != "" {
-		old, hash, err := libraryHash(ctx, stage, "payload")
+		old, hash, err := libraryOldHash(ctx, stage, "payload", proof)
 		if err != nil || old.Identity != proof.Old.Identity || hash != proof.OldDigest {
 			return proof, state, ErrState
 		}
@@ -319,11 +375,11 @@ func RestoreLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOu
 		return "uncertain", err
 	}
 	defer stage.Close()
-	current, hash, err := libraryHash(ctx, parent, leaf)
+	current, hash, err := libraryRecoveryHash(ctx, parent, leaf, p)
 	if err != nil {
 		return "uncertain", err
 	}
-	backup, backupHash, err := libraryHash(ctx, stage, "payload")
+	backup, backupHash, err := libraryRecoveryHash(ctx, stage, "payload", p)
 	if err != nil {
 		return "uncertain", err
 	}
@@ -349,7 +405,7 @@ func RestoreLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOu
 		return "uncertain", err
 	}
 	current, hash, err = libraryHash(ctx, parent, leaf)
-	backup, backupHash, backupErr := libraryHash(ctx, stage, "payload")
+	backup, backupHash, backupErr := libraryOldHash(ctx, stage, "payload", p)
 	if err != nil || backupErr != nil || current.Identity != p.NewIdentity || hash != p.NewDigest || backup.Identity != p.Old.Identity || backupHash != p.OldDigest {
 		return "uncertain", ErrState
 	}
@@ -362,7 +418,7 @@ func RestoreLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOu
 	if err := parent.Sync(); err != nil {
 		return "uncertain", err
 	}
-	actual, hash, err := libraryHash(ctx, parent, leaf)
+	actual, hash, err := libraryOldHash(ctx, parent, leaf, p)
 	if err != nil || actual.Identity != p.Old.Identity || hash != p.OldDigest {
 		return "uncertain", ErrState
 	}
@@ -433,7 +489,7 @@ func ObserveLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOu
 			return "uncertain", err
 		}
 		defer stage.Close()
-		old, oldHash, err := libraryHash(ctx, stage, "payload")
+		old, oldHash, err := libraryOldHash(ctx, stage, "payload", p)
 		if err == nil && old.Identity == p.Old.Identity && oldHash == p.OldDigest {
 			if err := libraryProofCurrent(d, p); err != nil {
 				return "uncertain", err
@@ -442,7 +498,8 @@ func ObserveLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOu
 		}
 		return "uncertain", ErrState
 	}
-	unchanged := p.Old.Identity != "" && e == nil && current == p.Old && hash == p.OldDigest || p.Old.Identity == "" && errors.Is(e, unix.ENOENT)
+	old, oldHash, oldErr := libraryOldHash(ctx, parent, leaf, p)
+	unchanged := p.Old.Identity != "" && oldErr == nil && old == p.Old && oldHash == p.OldDigest || p.Old.Identity == "" && errors.Is(e, unix.ENOENT)
 	if !unchanged {
 		return "uncertain", ErrState
 	}

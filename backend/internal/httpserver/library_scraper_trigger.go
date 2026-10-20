@@ -12,6 +12,7 @@ import (
 )
 
 type libraryTriggerInput struct {
+	AllowDiscExpansion         bool   `json:"allowDiscExpansion,omitempty"`
 	Path                       string `json:"path"`
 	Force                      bool   `json:"force"`
 	Review                     bool   `json:"review"`
@@ -121,7 +122,7 @@ func (api *libraryScraper) trigger(w http.ResponseWriter, r *http.Request, in li
 	if in.Force {
 		mode = "force_all"
 	}
-	p, err := api.plan(ctx, libraryPlanInput{RootID: rootID, Path: relative, Mode: mode, Excludes: []string{}, RequestID: in.RequestID}, claims.Username)
+	p, err := api.plan(ctx, libraryPlanInput{AllowDiscExpansion: in.AllowDiscExpansion, RootID: rootID, Path: relative, Mode: mode, Excludes: []string{}, RequestID: in.RequestID}, claims.Username)
 	if err != nil {
 		writeOrganizationError(w, err)
 		return

@@ -48,6 +48,18 @@ func (s *Store) LibraryPluginMutation(ctx context.Context, expected, changes map
 			return ErrState
 		}
 	}
+	count, snapshotBytes := 0, 0
+	for _, p := range plans {
+		n, err := LibraryInventoryBytes(p.Files)
+		if err != nil {
+			return err
+		}
+		count += len(p.Files)
+		snapshotBytes += n
+		if count > 50_000 || snapshotBytes > LibraryWorklistBytes {
+			return ErrLimit
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
