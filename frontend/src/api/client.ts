@@ -4,6 +4,55 @@ export type UserInfo = {
   userpris: string[];
 };
 
+export type LibraryScrapeInput = { rootId: string; path: string; mode: "no_force" | "force_nfo" | "force_all"; excludes: string[]; requestId?: string };
+export type LibraryScrapePreview = { input: LibraryScrapeInput & { requestId: string }; fingerprint: string; total: number; skipped: number; blocked: number; sample: { path: string; blocked?: string }[] };
+export type LibraryScrapeJob = { id: string; state: string; mode: string; rootId?: string; path?: string; created: string; updated: string; reason: string; total: number; done: number; blocked: number };
+export type LibraryScrapeOutput = { id: string; jobId: string; target: string; state: string; reason: string };
+export type LibraryScrapeStatus = { roots: OrganizationRoot[]; jobs: LibraryScrapeJob[] };
+export type LibraryScrapeDetail = { job: LibraryScrapeJob; items: { ordinal: number; path: string; state: string; reason: string }[]; outputs: LibraryScrapeOutput[]; page: number; outputPage: number };
+export type LibraryScrapeRecovery = { output: LibraryScrapeOutput; evidence: string; fingerprint: string; canRestore: boolean; canReconcile: boolean };
+const libraryScrapeBase = "/api/v1/organization/library-scraper";
+const libraryHash = (s: unknown): s is string => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
+const libraryJobValid = (s: unknown): s is LibraryScrapeJob => {
+  const j = s as LibraryScrapeJob | null;
+  return !!j && libraryHash(j.id) && ["ready","running","completed","partial","needs_review","cancelled"].includes(j.state) && ["no_force","force_nfo","force_all"].includes(j.mode) && [j.total,j.done,j.blocked].every((v)=>Number.isSafeInteger(v) && v>=0) && j.done+j.blocked<=j.total;
+};
+const libraryOutputValid = (s: unknown): s is LibraryScrapeOutput => { const o=s as LibraryScrapeOutput | null;return !!o && libraryHash(o.id) && libraryHash(o.jobId) && typeof o.target==="string" && typeof o.state==="string" && typeof o.reason==="string"; };
+async function libraryRequest<T>(token:string,path:string,body?:unknown):Promise<T> {
+  const result=await readResponse<T>(await fetch(libraryScrapeBase+path,body===undefined ? {headers:{Authorization:token}} : {method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify(body)}));
+  if(!result.success || result.code!==0 || result.data==null)throw new ApiError(result.message || "媒体库刮削未核实，请只读刷新，不要重发",result.code);
+  return result.data;
+}
+export async function getLibraryScraper(token:string):Promise<LibraryScrapeStatus>{
+  const s=await libraryRequest<LibraryScrapeStatus>(token,"");
+  if(!Array.isArray(s.roots) || !s.roots.every((r)=>typeof r.id==="string" && typeof r.path==="string" && typeof r.label==="string") || !Array.isArray(s.jobs) || !s.jobs.every(libraryJobValid))throw new ApiError("媒体库任务响应不完整",503);return s;
+}
+export async function previewLibraryScrape(token:string,input:LibraryScrapeInput):Promise<LibraryScrapePreview>{
+  const p=await libraryRequest<LibraryScrapePreview>(token,"/preview",input);
+  if(!libraryHash(p.fingerprint) || !/^[a-f0-9]{32}$/.test(p.input?.requestId) || !Number.isSafeInteger(p.total) || p.total<0 || !Array.isArray(p.sample))throw new ApiError("媒体库范围审核不完整",503);return p;
+}
+export async function createLibraryScrape(token:string,preview:LibraryScrapePreview,confirm=false,confirmOldExecutorsStopped=false,confirmOverwrite=false):Promise<LibraryScrapeJob>{
+  if(!confirm || !confirmOldExecutorsStopped || preview.input.mode!=="no_force" && !confirmOverwrite || !libraryHash(preview.fingerprint) || !/^[a-f0-9]{32}$/.test(preview.input.requestId))throw new ApiError("请先审核范围、停止旧执行器并独立确认覆盖",400);
+  const job=await libraryRequest<LibraryScrapeJob>(token,"/jobs",{...preview.input,fingerprint:preview.fingerprint,confirm,confirmOldExecutorsStopped,confirmOverwrite});if(!libraryJobValid(job) || job.mode!==preview.input.mode || job.total!==preview.total)throw new ApiError("任务提交回执未核实，请只读刷新",503);return job;
+}
+export async function getLibraryScrapeJob(token:string,id:string,page=1,outputPage=1):Promise<LibraryScrapeDetail>{
+  if(!libraryHash(id) || !Number.isSafeInteger(page) || page<1 || !Number.isSafeInteger(outputPage) || outputPage<1)throw new ApiError("无效任务或页码",400);
+  const d=await libraryRequest<LibraryScrapeDetail>(token,`/jobs/${id}?${new URLSearchParams({page:String(page),outputPage:String(outputPage)})}`);
+  if(!libraryJobValid(d.job) || d.job.id!==id || !Array.isArray(d.items) || !d.items.every(i=>typeof i.path==="string" && typeof i.state==="string" && typeof i.reason==="string" && Number.isSafeInteger(i.ordinal)) || !Array.isArray(d.outputs) || !d.outputs.every(o=>libraryOutputValid(o) && o.jobId===id) || d.page!==page || d.outputPage!==outputPage)throw new ApiError("任务详情未核实",503);return d;
+}
+export async function cancelLibraryScrape(token:string,id:string,confirm=false):Promise<LibraryScrapeDetail>{
+  if(!confirm || !libraryHash(id))throw new ApiError("请明确确认停止后续写入",400);
+  const d=await libraryRequest<LibraryScrapeDetail>(token,`/jobs/${id}/cancel`,{confirm});if(!libraryJobValid(d.job) || d.job.id!==id || d.job.state!=="cancelled" || !Array.isArray(d.items) || !Array.isArray(d.outputs) || !d.outputs.every(o=>libraryOutputValid(o) && o.jobId===id))throw new ApiError("停止回执未核实，请只读刷新",503);return d;
+}
+export async function reviewLibraryScrapeOutput(token:string,id:string):Promise<LibraryScrapeRecovery>{
+  if(!libraryHash(id))throw new ApiError("无效输出回执",400);
+  const d=await libraryRequest<LibraryScrapeRecovery>(token,`/outputs/${id}`);if(!libraryHash(d.fingerprint) || !libraryOutputValid(d.output) || d.output.id!==id || typeof d.canRestore!=="boolean" || typeof d.canReconcile!=="boolean" || typeof d.evidence!=="string")throw new ApiError("恢复证据未核实",503);return d;
+}
+export async function recoverLibraryScrapeOutput(token:string,review:LibraryScrapeRecovery,action:"reconcile"|"restore",confirm=false,confirmOldExecutorsStopped=false):Promise<LibraryScrapeOutput>{
+  if(!confirm || !confirmOldExecutorsStopped || !libraryHash(review.fingerprint) || !libraryOutputValid(review.output) || action==="restore" && !review.canRestore || action==="reconcile" && !review.canReconcile || !["restore","reconcile"].includes(action))throw new ApiError("请重新核查当前证据并明确确认本次动作",400);
+  const o=await libraryRequest<LibraryScrapeOutput>(token,`/outputs/${review.output.id}/${action}`,{fingerprint:review.fingerprint,confirm,confirmOldExecutorsStopped});if(!libraryOutputValid(o) || o.id!==review.output.id || o.jobId!==review.output.jobId || o.target!==review.output.target || o.state!==(action==="restore"?"restored":review.evidence))throw new ApiError("恢复回执未核实，请只读刷新",503);return o;
+}
+
 export type ScraperOptions = { scraper_nfo: Record<string, Record<string, boolean>>; scraper_pic: Record<string, Record<string, boolean>> };
 export type ScraperReceipt = { id: string; jobId: string; ordinal: number; name: string; state: string; reason?: string; updated: string; results: { name: string; state: string; reason?: string }[] };
 export type ScraperStatus = { enabled: boolean; options: ScraperOptions; fields: ScraperOptions; fingerprint: string; warnings: string[]; receipts: ScraperReceipt[] };

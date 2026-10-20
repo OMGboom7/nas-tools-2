@@ -74,6 +74,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
 		waitSubtitles := startSubtitleWorker(workerContext, runner.subtitles)
 		waitScraper := startIntakeScraper(workerContext, runner.scraper)
+		waitLibrary := startLibraryScraper(workerContext, runner.library)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -83,6 +84,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitIndexers()
 			waitSubtitles()
 			waitScraper()
+			waitLibrary()
 		}
 	}
 	return handler, wait, nil
@@ -510,6 +512,15 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
 	nativeScraper := &intakeScraper{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	rssRunner.scraper = nativeScraper
+	nativeLibrary := &libraryScraper{intake: nativeScraper}
+	rssRunner.library = nativeLibrary
+	mux.HandleFunc("GET /api/v1/organization/library-scraper", nativeLibrary.serveStatus)
+	mux.HandleFunc("POST /api/v1/organization/library-scraper/preview", nativeLibrary.servePreview)
+	mux.HandleFunc("POST /api/v1/organization/library-scraper/jobs", nativeLibrary.serveCreate)
+	mux.HandleFunc("GET /api/v1/organization/library-scraper/jobs/{id}", nativeLibrary.serveJob)
+	mux.HandleFunc("POST /api/v1/organization/library-scraper/jobs/{id}/cancel", nativeLibrary.serveCancel)
+	mux.HandleFunc("GET /api/v1/organization/library-scraper/outputs/{output}", nativeLibrary.serveOutput)
+	mux.HandleFunc("POST /api/v1/organization/library-scraper/outputs/{output}/{action}", nativeLibrary.serveOutput)
 	mux.HandleFunc("GET /api/v1/organization/scraper", nativeScraper.serveStatus)
 	mux.HandleFunc("PUT /api/v1/organization/scraper/options", nativeScraper.saveOptions)
 	mux.HandleFunc("PUT /api/v1/organization/scraper/enabled", nativeScraper.setEnabled)
