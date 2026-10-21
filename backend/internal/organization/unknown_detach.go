@@ -115,7 +115,7 @@ func (s *Store) DetachUnknown(ctx context.Context, job Job, fingerprint, actor, 
 			rows.Close()
 			return err
 		}
-		if json.Unmarshal([]byte(encoded), &proof) != nil || proof.Incomplete || proof.Identity == "" || len(proof.Digest) != 64 || proof.ParentIdentity == "" || proof.StagingIdentity == "" || definition.Mode == "move" && (proof.SourceHold == "" || proof.SourceHoldIdentity == "" || proof.SourceParentIdentity == "") {
+		if json.Unmarshal([]byte(encoded), &proof) != nil || proof.Incomplete || proof.Identity == "" || len(proof.Digest) != 64 || proof.ParentIdentity == "" || proof.StagingIdentity == "" || MoveMode(definition.Mode) && (proof.SourceHold == "" || proof.SourceHoldIdentity == "" || proof.SourceParentIdentity == "") {
 			rows.Close()
 			return ErrState
 		}

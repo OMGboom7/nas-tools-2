@@ -137,6 +137,38 @@ func (api organizationAPI) remoteContext(ctx context.Context, job organization.J
 	return organization.RemoteContext(ctx, c, job.Definition), func() { _ = c.Close(); guard.Close() }, nil
 }
 
+func (api organizationAPI) resolveUnknown(ctx context.Context, job organization.Job) error {
+	if job.Definition.Unknown == nil || job.Definition.Remote == nil {
+		return api.jobs.ResolveUnknown(ctx, job)
+	}
+	current, err := api.jobs.Get(ctx, job.ID)
+	if err != nil {
+		return err
+	}
+	if current.UnknownState == "resolved" || current.UnknownState == "preserved" || current.UnknownState == "detached" {
+		return nil
+	}
+	for _, item := range current.Items {
+		if item.State != "completed" || item.Reason != "" {
+			return nil
+		}
+	}
+	ctx, closeRemote, err := api.remoteContext(ctx, current)
+	if err != nil {
+		return err
+	}
+	defer closeRemote()
+	return api.jobs.ResolveUnknown(ctx, current)
+}
+
+func (api *organizationAPI) approveLegacyRemote(actor, origin string, exclusive, recovery, stopped bool) error {
+	if actor == "" || !exclusive || !recovery || !stopped || !api.pureGo || !api.rclone.Available() {
+		return organization.ErrState
+	}
+	api.remoteApproval = organization.RemoteApproval{Actor: actor, Origin: origin, Created: time.Now().UTC().Format(time.RFC3339Nano), Exclusive: true, RecoveryCopy: true}
+	return nil
+}
+
 // Explicit requests or independently authorized monitor leases only. A lost
 // running/staging receipt is never re-uploaded; publication recovery uses the
 // retained, fully hashed private remote copy.

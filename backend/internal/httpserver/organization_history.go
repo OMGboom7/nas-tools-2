@@ -28,7 +28,7 @@ type organizationHistoryItem struct {
 	Reason      string `json:"reason,omitempty"`
 }
 
-func projectHistory(record organization.HistoryRecord, roots organizationRoots) organizationHistoryItem {
+func projectHistory(record organization.HistoryRecord, roots organizationRoots, modes ...string) organizationHistoryItem {
 	item := organizationHistoryItem{HistoryRecord: record, IDText: strconv.FormatInt(record.ID, 10), Fingerprint: organization.Digest(record)}
 	if record.SourceFilename == "" || filepath.Base(record.SourceFilename) != record.SourceFilename || record.SourceFilename == "." || record.SourceFilename == ".." || strings.ContainsAny(record.SourceFilename, "\\\x00\r\n") {
 		item.Reason = "旧记录没有可核验的源文件名，保留原历史"
@@ -47,13 +47,19 @@ func projectHistory(record organization.HistoryRecord, roots organizationRoots) 
 			expanded.Sources = append(expanded.Sources, source)
 		}
 	}
-	for _, target := range roots.Targets {
-		if canonical, err := filepath.EvalSymlinks(target.Path); err == nil && canonical != target.Path {
-			target.Path = canonical
-			expanded.Targets = append(expanded.Targets, target)
+	mode := transferModes[record.Mode]
+	if len(modes) != 0 {
+		mode = modes[0]
+	}
+	if !organization.RemoteMode(mode) {
+		for _, target := range roots.Targets {
+			if canonical, err := filepath.EvalSymlinks(target.Path); err == nil && canonical != target.Path {
+				target.Path = canonical
+				expanded.Targets = append(expanded.Targets, target)
+			}
 		}
 	}
-	projection := projectUnknown(organization.UnknownRecord{ID: record.ID, Path: filepath.Join(record.SourcePath, record.SourceFilename), Dest: record.Dest, Mode: record.Mode, State: "N"}, expanded)
+	projection := projectUnknown(organization.UnknownRecord{ID: record.ID, Path: filepath.Join(record.SourcePath, record.SourceFilename), Dest: record.Dest, Mode: record.Mode, State: "N"}, expanded, mode)
 	item.SourceID, item.TargetID, item.Relative, item.NativeMode, item.Reason = projection.SourceID, projection.TargetID, projection.Relative, projection.NativeMode, projection.Reason
 	return item
 }
@@ -63,6 +69,15 @@ func historyPathMatches(root, relative, path string) bool {
 	}
 	canonical, err := filepath.EvalSymlinks(root)
 	return err == nil && filepath.Join(canonical, relative) == path
+}
+
+// A cloud root is a logical namespace, never a same-named local directory or
+// a local symlink alias. Sources continue to use historyPathMatches separately.
+func organizationTargetMatches(root, relative, path, mode string) bool {
+	if organization.RemoteMode(mode) {
+		return filepath.Join(root, relative) == path
+	}
+	return historyPathMatches(root, relative, path)
 }
 func (api organizationAPI) serveHistoryRecords(w http.ResponseWriter, r *http.Request) {
 	if !api.authorize(w, r) {
@@ -158,7 +173,7 @@ func (api organizationAPI) bindHistory(ctx context.Context, input organizationPl
 	if input.LegacyRename != nil {
 		projected.Mode = ""
 	}
-	projection := projectHistory(projected, roots)
+	projection := projectHistory(projected, roots, input.Mode)
 	if projection.Reason != "" {
 		return nil, &recognitionFailure{422, "historical source, destination or mode is not supported"}
 	}
@@ -177,7 +192,7 @@ func (api organizationAPI) bindHistory(ctx context.Context, input organizationPl
 	}
 	matched = false
 	for _, target := range roots.Targets {
-		if target.ID == input.TargetID && (record.Dest == "" || historyPathMatches(target.Path, ".", record.Dest)) {
+		if target.ID == input.TargetID && (record.Dest == "" || organizationTargetMatches(target.Path, ".", record.Dest, input.Mode)) {
 			matched = true
 		}
 	}

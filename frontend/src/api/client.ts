@@ -1618,11 +1618,51 @@ export async function createDirectSync(token: string, id: string, path: string, 
   if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "同步任务保存未能核实；请只刷新任务列表，不自动重试", result.code);
   return result.data;
 }
-export async function executeRecordRename(token: string, input: OrganizationRenameInput, reviewFingerprint: string, confirmed = false, confirmSourceRemoval = false): Promise<OrganizationRenameOutcome> {
-  if (!confirmed || !/^[a-f0-9]{64}$/.test(reviewFingerprint) || input.syncmod === "move" && !confirmSourceRemoval) throw new ApiError("须审核预览并明确确认；移动另需源移除授权", 400);
-  const response = await fetch("/api/v1/organization/unknown/rename", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, reviewFingerprint, confirmSourceRemoval }) });
+export async function executeRecordRename(token: string, input: OrganizationRenameInput, reviewFingerprint: string, confirmed = false, confirmSourceRemoval = false,remote?:RemoteOrganizationConsent): Promise<OrganizationRenameOutcome> {
+  return executeIdentification(token,input,reviewFingerprint,confirmed,confirmSourceRemoval,"rename",remote);
+}
+function identificationRemoteConsent(mode:string,remote?:RemoteOrganizationConsent){
+  if(!["rclone","rclonecopy","Rclone移动","Rclone复制"].includes(mode))return {};
+  if(!remote?.confirmRemoteExclusive || !remote.confirmRemoteRecoveryCopy || !remote.confirmOldExecutorsStopped)throw new ApiError("须独立确认远程独占／非原子发布、保留恢复副本及停止外部写入器",400);
+  return remote;
+}
+export type OrganizationCustomInput=Omit<OrganizationRenameInput,"logid"|"unknown_id"|"confirmParentScope"> & {inpath:string;outpath:string};
+export async function previewCustomIdentification(token:string,input:OrganizationCustomInput):Promise<OrganizationRenameReview>{
+  const result=await readResponse<OrganizationRenameReview>(await fetch("/api/v1/organization/unknown/renameudf/plan",{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify(input)}));
+  if(!result.success || result.code!==0 || !result.data?.plan?.fingerprint)throw new ApiError(result.message || "自定义识别预览失败",result.code);
+  return result.data;
+}
+export function executeCustomIdentification(token:string,input:OrganizationCustomInput,fingerprint:string,confirmed=false,sourceRemoval=false,remote?:RemoteOrganizationConsent){return executeIdentification(token,input,fingerprint,confirmed,sourceRemoval,"renameudf",remote);}
+async function executeIdentification(token:string,input:OrganizationRenameInput|OrganizationCustomInput,reviewFingerprint:string,confirmed:boolean,confirmSourceRemoval:boolean,action:"rename"|"renameudf",remote?:RemoteOrganizationConsent):Promise<OrganizationRenameOutcome>{
+  if (!confirmed || !/^[a-f0-9]{64}$/.test(reviewFingerprint) || ["move","rclone","移动","Rclone移动"].includes(input.syncmod) && !confirmSourceRemoval) throw new ApiError("须审核预览并明确确认；移动另需源移除授权", 400);
+  const consent=identificationRemoteConsent(input.syncmod,remote);
+  const response = await fetch(`/api/v1/organization/unknown/${action}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, reviewFingerprint, confirmSourceRemoval,...consent }) });
   let result: ApiResponse<OrganizationRenameOutcome>;
   try { result = await response.json() as ApiResponse<OrganizationRenameOutcome>; } catch { throw new OrganizationRenameError("响应无法核实；请只刷新任务列表，不能自动重试", response.status); }
   if (!response.ok || !result.success || result.code !== 0 || result.data?.state !== "completed" || !result.data.jobId) throw new OrganizationRenameError(result.message || "改名未完成；请核对已保存任务，不要重跑", result.code || response.status, result.data?.jobId);
   return result.data;
+}
+
+export type OrganizationRedoInput={flag:"unidentification"|"history";ids:string[]};
+export type OrganizationRedoReview={flag:OrganizationRedoInput["flag"];fingerprint:string;items:Array<{id:string;plan?:OrganizationPlan;sourceRoot?:string;targetRoot?:string;code:number;message?:string}>};
+export type OrganizationRedoResult={id:string;jobId?:string;state:string;code:number;message?:string};
+function validateRedoIDs(input:OrganizationRedoInput){
+  if(!["unidentification","history"].includes(input.flag) || !input.ids.length || input.ids.length>100 || new Set(input.ids).size!==input.ids.length || input.ids.some(id=>!(/^[1-9][0-9]{0,18}$/.test(id)) || BigInt(id)>9223372036854775807n))throw new ApiError("选择 1–100 个不重复、精确的正整数记录 ID",400);
+}
+export async function previewRecordRedo(token:string,input:OrganizationRedoInput):Promise<OrganizationRedoReview>{
+  validateRedoIDs(input);
+  const result=await readResponse<OrganizationRedoReview>(await fetch("/api/v1/organization/unknown/redo/plan",{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify(input)}));
+  if(!result.success || result.code!==0 || !result.data?.fingerprint || result.data.flag!==input.flag || JSON.stringify(result.data.items.map(item=>item.id))!==JSON.stringify(input.ids))throw new ApiError(result.message || "重新识别范围审核失败",result.code);
+  return result.data;
+}
+export async function executeRecordRedo(token:string,input:OrganizationRedoInput,review:OrganizationRedoReview,confirmed=false,sourceRemoval=false,remote?:RemoteOrganizationConsent):Promise<{success:boolean;message?:string;results:OrganizationRedoResult[]}>{
+  validateRedoIDs(input);
+  if(!confirmed || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.flag!==input.flag || JSON.stringify(review.items.map(item=>item.id))!==JSON.stringify(input.ids) || review.items.some(item=>organizationMovesSource(item.plan?.mode)) && !sourceRemoval)throw new ApiError("先审核同一批记录，移动需独立源移除授权",400);
+  const cloud=review.items.find(item=>item.plan?.remote);
+  const consent=cloud?identificationRemoteConsent(cloud.plan!.mode,remote):{};
+  const response=await fetch("/api/v1/organization/unknown/redo",{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify({...input,reviewFingerprint:review.fingerprint,confirmSourceRemoval:sourceRemoval,...consent})});
+  let result:ApiResponse<{results:OrganizationRedoResult[]}>;
+  try{result=await response.json();}catch{throw new ApiError("响应无法核实；只读刷新已保存任务，不自动重发",response.status);}
+  if(!response.ok || !result.data?.results || ![0,2].includes(result.code))throw new ApiError(result.message || "重新识别回执未核实，不重跑",result.code || response.status);
+  return {success:result.success,message:result.message,results:result.data.results};
 }

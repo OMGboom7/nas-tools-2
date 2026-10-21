@@ -51,6 +51,13 @@ func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
 			return nil
 		}
 	}
+	if currentJob.Definition.Remote != nil {
+		for _, item := range currentJob.Items {
+			if err := VerifyCompletedTarget(ctx, currentJob, item); err != nil {
+				return err
+			}
+		}
+	}
 	preserve := currentJob.Definition.LegacyRename != nil && currentJob.Definition.LegacyRename.PreserveUnknown
 	if !preserve {
 		if err = verifyUnknownScope(ctx, currentJob); err != nil {

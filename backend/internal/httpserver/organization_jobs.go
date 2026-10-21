@@ -331,7 +331,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	} else if action == "cancel" {
 		err = api.jobs.Cancel(ctx, job.ID)
 	} else if action == "reconcile-unknown" {
-		err = api.jobs.ResolveUnknown(ctx, job)
+		err = api.resolveUnknown(ctx, job)
 	} else if action == "detach-unknown" {
 		claims, authErr := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
 		if authErr != nil {
@@ -365,7 +365,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if err == nil && action != "cancel" && action != "abandon-unpublished" && action != "detach-unknown" && action != "restore-source" && action != "close-remote" {
-		err = api.jobs.ResolveUnknown(ctx, job)
+		err = api.resolveUnknown(ctx, job)
 	}
 	if err != nil {
 		writeOrganizationError(w, err)

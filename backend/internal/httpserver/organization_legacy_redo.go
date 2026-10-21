@@ -13,9 +13,13 @@ import (
 )
 
 type legacyRedoInput struct {
-	Flag                 string          `json:"flag"`
-	IDs                  json.RawMessage `json:"ids"`
-	ConfirmSourceRemoval bool            `json:"confirmSourceRemoval"`
+	Flag                       string          `json:"flag"`
+	IDs                        json.RawMessage `json:"ids"`
+	ConfirmSourceRemoval       bool            `json:"confirmSourceRemoval"`
+	ReviewFingerprint          string          `json:"reviewFingerprint,omitempty"`
+	ConfirmRemoteExclusive     bool            `json:"confirmRemoteExclusive,omitempty"`
+	ConfirmRemoteRecoveryCopy  bool            `json:"confirmRemoteRecoveryCopy,omitempty"`
+	ConfirmOldExecutorsStopped bool            `json:"confirmOldExecutorsStopped,omitempty"`
 }
 type legacyRedoResult struct {
 	ID      string `json:"id"`
@@ -23,6 +27,24 @@ type legacyRedoResult struct {
 	State   string `json:"state"`
 	Code    int    `json:"code"`
 	Message string `json:"message,omitempty"`
+}
+
+func (api organizationAPI) legacyRequestMode(mode string) (string, error) {
+	if mode != "" {
+		return mode, nil
+	}
+	snapshot, err := api.service.configStore.Snapshot()
+	if err != nil {
+		return "", err
+	}
+	mode = text(objectValue(snapshot["pt"])["rmt_mode"])
+	if mode == "" {
+		mode = "copy"
+	}
+	if named := transferModes[mode]; named != "" {
+		mode = named
+	}
+	return mode, nil
 }
 
 func legacyRedoFailure(err error, message string) *recognitionFailure {
@@ -56,7 +78,7 @@ func decodeLegacyRedo(w http.ResponseWriter, r *http.Request) (legacyRedoInput, 
 			return input, false
 		}
 		for key := range r.PostForm {
-			if key != "flag" && key != "ids" && key != "confirmSourceRemoval" {
+			if key != "flag" && key != "ids" && key != "confirmSourceRemoval" && key != "reviewFingerprint" && key != "confirmRemoteExclusive" && key != "confirmRemoteRecoveryCopy" && key != "confirmOldExecutorsStopped" {
 				writeAPIError(w, 400, 400, "unsupported legacy re-identification field")
 				return input, false
 			}
@@ -66,6 +88,22 @@ func decodeLegacyRedo(w http.ResponseWriter, r *http.Request) (legacyRedoInput, 
 			return input, false
 		}
 		input.Flag = r.PostForm.Get("flag")
+		input.ReviewFingerprint = r.PostForm.Get("reviewFingerprint")
+		for _, key := range []string{"reviewFingerprint", "confirmRemoteExclusive", "confirmRemoteRecoveryCopy", "confirmOldExecutorsStopped"} {
+			if len(r.PostForm[key]) > 1 {
+				writeAPIError(w, 400, 400, "duplicate remote consent or reviewed fingerprint")
+				return input, false
+			}
+		}
+		for key, dest := range map[string]*bool{"confirmRemoteExclusive": &input.ConfirmRemoteExclusive, "confirmRemoteRecoveryCopy": &input.ConfirmRemoteRecoveryCopy, "confirmOldExecutorsStopped": &input.ConfirmOldExecutorsStopped} {
+			if value := r.PostForm.Get(key); value != "" {
+				if value != "true" && value != "false" {
+					writeAPIError(w, 400, 400, "invalid remote consent")
+					return input, false
+				}
+				*dest = value == "true"
+			}
+		}
 		ids := r.PostForm["ids"]
 		if len(ids) == 1 && len(ids[0]) > 0 && ids[0][0] == '[' {
 			input.IDs = json.RawMessage(ids[0])
@@ -102,7 +140,13 @@ func (api organizationAPI) legacyRedoPlan(ctx context.Context, kind string, id i
 		return fail(503, "configured organization directories are unavailable")
 	}
 	input := organizationPlanInput{AllowProcessedUnknown: kind == "unidentification"}
-	var dest, storedMode string
+	var dest string
+	modeFor := func(stored string) (string, error) {
+		if stored != "" {
+			return transferModes[stored], nil
+		}
+		return api.legacyRequestMode("")
+	}
 	if kind == "unidentification" {
 		record, err := api.jobs.GetUnknown(ctx, id)
 		if err != nil {
@@ -111,45 +155,42 @@ func (api organizationAPI) legacyRedoPlan(ctx context.Context, kind string, id i
 		if record.State != "N" && record.State != "Y" {
 			return fail(422, "unknown record has no supported state")
 		}
-		projection := projectUnknown(record, roots)
+		input.Mode, err = modeFor(record.Mode)
+		if err != nil {
+			return fail(503, "organization configuration unavailable")
+		}
+		projection := projectUnknown(record, roots, input.Mode)
 		if projection.Reason != "" {
 			return fail(422, "unknown source, destination or mode is outside supported configured scope")
 		}
 		input.SourceID, input.Path = projection.SourceID, projection.Relative
 		input.UnknownRecord = &organizationUnknownSelector{ID: id, Fingerprint: organization.Digest(record)}
-		dest, storedMode = record.Dest, record.Mode
+		dest = record.Dest
 	} else {
 		record, err := api.jobs.GetHistory(ctx, id)
 		if err != nil {
 			return fail(409, "historical record unavailable; inspect its saved state")
 		}
-		projection := projectHistory(record, roots)
+		input.Mode, err = modeFor(record.Mode)
+		if err != nil {
+			return fail(503, "organization configuration unavailable")
+		}
+		projection := projectHistory(record, roots, input.Mode)
 		if projection.Reason != "" {
 			return fail(422, "historical original source, destination or mode is outside supported configured scope")
 		}
 		input.SourceID, input.Path = projection.SourceID, projection.Relative
 		input.HistoryRecord = &organizationHistorySelector{ID: id, Fingerprint: organization.Digest(record)}
-		dest, storedMode = record.Dest, record.Mode
+		dest = record.Dest
 	}
-	input.Mode = transferModes[storedMode]
 	input.LegacyTargetOverride = dest != ""
-	if storedMode == "" {
-		snapshot, err := api.service.configStore.Snapshot()
-		if err != nil {
-			return fail(503, "organization configuration unavailable")
-		}
-		input.Mode = text(objectValue(snapshot["pt"])["rmt_mode"])
-		if input.Mode == "" {
-			input.Mode = "copy"
-		}
-	}
-	if !organization.SupportedMode(input.Mode) || organization.RemoteMode(input.Mode) {
+	if !organization.SupportedMode(input.Mode) {
 		return fail(501, "selected transfer mode is not migrated; no local fallback")
 	}
 	var best organizationPlan
 	var last *recognitionFailure
 	for _, target := range roots.Targets {
-		if dest != "" && !historyPathMatches(target.Path, ".", dest) {
+		if dest != "" && !organizationTargetMatches(target.Path, ".", dest, input.Mode) {
 			continue
 		}
 		if dest == "" && target.Type == "" {
@@ -199,7 +240,10 @@ func (api organizationAPI) runLegacyRedo(ctx context.Context, id string, sourceR
 		}
 		return job, err
 	}
-	if job.Definition.Mode == "move" && !sourceRemoval {
+	if organization.MoveMode(job.Definition.Mode) && !sourceRemoval {
+		return job, organization.ErrState
+	}
+	if organization.RemoteMode(job.Mode) && !api.remoteApproval.Valid() {
 		return job, organization.ErrState
 	}
 	guard, err := api.jobs.AcquireJob(ctx, id)
@@ -218,7 +262,7 @@ func (api organizationAPI) runLegacyRedo(ctx context.Context, id string, sourceR
 		err = api.runJob(ctx, job, false)
 	}
 	if err == nil {
-		err = api.jobs.ResolveUnknown(ctx, job)
+		err = api.resolveUnknown(ctx, job)
 	}
 	if err != nil {
 		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -267,10 +311,23 @@ func (api organizationAPI) serveLegacyRedo(w http.ResponseWriter, r *http.Reques
 	failures := make([]*recognitionFailure, len(selectors))
 	for i, selector := range selectors {
 		plans[i], failures[i] = api.legacyRedoPlan(ctx, input.Flag, selector.ID, claims.Username)
-		if failures[i] == nil && plans[i].definition.Mode == "move" && !input.ConfirmSourceRemoval {
+		if failures[i] == nil && organization.MoveMode(plans[i].definition.Mode) && !input.ConfirmSourceRemoval {
 			writeAPIError(w, 400, 400, "separate source-removal consent is required before any job is created or executed")
 			return
 		}
+	}
+	review := makeLegacyRedoReview(input.Flag, selectors, plans, failures)
+	remote := false
+	for i := range plans {
+		remote = remote || failures[i] == nil && organization.RemoteMode(plans[i].Mode)
+	}
+	if input.ReviewFingerprint != "" && input.ReviewFingerprint != review.Fingerprint {
+		writeAPIError(w, 409, 409, "reviewed re-identification scope or account changed; review again")
+		return
+	}
+	if remote && (input.ReviewFingerprint != review.Fingerprint || api.approveLegacyRemote(claims.Username, "legacy-redo", input.ConfirmRemoteExclusive, input.ConfirmRemoteRecoveryCopy, input.ConfirmOldExecutorsStopped) != nil) {
+		writeAPIError(w, 400, 400, "remote re-identification requires fresh scope review and independent remote/stopped-writer consent before reserving any job")
+		return
 	}
 	results := []legacyRedoResult{}
 	success := true

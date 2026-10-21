@@ -4,6 +4,8 @@
 
 后续同步、下载完成批次和独立后台授权的接入见 [Rclone 同步与下载完成整理](rclone-automatic-intake.md)；以下验证数字保留为首批手动模块的历史记录。
 
+旧未知／历史重新规划与旧 REST 重新识别、关联改名、自定义识别的后续接入见 [旧记录远程入库](rclone-legacy-intake.md)，不从首批手动授权隐式继承。
+
 ## 启用和兼容
 
 仅在 `NASTOOL_DISABLE_LEGACY=true` 时，通过绝对路径 `NASTOOL_RCLONE_CONFIG` 显式选择已有 Rclone 配置；`NASTOOL_RCLONE_BINARY` 默认是 `rclone`。未配置时不读取宿主机默认账户、不开放远程模式。Go-only 候选镜像安装 Alpine 的 Rclone 包，但没有默认启用账户、远程挂载或自动整理。

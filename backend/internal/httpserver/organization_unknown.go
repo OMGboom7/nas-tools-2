@@ -45,9 +45,9 @@ type organizationUnknownItem struct {
 	Reason      string `json:"reason,omitempty"`
 }
 
-func projectUnknown(record organization.UnknownRecord, roots organizationRoots) organizationUnknownItem {
+func projectUnknown(record organization.UnknownRecord, roots organizationRoots, modes ...string) organizationUnknownItem {
 	item := organizationUnknownItem{UnknownRecord: record, IDText: strconv.FormatInt(record.ID, 10), Fingerprint: organization.Digest(record), NativeMode: transferModes[record.Mode]}
-	if record.Mode != "" && (!organization.SupportedMode(item.NativeMode) || organization.RemoteMode(item.NativeMode)) {
+	if record.Mode != "" && !organization.SupportedMode(item.NativeMode) {
 		item.Reason = "旧转移方式尚未迁移，不能自动改为本地方式"
 		return item
 	}
@@ -72,8 +72,12 @@ func projectUnknown(record organization.UnknownRecord, roots organizationRoots) 
 		item.Reason = "旧路径未落在当前启用来源目录内，记录保留"
 		return item
 	}
+	mode := item.NativeMode
+	if len(modes) != 0 {
+		mode = modes[0]
+	}
 	for _, target := range roots.Targets {
-		if record.Dest == "" || historyPathMatches(target.Path, ".", record.Dest) {
+		if record.Dest == "" || organizationTargetMatches(target.Path, ".", record.Dest, mode) {
 			item.TargetID = target.ID
 			break
 		}
@@ -191,7 +195,7 @@ func (api organizationAPI) bindUnknown(ctx context.Context, input organizationPl
 	if input.LegacyRename != nil {
 		projected.Mode = ""
 	} // Explicit new mode, old row still fingerprinted unchanged.
-	projection := projectUnknown(projected, roots)
+	projection := projectUnknown(projected, roots, input.Mode)
 	if projection.Reason != "" {
 		return nil, &recognitionFailure{422, "unknown record cannot be mapped to supported configured directories or mode"}
 	}
@@ -210,7 +214,7 @@ func (api organizationAPI) bindUnknown(ctx context.Context, input organizationPl
 	}
 	matched = false
 	for _, target := range roots.Targets {
-		if target.ID == input.TargetID && (record.Dest == "" || historyPathMatches(target.Path, ".", record.Dest)) {
+		if target.ID == input.TargetID && (record.Dest == "" || organizationTargetMatches(target.Path, ".", record.Dest, input.Mode)) {
 			matched = true
 		}
 	}

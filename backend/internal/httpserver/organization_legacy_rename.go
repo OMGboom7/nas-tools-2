@@ -11,11 +11,27 @@ import (
 )
 
 func (api organizationAPI) serveLegacyRenamePreview(w http.ResponseWriter, r *http.Request) {
+	api.serveLegacyIdentificationPreview(w, r, true)
+}
+func (api organizationAPI) serveLegacyCustomPreview(w http.ResponseWriter, r *http.Request) {
+	api.serveLegacyIdentificationPreview(w, r, false)
+}
+func (api organizationAPI) serveLegacyIdentificationPreview(w http.ResponseWriter, r *http.Request, linked bool) {
 	if !api.jobsAuthorized(w, r) {
 		return
 	}
-	input, ok := decodeLegacyIdentification(w, r, true)
+	input, ok := decodeLegacyIdentification(w, r, linked)
 	if !ok {
+		return
+	}
+	var modeErr error
+	input.Mode, modeErr = api.legacyRequestMode(input.Mode)
+	if modeErr != nil {
+		writeAPIError(w, 503, 503, "organization configuration unavailable")
+		return
+	}
+	if !organization.SupportedMode(input.Mode) {
+		writeAPIError(w, 501, 501, "configured default transfer mode is not migrated; no fallback")
 		return
 	}
 	claims, err := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
@@ -25,7 +41,11 @@ func (api organizationAPI) serveLegacyRenamePreview(w http.ResponseWriter, r *ht
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	plan, failure := api.legacyRenamePlan(ctx, input, claims.Username)
+	planner := api.legacyCustomPlan
+	if linked {
+		planner = api.legacyRenamePlan
+	}
+	plan, failure := planner(ctx, input, claims.Username)
 	if failure != nil {
 		writeAPIError(w, failure.status, failure.status, failure.message)
 		return
@@ -53,7 +73,7 @@ func (api organizationAPI) legacyRenamePlan(ctx context.Context, request legacyC
 		}
 		projected := record
 		projected.Mode = ""
-		projection := projectHistory(projected, roots)
+		projection := projectHistory(projected, roots, request.Mode)
 		if projection.Reason != "" {
 			return fail(422, "historical original source or destination is outside configured scope")
 		}
@@ -70,7 +90,7 @@ func (api organizationAPI) legacyRenamePlan(ctx context.Context, request legacyC
 		}
 		projected := record
 		projected.Mode = ""
-		projection := projectUnknown(projected, roots)
+		projection := projectUnknown(projected, roots, request.Mode)
 		if projection.Reason != "" {
 			return fail(422, "unknown source or destination is outside configured scope")
 		}

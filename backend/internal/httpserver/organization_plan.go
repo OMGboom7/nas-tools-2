@@ -319,9 +319,6 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	var remote *remotestore.Client
 	if organization.RemoteMode(input.Mode) {
-		if input.LegacySelection != nil || input.UnknownRecord != nil || input.HistoryRecord != nil {
-			return fail(422, "legacy record remote authority is separate; use a reviewed native task")
-		}
 		remote, err = api.remoteRoot(ctx, target.Path)
 		if err != nil {
 			return fail(422, "reviewed Rclone configuration or remote target root is unavailable")

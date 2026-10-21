@@ -14,13 +14,16 @@ import (
 )
 
 type legacyCustomInput struct {
-	Source, Target, Mode string
-	RecordKind           string
-	RecordID             int64
-	ConfirmParentScope   bool
-	ReviewFingerprint    string
-	Selection            organization.LegacyMediaSelection
-	ConfirmSourceRemoval bool
+	Source, Target, Mode       string
+	RecordKind                 string
+	RecordID                   int64
+	ConfirmParentScope         bool
+	ReviewFingerprint          string
+	Selection                  organization.LegacyMediaSelection
+	ConfirmSourceRemoval       bool
+	ConfirmRemoteExclusive     bool
+	ConfirmRemoteRecoveryCopy  bool
+	ConfirmOldExecutorsStopped bool
 }
 
 // The old form and JSON clients use both strings and integers. Keep numbers
@@ -63,11 +66,11 @@ func decodeLegacyIdentification(w http.ResponseWriter, r *http.Request, linked b
 		return bad("unsupported custom identification content type")
 	}
 	allowed := map[string]bool{}
-	for _, key := range []string{"syncmod", "tmdb", "type", "season", "episode_format", "episode_details", "episode_offset", "episode_part", "min_filesize", "confirmSourceRemoval", "title", "year"} {
+	for _, key := range []string{"syncmod", "tmdb", "type", "season", "episode_format", "episode_details", "episode_offset", "episode_part", "min_filesize", "confirmSourceRemoval", "title", "year", "reviewFingerprint", "confirmRemoteExclusive", "confirmRemoteRecoveryCopy", "confirmOldExecutorsStopped"} {
 		allowed[key] = true
 	}
 	if linked {
-		allowed["logid"], allowed["unknown_id"], allowed["confirmParentScope"], allowed["reviewFingerprint"] = true, true, true, true
+		allowed["logid"], allowed["unknown_id"], allowed["confirmParentScope"] = true, true, true
 	} else {
 		allowed["inpath"], allowed["outpath"] = true, true
 	}
@@ -98,22 +101,25 @@ func decodeLegacyIdentification(w http.ResponseWriter, r *http.Request, linked b
 			}
 			input.ConfirmParentScope = value == "true"
 		}
-		input.ReviewFingerprint = fields["reviewFingerprint"]
-		if input.ReviewFingerprint != "" && len(input.ReviewFingerprint) != 64 {
-			return bad("invalid reviewed rename fingerprint")
-		}
+	}
+	input.ReviewFingerprint = fields["reviewFingerprint"]
+	if input.ReviewFingerprint != "" && len(input.ReviewFingerprint) != 64 {
+		return bad("invalid reviewed rename fingerprint")
 	}
 	input.Mode = transferModes[fields["syncmod"]]
 	if input.Mode == "" && organization.SupportedMode(fields["syncmod"]) {
 		input.Mode = fields["syncmod"]
 	}
-	if !organization.SupportedMode(input.Mode) || organization.RemoteMode(input.Mode) {
+	if fields["syncmod"] != "" && !organization.SupportedMode(input.Mode) {
 		writeAPIError(w, 501, 501, "transfer mode is not migrated; no fallback")
 		return input, false
 	}
 	paths := []string{}
 	if !linked {
-		paths = []string{input.Source, input.Target}
+		paths = []string{input.Source}
+		if input.Target != "" {
+			paths = append(paths, input.Target)
+		}
 	}
 	for _, path := range paths {
 		if len(path) > 4096 || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\\\x00\r\n") {
@@ -171,6 +177,14 @@ func decodeLegacyIdentification(w http.ResponseWriter, r *http.Request, linked b
 		}
 		input.ConfirmSourceRemoval = value == "true"
 	}
+	for key, destination := range map[string]*bool{"confirmRemoteExclusive": &input.ConfirmRemoteExclusive, "confirmRemoteRecoveryCopy": &input.ConfirmRemoteRecoveryCopy, "confirmOldExecutorsStopped": &input.ConfirmOldExecutorsStopped} {
+		if value, exists := fields[key]; exists {
+			if value != "true" && value != "false" {
+				return bad("invalid remote transfer consent")
+			}
+			*destination = value == "true"
+		}
+	}
 	if err := validateLegacySelection(choice); err != nil {
 		return bad(err.Error())
 	}
@@ -211,7 +225,7 @@ func (api organizationAPI) legacyIdentificationTargets(ctx context.Context, root
 	input.LegacyTargetOverride = dest != "" // An explicit configured destination is not an automatic library choice.
 	var last *recognitionFailure
 	for _, root := range roots.Targets {
-		if dest != "" && !historyPathMatches(root.Path, ".", dest) || dest == "" && root.Type == "" {
+		if dest != "" && !organizationTargetMatches(root.Path, ".", dest, input.Mode) || dest == "" && root.Type == "" {
 			continue
 		}
 		input.TargetID = root.ID
@@ -273,7 +287,17 @@ func (api organizationAPI) serveLegacyIdentification(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	if input.Mode == "move" && !input.ConfirmSourceRemoval {
+	var modeErr error
+	input.Mode, modeErr = api.legacyRequestMode(input.Mode)
+	if modeErr != nil {
+		writeAPIError(w, 503, 503, "organization configuration unavailable")
+		return
+	}
+	if !organization.SupportedMode(input.Mode) {
+		writeAPIError(w, 501, 501, "configured default transfer mode is not migrated; no fallback")
+		return
+	}
+	if organization.MoveMode(input.Mode) && !input.ConfirmSourceRemoval {
 		writeAPIError(w, 400, 400, "separate source-removal consent is required before creating or executing a move job")
 		return
 	}
@@ -281,6 +305,16 @@ func (api organizationAPI) serveLegacyIdentification(w http.ResponseWriter, r *h
 	if err != nil {
 		writeAPIError(w, 401, 401, "invalid or expired authorization")
 		return
+	}
+	if organization.RemoteMode(input.Mode) {
+		origin := "legacy-custom"
+		if linked {
+			origin = "legacy-rename"
+		}
+		if len(input.ReviewFingerprint) != 64 || api.approveLegacyRemote(claims.Username, origin, input.ConfirmRemoteExclusive, input.ConfirmRemoteRecoveryCopy, input.ConfirmOldExecutorsStopped) != nil {
+			writeAPIError(w, 400, 400, "remote legacy execution requires a fresh reviewed fingerprint, exclusive namespace/non-atomic publication, retained-copy and stopped-writer consent")
+			return
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), organization.ExecutionTimeout)
 	defer cancel()

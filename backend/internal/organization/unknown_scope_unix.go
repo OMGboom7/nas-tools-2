@@ -26,14 +26,14 @@ func verifyUnknownScope(ctx context.Context, job Job) error {
 	}
 	defer root.Close()
 	info, err := root.Lstat(d.UnknownScope)
-	if errors.Is(err, os.ErrNotExist) && d.Mode == "move" {
+	if errors.Is(err, os.ErrNotExist) && MoveMode(d.Mode) {
 		for _, item := range job.Items {
 			if IsDisc(item.Entry) && item.Source == d.UnknownScope && item.Identity == d.UnknownScopeIdentity && item.State == "completed" && item.Reason == "" {
 				return VerifyCompletedTarget(ctx, job, item)
 			}
 		}
 	}
-	if errors.Is(err, os.ErrNotExist) && !d.UnknownDirectory && d.Mode == "move" {
+	if errors.Is(err, os.ErrNotExist) && !d.UnknownDirectory && MoveMode(d.Mode) {
 		return nil
 	}
 	if err != nil || Identity(info) != d.UnknownScopeIdentity {
