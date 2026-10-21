@@ -2,11 +2,104 @@ package httpserver
 
 import (
 	"context"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
+
+type remoteMonitorTarget struct {
+	TargetID string               `json:"targetId"`
+	Path     string               `json:"path"`
+	Remote   *remotestore.Summary `json:"remote"`
+}
+
+func logicalRemoteRoot(root string) (string, error) {
+	if !filepath.IsAbs(root) || len(root) > 4096 || filepath.Clean(root) == "/" || strings.ContainsAny(root, "\\\x00\r\n") {
+		return "", organization.ErrPath
+	}
+	return filepath.Clean(root), nil
+}
+func (api organizationAPI) monitorRemoteRoot(ctx context.Context, root organizationRoot, expected *organization.RemoteAutomation) (string, remoteMonitorTarget, organization.RemoteProfileSeal, error) {
+	var seal organization.RemoteProfileSeal
+	public := remoteMonitorTarget{TargetID: root.ID, Path: root.Path}
+	c, err := api.rclone.Open(nil)
+	if err != nil || !api.pureGo {
+		return "", public, seal, organization.ErrMode
+	}
+	defer c.Close()
+	if expected == nil {
+		if err := c.Probe(ctx, root.Path); err != nil {
+			return "", public, seal, err
+		}
+		b := c.Binding()
+		seal = organization.RemoteProfileSeal{Digest: organization.Digest(b), Directories: b.Directories}
+		public.Remote = b.Summary()
+	} else {
+		wanted, ok := expected.Profiles[root.ID]
+		if !ok {
+			return "", public, seal, organization.ErrState
+		}
+		b := c.Binding()
+		b.Directories = wanted.Directories
+		seal = organization.RemoteProfileSeal{Digest: organization.Digest(b), Directories: b.Directories}
+		public.Remote = b.Summary()
+		if seal != wanted {
+			return "", public, seal, organization.ErrState
+		}
+	}
+	return "remote:" + root.ID + ":" + strconv.FormatBool(seal.Directories) + ":" + seal.Digest, public, seal, nil
+}
+func remoteAutomationFromRoots(roots []string) *organization.RemoteAutomation {
+	var grant *organization.RemoteAutomation
+	for _, root := range roots {
+		if !strings.HasPrefix(root, "remote:") {
+			continue
+		}
+		parts := strings.Split(root, ":")
+		if len(parts) != 4 {
+			continue
+		}
+		dirs, err := strconv.ParseBool(parts[2])
+		if err != nil {
+			continue
+		}
+		if grant == nil {
+			grant = &organization.RemoteAutomation{Protocol: 1, Profiles: map[string]organization.RemoteProfileSeal{}}
+		}
+		grant.Profiles[parts[1]] = organization.RemoteProfileSeal{Digest: parts[3], Directories: dirs}
+	}
+	return grant
+}
+func remoteTargets(roots organizationRoots, grant *organization.RemoteAutomation) []remoteMonitorTarget {
+	result := []remoteMonitorTarget{}
+	if grant == nil {
+		return result
+	}
+	for _, root := range roots.Targets {
+		if profile, ok := grant.Profiles[root.ID]; ok {
+			result = append(result, remoteMonitorTarget{TargetID: root.ID, Path: root.Path, Remote: (remotestore.Binding{Driver: "rclone", Directories: profile.Directories}).Summary()})
+		}
+	}
+	return result
+}
+func approveRemoteAutomation(grant *organization.RemoteAutomation, exclusive, recovery bool) error {
+	if grant == nil {
+		return nil
+	}
+	if !exclusive || !recovery {
+		return organization.ErrState
+	}
+	grant.Exclusive, grant.RecoveryCopy = true, true
+	grant.ApprovedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if !grant.Valid() {
+		return organization.ErrState
+	}
+	return nil
+}
 
 func (api organizationAPI) remoteRoot(ctx context.Context, root string) (*remotestore.Client, error) {
 	if !api.pureGo {
@@ -44,8 +137,9 @@ func (api organizationAPI) remoteContext(ctx context.Context, job organization.J
 	return organization.RemoteContext(ctx, c, job.Definition), func() { _ = c.Close(); guard.Close() }, nil
 }
 
-// Explicit requests only. A lost running/staging receipt is never re-uploaded;
-// publication recovery uses the retained, fully hashed private remote copy.
+// Explicit requests or independently authorized monitor leases only. A lost
+// running/staging receipt is never re-uploaded; publication recovery uses the
+// retained, fully hashed private remote copy.
 func (api organizationAPI) runRemoteJob(ctx context.Context, job organization.Job, action string) error {
 	if !api.remoteApproval.Valid() || job.Remote == nil || job.State != "ready" && job.State != "needs_review" && job.State != "completed" {
 		return organization.ErrState
@@ -60,7 +154,15 @@ func (api organizationAPI) runRemoteJob(ctx context.Context, job organization.Jo
 		return err
 	}
 	defer c.Close()
+	if api.monitorGeneration != "" {
+		ctx = organization.AutomaticRemoteContext(ctx, "sync-monitor", api.monitorGeneration)
+	}
+	if api.downloadGeneration != "" {
+		ctx = organization.AutomaticRemoteContext(ctx, "download-monitor", api.downloadGeneration)
+	}
 	ctx = organization.RemoteContext(ctx, c, job.Definition)
+	operationCtx := ctx
+	ctx = organization.RemoteOperationContext(ctx, func() error { return api.validateJob(operationCtx, job) })
 	if action == "resume-move" {
 		return api.resumeMove(ctx, job)
 	}

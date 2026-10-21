@@ -17,6 +17,8 @@ import (
 )
 
 type downloadMonitorInput struct {
+	ConfirmRemoteExclusive     bool     `json:"confirmRemoteExclusive,omitempty"`
+	ConfirmRemoteRecoveryCopy  bool     `json:"confirmRemoteRecoveryCopy,omitempty"`
 	IDs                        []string `json:"ids"`
 	IncludeExisting            bool     `json:"includeExisting"`
 	Fingerprint                string   `json:"fingerprint,omitempty"`
@@ -37,6 +39,7 @@ type downloadMonitorSource struct {
 	Directories []string `json:"directories"`
 }
 type downloadMonitorReview struct {
+	RemoteTargets        []remoteMonitorTarget             `json:"remoteTargets,omitempty"`
 	Lease                organization.DownloadMonitorLease `json:"lease"`
 	Sources              []downloadMonitorSource           `json:"sources"`
 	Candidates           map[string][]string               `json:"candidates"`
@@ -47,7 +50,7 @@ type downloadMonitorReview struct {
 	Fingerprint          string                            `json:"fingerprint"`
 }
 
-func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []string, enumerate bool) (downloadMonitorReview, *recognitionFailure) {
+func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []string, enumerate bool, expected ...*organization.RemoteAutomation) (downloadMonitorReview, *recognitionFailure) {
 	fail := func(code int, msg string) (downloadMonitorReview, *recognitionFailure) {
 		return downloadMonitorReview{}, &recognitionFailure{code, msg}
 	}
@@ -59,6 +62,7 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 	review := downloadMonitorReview{Sources: []downloadMonitorSource{}, Candidates: map[string][]string{}, Lease: organization.DownloadMonitorLease{IDs: ids, Downloaders: map[string]string{}, Roots: []string{}}}
 	seen := map[string]bool{}
 	total := 0
+	localTargets, cloudTargets := false, false
 	cfg, err := api.service.configStore.Snapshot()
 	if err != nil {
 		return fail(503, "configuration unavailable")
@@ -75,8 +79,13 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 			return fail(422, "selected downloader must enable completion transfer")
 		}
 		mode, known := syncConfigMode(item.RmtMode)
-		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
+		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) && !api.rclone.Available() {
 			return fail(501, "remote or unknown completion mode is not migrated")
+		}
+		if organization.RemoteMode(mode) {
+			cloudTargets = true
+		} else {
+			localTargets = true
 		}
 		if item.Type != "qbittorrent" && item.Type != "transmission" && item.Type != "aria2" {
 			return fail(501, "selected completion protocol is not migrated")
@@ -104,10 +113,10 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 			review.Lease.Roots = append(review.Lease.Roots, "source:"+id+":"+root+":"+organization.Identity(info))
 		}
 		review.Sources = append(review.Sources, source)
-		review.NeedsSourceRemoval = review.NeedsSourceRemoval || mode == "move"
-		review.NeedsPauseTasks = review.NeedsPauseTasks || mode == "move" && item.Type != "aria2"
-		review.NeedsTaskRemoval = review.NeedsTaskRemoval || mode == "move" || item.Type == "aria2"
-		review.NeedsExclusiveLabels = review.NeedsExclusiveLabels || item.Type == "transmission" && mode != "move"
+		review.NeedsSourceRemoval = review.NeedsSourceRemoval || organization.MoveMode(mode)
+		review.NeedsPauseTasks = review.NeedsPauseTasks || organization.MoveMode(mode) && item.Type != "aria2"
+		review.NeedsTaskRemoval = review.NeedsTaskRemoval || organization.MoveMode(mode) || item.Type == "aria2"
+		review.NeedsExclusiveLabels = review.NeedsExclusiveLabels || item.Type == "transmission" && !organization.MoveMode(mode)
 		if enumerate {
 			c, err := api.clientFromDownloader(item)
 			if err != nil {
@@ -129,8 +138,25 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 		return fail(422, "configured media roots unavailable")
 	}
 	usable := 0
+	remoteUsable := 0
 	for _, target := range roots.Targets {
 		if target.Type == "" {
+			continue
+		}
+		if cloudTargets {
+			var grant *organization.RemoteAutomation
+			if len(expected) > 0 {
+				grant = expected[0]
+			}
+			proof, public, _, err := api.monitorRemoteRoot(ctx, target, grant)
+			if err != nil {
+				return fail(422, "reviewed Rclone profile or media destination changed/unavailable")
+			}
+			review.Lease.Roots = append(review.Lease.Roots, proof)
+			review.RemoteTargets = append(review.RemoteTargets, public)
+			remoteUsable++
+		}
+		if !localTargets {
 			continue
 		}
 		root, err := filepath.EvalSymlinks(target.Path)
@@ -145,10 +171,11 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 		usable++
 		review.Lease.Roots = append(review.Lease.Roots, "target:"+target.ID+":"+root+":"+organization.Identity(info))
 	}
-	if usable == 0 {
+	if localTargets && usable == 0 || cloudTargets && remoteUsable == 0 {
 		return fail(422, "no existing configured media library")
 	}
 	sort.Strings(review.Lease.Roots)
+	review.Lease.Remote = remoteAutomationFromRoots(review.Lease.Roots)
 	return review, nil
 }
 func (api organizationAPI) downloadMonitorAuthorized(ctx context.Context) error {
@@ -165,11 +192,14 @@ func (api organizationAPI) downloadMonitorAuthorized(ctx context.Context) error 
 	if api.auth == nil || !api.auth.service.IsAdministrator(c.Lease.Actor) {
 		return organization.ErrState
 	}
-	current, failure := api.downloadMonitorScope(ctx, c.Lease.IDs, false)
+	current, failure := api.downloadMonitorScope(ctx, c.Lease.IDs, false, c.Lease.Remote)
 	if failure != nil {
 		return organization.ErrState
 	}
 	if current.Lease.ConfigDigest != c.Lease.ConfigDigest || organization.Digest(current.Lease.Roots) != organization.Digest(c.Lease.Roots) {
+		return organization.ErrState
+	}
+	if current.Lease.Remote != nil && !c.Lease.Remote.Valid() {
 		return organization.ErrState
 	}
 	return nil
@@ -217,6 +247,10 @@ func (api organizationAPI) serveDownloadMonitorEnable(w http.ResponseWriter, r *
 	review.Lease.ResultWrites = input.ConfirmResultWrites
 	review.Lease.TaskRemoval = input.ConfirmTaskRemoval
 	review.Lease.ExclusiveLabels = input.ConfirmExclusiveLabels
+	if err := approveRemoteAutomation(review.Lease.Remote, input.ConfirmRemoteExclusive, input.ConfirmRemoteRecoveryCopy); err != nil {
+		writeAPIError(w, 400, 400, "remote automation requires separate exclusive namespace/non-atomic visibility and retained recovery-copy consent")
+		return
+	}
 	control, err := api.jobs.EnableDownloadMonitor(ctx, review.Lease, review.Candidates, time.Now())
 	if err != nil {
 		writeOrganizationError(w, err)
@@ -303,7 +337,7 @@ func (api organizationAPI) serveDownloadMonitorDismiss(w http.ResponseWriter, r 
 				writeOrganizationError(w, err)
 				return
 			}
-			if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored {
+			if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored && job.State != "remote_closed" {
 				writeAPIError(w, 409, 409, "complete/cancel/abandon every linked job before dismissing its event")
 				return
 			}
@@ -341,8 +375,12 @@ func (api organizationAPI) downloadMonitorTick(ctx context.Context, now time.Tim
 		return err
 	}
 	lease := control.Lease
+	ctx = organization.AutomaticRemoteContext(ctx, "download-monitor", lease.Generation)
 	worker := api
 	worker.downloadGeneration = lease.Generation
+	if lease.Remote != nil {
+		worker.remoteApproval = lease.Remote.Approval(lease.Actor, "download-monitor", lease.Generation)
+	}
 	if err := worker.downloadMonitorAuthorized(ctx); err != nil {
 		return api.jobs.PauseDownloadMonitorGeneration(ctx, lease.Generation, "authorization, configuration or physical roots changed; explicit reactivation required")
 	}
@@ -515,7 +553,7 @@ func (api organizationAPI) runAutomaticDownload(ctx context.Context, lease organ
 		}
 		return err
 	}
-	if completion.Mode == "move" && !downloadTaskStopped(completion.DownloaderType, completion.Task.State) {
+	if organization.MoveMode(completion.Mode) && !downloadTaskStopped(completion.DownloaderType, completion.Task.State) {
 		if !lease.SourceRemoval || !lease.PauseTasks || c.stop == nil {
 			return organization.ErrState
 		}

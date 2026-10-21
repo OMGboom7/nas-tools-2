@@ -322,8 +322,8 @@ func TestDirectSyncNeverOverwritesTargetsAndDoesNotRetryUncertainItems(t *testin
 	assertOrganizationMoveBytes(t, filepath.Join(source, "misc/archive.bin"), "original-media")
 }
 
-func TestDirectSyncRecordListExactIDsAndUnsupportedConfigurations(t *testing.T) {
-	f, _, _, input := directSyncFixture(t, "copy")
+func TestDirectSyncRecordListExactIDsAndUnsupportedOrUnconfiguredModes(t *testing.T) {
+	f, source, target, input := directSyncFixture(t, "copy")
 	if _, err := f.db.Exec(`UPDATE CONFIG_SYNC_PATHS SET ID=9223372036854775807 WHERE ID=7`); err != nil {
 		t.Fatal(err)
 	}
@@ -336,14 +336,29 @@ func TestDirectSyncRecordListExactIDsAndUnsupportedConfigurations(t *testing.T) 
 	if status != 200 {
 		t.Fatal(status, body)
 	}
-	for _, sql := range []string{`UPDATE CONFIG_SYNC_PATHS SET RENAME=1`, `UPDATE CONFIG_SYNC_PATHS SET RENAME=0,MODE='Rclone移动'`} {
-		if _, err := f.db.Exec(sql); err != nil {
+	for _, test := range []struct {
+		sql    string
+		status int
+	}{
+		{`UPDATE CONFIG_SYNC_PATHS SET RENAME=1`, 501},
+		// Rclone now has a native implementation, but this fixture has no
+		// reviewed account. It must reject without falling back to local I/O.
+		{`UPDATE CONFIG_SYNC_PATHS SET RENAME=0,MODE='Rclone移动'`, 422},
+		{`UPDATE CONFIG_SYNC_PATHS SET MODE='Minio移动'`, 501},
+	} {
+		if _, err := f.db.Exec(test.sql); err != nil {
 			t.Fatal(err)
 		}
 		status, _, body = directSyncPreview(t, f, input)
-		if status != 501 {
+		if status != test.status {
 			t.Fatal(status, body)
 		}
+	}
+	if entries, err := os.ReadDir(target); err != nil || len(entries) != 0 {
+		t.Fatal("rejected preview wrote to a local target", entries, err)
+	}
+	for _, name := range []string{"misc/readme.txt", "misc/archive.bin"} {
+		assertOrganizationMoveBytes(t, filepath.Join(source, name), "original-media")
 	}
 	for _, raw := range []string{`{"id":"07"}`, `{"id":"7","source":"/arbitrary"}`, `{"id":"7","Sync":{"actor":"forged"}}`} {
 		w := nativeJSONRequest(f.handler, "POST", "/api/v1/organization/sync/plan", f.token, raw)

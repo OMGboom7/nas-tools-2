@@ -17,6 +17,8 @@ import (
 )
 
 type monitorInput struct {
+	ConfirmRemoteExclusive     bool     `json:"confirmRemoteExclusive,omitempty"`
+	ConfirmRemoteRecoveryCopy  bool     `json:"confirmRemoteRecoveryCopy,omitempty"`
 	IDs                        []string `json:"ids"`
 	IncludeExisting            bool     `json:"includeExisting"`
 	Fingerprint                string   `json:"fingerprint,omitempty"`
@@ -25,6 +27,7 @@ type monitorInput struct {
 	ConfirmSourceRemoval       bool     `json:"confirmSourceRemoval,omitempty"`
 }
 type monitorReview struct {
+	RemoteTargets      []remoteMonitorTarget          `json:"remoteTargets,omitempty"`
 	Lease              organization.MonitorLease      `json:"lease"`
 	Snapshots          []organization.MonitorSnapshot `json:"snapshots"`
 	Records            []organization.SyncRecord      `json:"records"`
@@ -74,7 +77,7 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 			return fail(422, "selected sync record is missing or disabled")
 		}
 		mode, known := syncConfigMode(record.Mode)
-		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
+		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) && !api.rclone.Available() {
 			return fail(501, "selected remote/unknown sync mode is not migrated; no local fallback")
 		}
 		if record.Rename != 0 && record.Rename != 1 {
@@ -101,7 +104,23 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 		proofs = append(proofs, proof)
 		usable := 0
 		for _, root := range roots.Targets {
-			if record.Dest != "" && !historyPathMatches(root.Path, ".", record.Dest) || record.Dest == "" && root.Type == "" {
+			matches := historyPathMatches(root.Path, ".", record.Dest)
+			if organization.RemoteMode(mode) {
+				matches = filepath.Clean(root.Path) == filepath.Clean(record.Dest)
+			}
+			if record.Dest != "" && !matches || record.Dest == "" && root.Type == "" {
+				continue
+			}
+			if organization.RemoteMode(mode) {
+				remoteProof, _, _, err := api.monitorRemoteRoot(ctx, root, nil)
+				if err != nil {
+					return fail(422, "Rclone profile or destination unavailable; no automatic activation")
+				}
+				usable++
+				if !seenProof[remoteProof] {
+					seenProof[remoteProof] = true
+					proofs = append(proofs, remoteProof)
+				}
 				continue
 			}
 			path, err := filepath.EvalSymlinks(root.Path)
@@ -184,11 +203,17 @@ func (api organizationAPI) monitorReview(ctx context.Context, input monitorInput
 		return monitorReview{}, &recognitionFailure{503, "configuration unavailable"}
 	}
 	review := monitorReview{Records: records, Snapshots: snapshots, Lease: organization.MonitorLease{Actor: actor, IDs: ids, ConfigDigest: organization.Digest(snapshot), GraphDigest: organization.SyncGraphDigest(records), Roots: roots, IncludeExisting: input.IncludeExisting}}
+	review.Lease.Remote = remoteAutomationFromRoots(roots)
+	configured, err := api.roots(ctx)
+	if err != nil {
+		return monitorReview{}, &recognitionFailure{503, "configured roots unavailable"}
+	}
+	review.RemoteTargets = remoteTargets(configured, review.Lease.Remote)
 	for _, r := range records {
 		for _, id := range ids {
 			if strconv.FormatInt(r.ID, 10) == id {
 				mode, _ := syncConfigMode(r.Mode)
-				review.NeedsSourceRemoval = review.NeedsSourceRemoval || mode == "move"
+				review.NeedsSourceRemoval = review.NeedsSourceRemoval || organization.MoveMode(mode)
 			}
 		}
 	}
@@ -230,6 +255,10 @@ func (api organizationAPI) serveMonitorEnable(w http.ResponseWriter, r *http.Req
 		return
 	}
 	review.Lease.SourceRemoval = input.ConfirmSourceRemoval
+	if err := approveRemoteAutomation(review.Lease.Remote, input.ConfirmRemoteExclusive, input.ConfirmRemoteRecoveryCopy); err != nil {
+		writeAPIError(w, 400, 400, "remote automatic execution requires separate exclusive namespace/non-atomic visibility and retained recovery-copy consent")
+		return
+	}
 	control, err := api.jobs.EnableSyncMonitor(ctx, review.Lease, review.Snapshots, review.Records, time.Now())
 	if err != nil {
 		writeOrganizationError(w, err)
@@ -313,7 +342,7 @@ func (api organizationAPI) serveMonitorDismiss(w http.ResponseWriter, r *http.Re
 	ids := []string{}
 	for _, job := range jobs {
 		ids = append(ids, job.ID)
-		if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored {
+		if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored && job.State != "remote_closed" {
 			writeAPIError(w, 409, 409, "saved jobs must be explicitly completed/cancelled/abandoned/source-restored before dismissing their event")
 			return
 		}
@@ -369,7 +398,11 @@ func (api organizationAPI) recognizedSyncPlans(ctx context.Context, record organ
 	covered := map[string]bool{}
 	filtered := map[string]bool{}
 	for _, target := range roots.Targets {
-		if record.Dest != "" && !historyPathMatches(target.Path, ".", record.Dest) || record.Dest == "" && target.Type == "" {
+		matches := historyPathMatches(target.Path, ".", record.Dest)
+		if organization.RemoteMode(mode) {
+			matches = filepath.Clean(target.Path) == filepath.Clean(record.Dest)
+		}
+		if record.Dest != "" && !matches || record.Dest == "" && target.Type == "" {
 			continue
 		}
 		input.TargetID = target.ID
@@ -475,6 +508,7 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 		return err
 	}
 	lease := control.Lease
+	ctx = organization.AutomaticRemoteContext(ctx, "sync-monitor", lease.Generation)
 	records, snapshots, roots, failure := api.collectMonitor(ctx, lease.IDs)
 	if failure != nil {
 		return api.jobs.PauseSyncMonitor(ctx, failure.message)
@@ -485,6 +519,9 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 	}
 	if organization.SyncGraphDigest(records) != lease.GraphDigest || organization.Digest(config) != lease.ConfigDigest || organization.Digest(roots) != organization.Digest(lease.Roots) {
 		return api.jobs.PauseSyncMonitor(ctx, "configuration or physical roots changed; explicit reactivation required")
+	}
+	if remoteAutomationFromRoots(roots) != nil && !lease.Remote.Valid() {
+		return api.jobs.PauseSyncMonitor(ctx, "remote execution has no current independent grant; explicit new review required")
 	}
 	if err := api.jobs.ObserveSyncMonitor(ctx, lease, snapshots, now); err != nil {
 		return err
@@ -588,12 +625,15 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 		}
 		worker := api
 		worker.monitorGeneration = lease.Generation
+		if lease.Remote != nil {
+			worker.remoteApproval = lease.Remote.Approval(lease.Actor, "sync-monitor", lease.Generation)
+		}
 		for _, id := range ids {
 			job, err := api.jobs.Get(ctx, id)
 			if err != nil {
 				return err
 			}
-			if job.Mode == "move" && !lease.SourceRemoval {
+			if organization.MoveMode(job.Mode) && !lease.SourceRemoval {
 				return organization.ErrState
 			}
 			jobGuard, err := api.jobs.AcquireJob(ctx, id)

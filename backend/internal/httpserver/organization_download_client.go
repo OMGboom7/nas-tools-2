@@ -112,7 +112,7 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 	if o == nil {
 		return nil
 	}
-	if job.Mode == "move" {
+	if organization.MoveMode(job.Mode) {
 		id, err := syncConfigID(o.DownloaderID)
 		if err != nil {
 			return err
@@ -126,7 +126,7 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 			return err
 		}
 	}
-	if job.Mode == "move" && o.DownloaderType == "transmission" {
+	if organization.MoveMode(job.Mode) && o.DownloaderType == "transmission" {
 		id, err := syncConfigID(o.DownloaderID)
 		if err != nil {
 			return err
@@ -139,7 +139,7 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 			return err
 		}
 	}
-	if job.Mode == "move" && o.DownloaderType == "qbittorrent" {
+	if organization.MoveMode(job.Mode) && o.DownloaderType == "qbittorrent" {
 		id, err := syncConfigID(o.DownloaderID)
 		if err != nil {
 			return err
@@ -160,7 +160,7 @@ func (api organizationAPI) validateDownloadJob(ctx context.Context, job organiza
 	if err != nil {
 		return err
 	}
-	if !organization.DownloadTaskMatches(o.Task, task, false) || job.Mode == "move" && !downloadTaskStopped(o.DownloaderType, task.State) {
+	if !organization.DownloadTaskMatches(o.Task, task, false) || organization.MoveMode(job.Mode) && !downloadTaskStopped(o.DownloaderType, task.State) {
 		return organization.ErrState
 	}
 	return api.jobs.VerifyDownloadConfig(ctx, *o)

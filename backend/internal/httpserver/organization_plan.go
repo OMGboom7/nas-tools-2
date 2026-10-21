@@ -312,13 +312,15 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		return fail(400, "select configured source and target roots")
 	}
 	sourcePath, e1 := filepath.EvalSymlinks(source.Path)
-	targetPath, e2 := filepath.EvalSymlinks(target.Path)
+	var targetPath string
+	var e2 error
+	if !organization.RemoteMode(input.Mode) {
+		targetPath, e2 = filepath.EvalSymlinks(target.Path)
+	}
 	var remote *remotestore.Client
 	if organization.RemoteMode(input.Mode) {
-		// Automatic sources need separate remote lease consent and are not
-		// silently upgraded by enabling this manually reviewed provider.
-		if input.Sync != nil || input.Download != nil || input.LegacySelection != nil || input.UnknownRecord != nil || input.HistoryRecord != nil {
-			return fail(422, "Rclone currently requires a new manual task; automatic and legacy source authorization is separate")
+		if input.LegacySelection != nil || input.UnknownRecord != nil || input.HistoryRecord != nil {
+			return fail(422, "legacy record remote authority is separate; use a reviewed native task")
 		}
 		remote, err = api.remoteRoot(ctx, target.Path)
 		if err != nil {

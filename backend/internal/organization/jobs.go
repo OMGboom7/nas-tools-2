@@ -285,6 +285,9 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 	if RemoteMode(d.Mode) != (d.Remote != nil) || d.Remote != nil && !remoteProfileValid(d) {
 		return "", ErrMode
 	}
+	if err := verifyRemoteExecution(ctx, tx, d, nil); err != nil {
+		return "", err
+	}
 	for _, entry := range d.Entries {
 		if !validRelative(entry.Source) || !validRelative(entry.Target) || entry.Source == "." && !IsDisc(entry) || entry.Target == "." || entry.Identity == "" || entry.Size < 0 {
 			return "", ErrPath
@@ -614,6 +617,9 @@ func (s *Store) Stage(ctx context.Context, id string, index int, p Proof) error 
 	if p.Remote != nil && (remoteProofValid(d, d.Entries[index], p) != nil || p.Remote.StageReady || p.Remote.PublicationIntent || p.Remote.TargetVerified) {
 		return ErrState
 	}
+	if err := verifyRemoteExecution(ctx, s.db, d, &p); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -756,6 +762,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if job.Definition.Remote != nil && (remoteProofValid(job.Definition, item.Entry, storedProof) != nil || !storedProof.Remote.TargetVerified || !storedProof.Remote.PublicationIntent || !storedProof.Remote.StageReady) {
 		return ErrState
 	}
+	if err := verifyRemoteExecution(ctx, tx, job.Definition, &storedProof); err != nil {
+		return err
+	}
 	if MoveMode(job.Definition.Mode) && (storedProof.SourceHold == "" || storedProof.SourceHoldIdentity == "" || storedProof.SourceParentIdentity == "") {
 		return ErrState
 	}
@@ -806,6 +815,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 // BeginMove saves source disposition intent only when its target-copy proof
 // matches the existing prepared ledger. No mode conversion or automatic retry.
 func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) error {
+	if err := s.verifyRemoteJobExecution(ctx, s.db, id, &p); err != nil {
+		return err
+	}
 	if p.SourceHold == "" || p.SourceHoldIdentity == "" || p.SourceParentIdentity == "" {
 		return ErrState
 	}
@@ -833,6 +845,9 @@ func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) er
 // MarkQuarantined must be called by ContinueMove after positive source capture
 // verification. It cannot infer a completed move from a missing source name.
 func (s *Store) MarkQuarantined(ctx context.Context, id string, index int, p Proof) error {
+	if err := s.verifyRemoteJobExecution(ctx, s.db, id, &p); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -864,6 +879,9 @@ func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p 
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.verifyRemoteJobExecution(ctx, tx, id, &p); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone'))`, to, id, index, from, string(raw), id)
 	if err != nil {
 		return err

@@ -60,6 +60,7 @@ export function DirectSyncForm({ token, enabled, onChanged, onSessionExpired }: 
       <button type="button" disabled={!record} onClick={() => void operate("preview")}>生成只读同步预览</button>
     </fieldset>
     {plan && <div>
+      {plan.remote && <p>Rclone 远程逻辑目标，不会在本机创建同名目录。保存不执行；执行时须在任务区独立确认远程独占、非原子可见性、停止外部写入器及保留完整恢复副本的费用。移动另需源移除授权。</p>}
       <p>方式 {plan.mode}；跳过 {plan.skipped} 个隐藏／系统／非普通文件对象。忽略词按目的路径及文件名匹配。旧同步历史只抑制重做，不代表当前目标仍存在。此任务只处理保存的可用条目，不代表整个目录已同步。</p>
       <ul>{plan.items.map((item) => <li key={item.source}>{item.source} → {item.target} · {labels[item.status] || item.status}{item.reason ? ` · ${item.reason}` : ""}</li>)}</ul>
       <button type="button" disabled={!enabled || busy || !plan.items.some((item) => item.status === "available")} onClick={() => void operate("save")}>保存待确认同步任务（不执行）</button>

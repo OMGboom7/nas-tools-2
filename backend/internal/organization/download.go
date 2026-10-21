@@ -12,6 +12,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/downloadcompletion"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
 
 type DownloadOrigin struct {
@@ -30,17 +31,18 @@ type DownloadOrigin struct {
 	Files             []File                  `json:"files"`
 }
 type DownloadBatch struct {
-	ID          string         `json:"id"`
-	Origin      DownloadOrigin `json:"origin"`
-	Fingerprint string         `json:"fingerprint"`
-	State       string         `json:"state"`
-	Reason      string         `json:"reason,omitempty"`
-	Jobs        []string       `json:"jobs"`
-	Omitted     []File         `json:"omitted"`
-	Created     string         `json:"created"`
-	ResultProof string         `json:"resultProof,omitempty"`
-	Expected    int            `json:"expected"`
-	Mode        string         `json:"mode"`
+	Remote      *remotestore.Summary `json:"remote,omitempty"`
+	ID          string               `json:"id"`
+	Origin      DownloadOrigin       `json:"origin"`
+	Fingerprint string               `json:"fingerprint"`
+	State       string               `json:"state"`
+	Reason      string               `json:"reason,omitempty"`
+	Jobs        []string             `json:"jobs"`
+	Omitted     []File               `json:"omitted"`
+	Created     string               `json:"created"`
+	ResultProof string               `json:"resultProof,omitempty"`
+	Expected    int                  `json:"expected"`
+	Mode        string               `json:"mode"`
 }
 type downloadBatchDocument struct {
 	Origin      DownloadOrigin
@@ -172,6 +174,9 @@ func (s *Store) BeginDownloadBatch(ctx context.Context, fp string, origin Downlo
 	for i := range defs {
 		copy := origin
 		defs[i].Download = &copy
+		if err := verifyRemoteExecution(ctx, tx, defs[i], nil); err != nil {
+			return DownloadBatch{}, nil, err
+		}
 	}
 	raw, err := json.Marshal(downloadBatchDocument{origin, defs, omitted})
 	if err != nil {
@@ -223,6 +228,20 @@ func (s *Store) GetDownloadBatch(ctx context.Context, id string) (DownloadBatch,
 		return b, ErrState
 	}
 	b.Mode = doc.Definitions[0].Mode
+	if RemoteMode(b.Mode) {
+		if doc.Definitions[0].Remote == nil {
+			return b, ErrState
+		}
+		b.Remote = doc.Definitions[0].Remote.Summary()
+		for _, d := range doc.Definitions {
+			if d.Mode != b.Mode || d.Remote == nil {
+				return b, ErrState
+			}
+			if !d.Remote.Directories {
+				b.Remote.Directories = false
+			}
+		}
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT ID FROM GO_ORGANIZATION_JOBS WHERE json_extract(DEFINITION,'$.download.batchId')=? ORDER BY CREATED,ID`, id)
 	if err != nil {
 		return b, err

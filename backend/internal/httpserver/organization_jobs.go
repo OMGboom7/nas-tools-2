@@ -135,6 +135,9 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 // Revalidate admin configuration before any write, not just the opaque root IDs
 // supplied by the browser. Stored destinations never come from client payloads.
 func (api organizationAPI) validateJob(ctx context.Context, job organization.Job) error {
+	if err := api.jobs.VerifyRemoteExecution(ctx, job.Definition); err != nil {
+		return err
+	}
 	if job.Download != nil {
 		if err := api.downloadMonitorAuthorized(ctx); err != nil {
 			return err
@@ -378,7 +381,11 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 
 func (api organizationAPI) runJob(ctx context.Context, job organization.Job, reconcile bool) error {
 	if organization.RemoteMode(job.Mode) {
-		return organization.ErrMode
+		action := "execute"
+		if reconcile {
+			action = "reconcile"
+		}
+		return api.runRemoteJob(ctx, job, action)
 	}
 	ctx, close, err := api.guardSeedingMove(ctx, job)
 	if err != nil {

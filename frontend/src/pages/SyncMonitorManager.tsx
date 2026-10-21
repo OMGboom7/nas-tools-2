@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { RemoteTransferConsent } from "../components/RemoteTransferConsent";
 import { ApiError, activateSyncMonitor, dismissSyncMonitorEvent, getDirectSyncRecords, getSyncMonitor, reviewSyncMonitor, stopSyncMonitor, type OrganizationSyncRecord, type SyncMonitorReview, type SyncMonitorStatus } from "../api/client";
 
 type Props = { token: string; enabled: boolean; onSessionExpired: () => void; onChanged: (jobID: string) => Promise<void> };
@@ -11,6 +12,8 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
   const [confirmed, setConfirmed] = useState(false);
   const [oldStopped, setOldStopped] = useState(false);
   const [sourceRemoval, setSourceRemoval] = useState(false);
+  const [remoteExclusive,setRemoteExclusive]=useState(false),[remoteRecovery,setRemoteRecovery]=useState(false);
+  const remoteRequired=!!review?.remoteTargets?.length;
   const [stopConfirmed, setStopConfirmed] = useState(false);
   const [eventKey, setEventKey] = useState("");
   const [reason, setReason] = useState("");
@@ -19,8 +22,8 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
   const [error, setError] = useState("");
   const generation = useRef(0);
   const inFlight = useRef(false);
-  useEffect(() => { generation.current++; inFlight.current = false; setRecords([]); setStatus(null); setIDs([]); setIncludeExisting(false); setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false); setStopConfirmed(false); setEventKey(""); setReason(""); setDismissConfirmed(false); setBusy(false); setError(""); return () => { generation.current++; }; }, [token]);
-  function invalidate() { generation.current++; setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false); }
+  useEffect(() => { generation.current++; inFlight.current = false; setRecords([]); setStatus(null); setIDs([]); setIncludeExisting(false); setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setEventKey(""); setReason(""); setDismissConfirmed(false); setBusy(false); setError(""); return () => { generation.current++; }; }, [token]);
+  function invalidate() { generation.current++; setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); }
   async function viewJob(id: string) {
     if (!enabled || inFlight.current) return;
     inFlight.current = true; const version = ++generation.current; setBusy(true); setError("");
@@ -28,19 +31,19 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
     finally { if (version === generation.current) { inFlight.current = false; setBusy(false); } }
   }
   async function operate(action: "load" | "review" | "activate" | "stop" | "dismiss") {
-    if (!enabled || inFlight.current || action === "activate" && (!review || !confirmed || !oldStopped || review.needsSourceRemoval && !sourceRemoval) || action === "stop" && !stopConfirmed || action === "dismiss" && (!eventKey || !reason.trim() || !dismissConfirmed)) return;
+    if (!enabled || inFlight.current || action === "activate" && (!review || !confirmed || !oldStopped || remoteRequired && (!remoteExclusive || !remoteRecovery) || review.needsSourceRemoval && !sourceRemoval) || action === "stop" && !stopConfirmed || action === "dismiss" && (!eventKey || !reason.trim() || !dismissConfirmed)) return;
     inFlight.current = true; const version = ++generation.current; setBusy(true); setError("");
     try {
       if (action === "review") {
-        setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);
+        setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false);
         const next = await reviewSyncMonitor(token, { ids, includeExisting });
         if (version === generation.current) setReview(next);
       } else {
-        if (action === "activate") await activateSyncMonitor(token, { ids, includeExisting }, review!.fingerprint, confirmed, oldStopped, sourceRemoval);
+        if (action === "activate") await activateSyncMonitor(token, { ids, includeExisting }, review!.fingerprint, confirmed, oldStopped, sourceRemoval, remoteRequired?{confirmRemoteExclusive:remoteExclusive,confirmRemoteRecoveryCopy:remoteRecovery,confirmOldExecutorsStopped:oldStopped}:undefined);
         if (action === "stop") await stopSyncMonitor(token, stopConfirmed);
         if (action === "dismiss") await dismissSyncMonitorEvent(token, eventKey, reason, dismissConfirmed);
         if (version !== generation.current) return;
-        setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false); setStopConfirmed(false); setDismissConfirmed(false);
+        setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setDismissConfirmed(false);
         const [rows, next] = await Promise.all([getDirectSyncRecords(token), getSyncMonitor(token)]);
         if (version === generation.current) { setRecords(rows); setStatus(next); }
       }
@@ -48,7 +51,7 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
       if (version !== generation.current) return;
       if (err instanceof ApiError && err.code === 401) onSessionExpired();
       else setError(err instanceof Error ? err.message : "监控操作失败，请核对状态和任务账本");
-      setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false); setStopConfirmed(false); setDismissConfirmed(false);
+      setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setDismissConfirmed(false);
       // A lost response is not evidence that a mutation failed. Never replay it.
       try { const next = await getSyncMonitor(token); if (version === generation.current) setStatus(next); } catch { /* retain original error */ }
     } finally { if (version === generation.current) { inFlight.current = false; setBusy(false); } }
@@ -65,11 +68,12 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
       <label><input type="checkbox" checked={includeExisting} onChange={(e) => { invalidate(); setIncludeExisting(e.target.checked); }} />将当前已有文件也纳入自动处理（不选则只建立基线）</label>
       <button type="button" disabled={!ids.length} onClick={() => void operate("review")}>只读审核来源快照</button>
     </fieldset>
-    {review && <div><p>本次范围 {review.lease.ids.join("、")}；快照 {review.snapshots.length} 组、{review.snapshots.reduce((n, item) => n + item.files.length, 0)} 个文件；{review.lease.includeExisting ? "已有文件会进入待稳定队列" : "已有文件仅作为基线"}。未识别、蓝光、远程或冲突留待审核；迟到附件尚不自动并入已完成任务。</p><ul>{review.snapshots.map((item) => <li key={`${item.configId}:${item.scope}`}>#{item.configId} · {item.scope} · {item.files.length} 个文件</li>)}</ul>
-      <label><input type="checkbox" disabled={!enabled || busy} checked={oldStopped} onChange={(e) => setOldStopped(e.target.checked)} />我已实际停止所有旧同步执行器（不是仅切换开关）</label>
+    {review && <div><p>本次范围 {review.lease.ids.join("、")}；快照 {review.snapshots.length} 组、{review.snapshots.reduce((n, item) => n + item.files.length, 0)} 个文件；{review.lease.includeExisting ? "已有文件会进入待稳定队列" : "已有文件仅作为基线"}。未识别、冲突或不确定状态留待审核；蓝光按整盘处理，远程须独立授权，迟到附件不自动并入已完成任务。</p><ul>{review.snapshots.map((item) => <li key={`${item.configId}:${item.scope}`}>#{item.configId} · {item.scope} · {item.files.length} 个文件</li>)}</ul>
+      <label><input type="checkbox" disabled={!enabled || busy} checked={oldStopped} onChange={(e) => setOldStopped(e.target.checked)} />我已实际停止旧同步执行器及会写本轮来源／远程范围的所有外部程序（不是仅切换开关）</label>
+      {remoteRequired && <RemoteTransferConsent automatic targets={review.remoteTargets} busy={!enabled || busy} exclusive={remoteExclusive} recovery={remoteRecovery} onExclusive={setRemoteExclusive} onRecovery={setRemoteRecovery}/>}
       <label><input type="checkbox" disabled={!enabled || busy} checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />同意后台按上述范围自动创建并执行任务</label>
       {review.needsSourceRemoval && <label><input type="checkbox" disabled={!enabled || busy} checked={sourceRemoval} onChange={(e) => setSourceRemoval(e.target.checked)} />另行授权移动模式核验目标后移除源名和已核验备份</label>}
-      <button type="button" disabled={!enabled || busy || !confirmed || !oldStopped || review.needsSourceRemoval && !sourceRemoval} onClick={() => void operate("activate")}>确认启用本轮自动同步</button>
+      <button type="button" disabled={!enabled || busy || !confirmed || !oldStopped || remoteRequired && (!remoteExclusive || !remoteRecovery) || review.needsSourceRemoval && !sourceRemoval} onClick={() => void operate("activate")}>确认启用本轮自动同步</button>
     </div>}
     <label><input type="checkbox" disabled={!enabled || busy} checked={stopConfirmed} onChange={(e) => setStopConfirmed(e.target.checked)} />请求暂停后续自动写入；正在进行的步骤仍须核对账本</label>
     <button type="button" disabled={!enabled || busy || !stopConfirmed} onClick={() => void operate("stop")}>确认请求暂停</button>

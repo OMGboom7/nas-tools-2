@@ -11,6 +11,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/regexcompat"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/dlclark/regexp2"
 )
 
@@ -117,8 +118,15 @@ func validateDirectSyncGraph(current organization.SyncRecord, records []organiza
 		if record.ID != current.ID && (insideSyncPath(source, other) || insideSyncPath(other, source)) {
 			return organization.ErrPath
 		}
-		for _, dest := range []string{record.Dest, record.Unknown} {
+		for index, dest := range []string{record.Dest, record.Unknown} {
 			if dest == "" || !filepath.IsAbs(dest) {
+				continue
+			}
+			mode, _ := syncConfigMode(record.Mode)
+			if index == 0 && (organization.RemoteMode(mode) || mode == "minio" || mode == "miniocopy") {
+				if _, err := logicalRemoteRoot(dest); err != nil {
+					return err
+				}
 				continue
 			}
 			physical, err := configuredSyncPath(dest)
@@ -136,6 +144,13 @@ func validateDirectSyncGraph(current organization.SyncRecord, records []organiza
 			return err
 		}
 		for _, path := range paths {
+			mode, _ := syncConfigMode(current.Mode)
+			if organization.RemoteMode(mode) {
+				if _, err := logicalRemoteRoot(path); err != nil {
+					return err
+				}
+				continue
+			}
 			physical, err := configuredSyncPath(path)
 			if err != nil {
 				return err
@@ -242,7 +257,7 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 	if mode == "" && organization.SupportedMode(record.Mode) {
 		mode = record.Mode
 	}
-	if !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
+	if !organization.SupportedMode(mode) {
 		return fail(501, "sync transfer mode is not migrated; no fallback")
 	}
 	if record.Source == "" || record.Dest == "" {
@@ -283,7 +298,21 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 	if err != nil {
 		return fail(422, "source root must exist")
 	}
-	target, err := filepath.EvalSymlinks(record.Dest)
+	var target string
+	var remote *remotestore.Client
+	if organization.RemoteMode(mode) {
+		target, err = logicalRemoteRoot(record.Dest)
+		if err != nil {
+			return fail(422, "remote logical root is unsafe")
+		}
+		remote, err = api.remoteRoot(ctx, target)
+		if err != nil {
+			return fail(422, "reviewed Rclone configuration or root unavailable")
+		}
+		defer remote.Close()
+	} else {
+		target, err = filepath.EvalSymlinks(record.Dest)
+	}
 	if err != nil {
 		return fail(422, "destination root must exist; preview does not create it")
 	}
@@ -291,9 +320,13 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 	if err != nil || !si.IsDir() {
 		return fail(422, "source root unavailable")
 	}
-	ti, err := os.Stat(target)
-	if err != nil || !ti.IsDir() {
-		return fail(422, "destination root unavailable")
+	targetIdentity := organization.RemoteTargetIdentity(target)
+	if remote == nil {
+		ti, err := os.Stat(target)
+		if err != nil || !ti.IsDir() {
+			return fail(422, "destination root unavailable")
+		}
+		targetIdentity = organization.Identity(ti)
 	}
 	scan, err := organization.ScanAll(ctx, source, scope)
 	if err != nil {
@@ -311,8 +344,15 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 	if err != nil {
 		return fail(422, "source scope changed")
 	}
-	definition := organization.Definition{Sync: &organization.SyncOrigin{Record: record, Scope: scope, ScopeIdentity: organization.Identity(selected), GraphDigest: organization.SyncGraphDigest(records), Actor: actor}, SourceID: sourceID, TargetID: targetID, SourceRoot: source, TargetRoot: target, SourceIdentity: organization.Identity(si), TargetIdentity: organization.Identity(ti), Mode: mode, ConfigDigest: organization.Digest(snapshot)}
+	definition := organization.Definition{Sync: &organization.SyncOrigin{Record: record, Scope: scope, ScopeIdentity: organization.Identity(selected), GraphDigest: organization.SyncGraphDigest(records), Actor: actor}, SourceID: sourceID, TargetID: targetID, SourceRoot: source, TargetRoot: target, SourceIdentity: organization.Identity(si), TargetIdentity: targetIdentity, Mode: mode, ConfigDigest: organization.Digest(snapshot)}
+	if remote != nil {
+		binding := remote.Binding()
+		definition.Remote = &binding
+	}
 	plan := organizationPlan{PreviewOnly: true, Mode: mode, Skipped: scan.Skipped, Items: []organizationPlanItem{}, definition: definition}
+	if remote != nil {
+		plan.Remote = remote.Binding().Summary()
+	}
 	for _, file := range scan.Files {
 		if ctx.Err() != nil {
 			return fail(504, "sync preview cancelled")
@@ -337,7 +377,7 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 			if ignored {
 				item.Status, item.Reason = "filtered", "destination path/name matches an explicit ignore rule"
 			} else {
-				item.Status, err = organization.TargetStatus(ctx, target, item.Target)
+				item.Status, err = organizationTargetStatus(ctx, target, item.Target, remote)
 				if err != nil {
 					return fail(422, "destination path is unavailable or unsafe")
 				}

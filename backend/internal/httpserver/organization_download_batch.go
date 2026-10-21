@@ -13,7 +13,9 @@ import (
 )
 
 type downloadBatchRequest struct {
-	actor string
+	ConfirmRemoteExclusive    bool `json:"confirmRemoteExclusive,omitempty"`
+	ConfirmRemoteRecoveryCopy bool `json:"confirmRemoteRecoveryCopy,omitempty"`
+	actor                     string
 	downloadCompletionInput
 	Fingerprint                string `json:"fingerprint,omitempty"`
 	Reason                     string `json:"reason,omitempty"`
@@ -187,11 +189,17 @@ func (api organizationAPI) verifyDownloadBatchFiles(ctx context.Context, b organ
 		if err := api.validateJobConfiguration(ctx, job); err != nil {
 			return err
 		}
+		jobCtx, closeRemote, err := api.remoteContext(ctx, job)
+		if err != nil {
+			return err
+		}
 		for _, item := range job.Items {
-			if err := organization.VerifyCompletedTarget(ctx, job, item); err != nil {
+			if err := organization.VerifyCompletedTarget(jobCtx, job, item); err != nil {
+				closeRemote()
 				return err
 			}
 		}
+		closeRemote()
 	}
 	return nil
 }
@@ -305,8 +313,14 @@ func (api organizationAPI) executeDownloadBatch(ctx context.Context, b organizat
 			}
 		}
 	}
-	if mode == "move" && (!input.ConfirmSourceRemoval || !input.ConfirmTaskStopped) {
+	if organization.MoveMode(mode) && (!input.ConfirmSourceRemoval || !input.ConfirmTaskStopped) {
 		return organization.ErrState
+	}
+	if organization.RemoteMode(mode) && api.monitorGeneration == "" && api.downloadGeneration == "" {
+		if input.actor == "" || !input.ConfirmOldExecutorsStopped || !input.ConfirmRemoteExclusive || !input.ConfirmRemoteRecoveryCopy {
+			return organization.ErrState
+		}
+		api.remoteApproval = organization.RemoteApproval{Actor: input.actor, Created: time.Now().UTC().Format(time.RFC3339Nano), Exclusive: true, RecoveryCopy: true, Origin: "download-batch"}
 	}
 	if err := api.setDownloadBatch(ctx, b.ID, "ready", "executing", "", ""); err != nil {
 		return err
@@ -371,7 +385,7 @@ func (api organizationAPI) reviewDownloadResult(ctx context.Context, b organizat
 		mode = job.Mode
 	}
 	review := downloadResultReview{BatchID: b.ID, Actor: actor, Operation: "add-organized-label", BeforeLabels: task.Labels, AfterLabels: append([]string{}, task.Labels...)}
-	if mode == "move" {
+	if organization.MoveMode(mode) {
 		if !downloadTaskStopped(b.Origin.DownloaderType, task.State) {
 			return review, organization.ErrState
 		}
@@ -463,7 +477,7 @@ func (api organizationAPI) reconcileDownloadResult(ctx context.Context, b organi
 		if err != nil {
 			return err
 		}
-		remove = remove || job.Mode == "move"
+		remove = remove || organization.MoveMode(job.Mode)
 	}
 	if remove {
 		if !strings.HasPrefix(intent.Operation, "remove-") {

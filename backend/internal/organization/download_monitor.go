@@ -14,6 +14,7 @@ import (
 )
 
 type DownloadMonitorLease struct {
+	Remote          *RemoteAutomation `json:"remote,omitempty"`
 	Generation      string            `json:"generation"`
 	Actor           string            `json:"actor"`
 	IDs             []string          `json:"ids"`
@@ -130,6 +131,9 @@ func DownloadMonitorEventKey(generation, downloaderID, taskID string) string {
 	return Digest([]string{generation, downloaderID, taskID})
 }
 func (s *Store) EnableDownloadMonitor(ctx context.Context, lease DownloadMonitorLease, candidates map[string][]string, now time.Time) (DownloadMonitorControl, error) {
+	if lease.Remote != nil && !lease.Remote.Valid() {
+		return DownloadMonitorControl{}, ErrState
+	}
 	if lease.Actor == "" || len(lease.IDs) == 0 || len(lease.IDs) > 16 || !lease.ResultWrites {
 		return DownloadMonitorControl{}, ErrState
 	}

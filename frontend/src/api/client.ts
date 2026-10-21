@@ -1044,6 +1044,8 @@ export type OrganizationUnknownReview = { jobId: string; state: string; original
 export type OrganizationDisc = { files: number; directories: number; expanded: boolean; fingerprint: string; latestModified: number };
 export type OrganizationRemote = {driver:"rclone";atomic:false;recoveryCopy:true;directories:boolean;evidence:"exclusive-namespace/full-content"};
 export type RemoteOrganizationConsent = {confirmRemoteExclusive:boolean;confirmRemoteRecoveryCopy:boolean;confirmOldExecutorsStopped:boolean};
+export type OrganizationRemoteTarget={targetId:string;path:string;remote:OrganizationRemote};
+export const organizationMovesSource=(mode?:string)=>mode==="move" || mode==="rclone";
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; allowDiscExpansion?: boolean; assignments?: OrganizationMediaAssignment[]; episodeSelection?: OrganizationEpisodeSelection; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
 export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number; partOverride?: string };
 export type OrganizationPlan = { remote?:OrganizationRemote; scraperEnabled?: boolean; previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ disc?: OrganizationDisc; source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; mediaType?: string; category?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
@@ -1058,8 +1060,8 @@ export type SyncConfigReceipt = { id: string; review: SyncConfigReview; after: O
 export type SyncMonitorInput = { ids: string[]; includeExisting: boolean };
 export type DownloadCompletionInput = { downloaderId: string; taskId: string };
 export type DownloadMonitorInput = { ids: string[]; includeExisting: boolean; allowOmitted: boolean };
-export type DownloadMonitorReview = { lease: { ids: string[]; actor: string; includeExisting: boolean; allowOmitted: boolean }; sources: Array<{ id: string; name: string; type: string; mode: string; directories: string[] }>; candidates: Record<string, string[]>; needsSourceRemoval: boolean; needsPauseTasks: boolean; needsTaskRemoval: boolean; needsExclusiveLabels: boolean; fingerprint: string };
-export type DownloadMonitorConsent = { confirmOldExecutorsStopped: boolean; confirmSourceRemoval: boolean; confirmPauseTasks: boolean; confirmResultWrites: boolean; confirmTaskRemoval: boolean; confirmExclusiveLabels: boolean };
+export type DownloadMonitorReview = { remoteTargets?:OrganizationRemoteTarget[];lease: { ids: string[]; actor: string; includeExisting: boolean; allowOmitted: boolean }; sources: Array<{ id: string; name: string; type: string; mode: string; directories: string[] }>; candidates: Record<string, string[]>; needsSourceRemoval: boolean; needsPauseTasks: boolean; needsTaskRemoval: boolean; needsExclusiveLabels: boolean; fingerprint: string };
+export type DownloadMonitorConsent = {confirmRemoteExclusive?:boolean;confirmRemoteRecoveryCopy?:boolean; confirmOldExecutorsStopped: boolean; confirmSourceRemoval: boolean; confirmPauseTasks: boolean; confirmResultWrites: boolean; confirmTaskRemoval: boolean; confirmExclusiveLabels: boolean };
 export type DownloadMonitorStatus = { control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[] } }; events: Array<{ key: string; generation: string; downloaderId: string; taskId: string; state: string; firstSeen?: string; updated: string; batchId?: string; reason?: string }> };
 export async function reviewDownloadMonitor(token: string, input: DownloadMonitorInput): Promise<DownloadMonitorReview> {
   const result = await readResponse<DownloadMonitorReview>(await fetch("/api/v1/organization/downloads/monitor/review", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input) }));
@@ -1070,6 +1072,7 @@ export async function getDownloadMonitor(token: string): Promise<DownloadMonitor
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "监控状态无法核实", result.code); return result.data;
 }
 export async function activateDownloadMonitor(token: string, input: DownloadMonitorInput, fingerprint: string, confirmed: boolean, consent: DownloadMonitorConsent): Promise<void> {
+  if((consent.confirmRemoteExclusive!==undefined || consent.confirmRemoteRecoveryCopy!==undefined) && (!consent.confirmRemoteExclusive || !consent.confirmRemoteRecoveryCopy))throw new ApiError("请独立确认本轮远程独占／非原子发布及保留恢复副本费用",400);
   if (!confirmed || !consent.confirmOldExecutorsStopped || !consent.confirmResultWrites || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("先审核范围并分别确认自动执行、旧执行器实际停止及结果回写", 400);
   const result = await readResponse<unknown>(await fetch("/api/v1/organization/downloads/monitor/activate", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm: confirmed, ...consent }) }));
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "启用回执未核实，只读刷新，不自动重发", result.code);
@@ -1086,9 +1089,9 @@ export async function dismissDownloadMonitorEvent(token: string, key: string, re
 }
 export type DownloadOrganizationOrigin = { batchId: string; downloaderId: string; downloaderName: string; downloaderType: string; actor: string; sourceRoot: string; task: DownloadCompletionReview["task"] };
 export type DownloadOrganizationReview = { completion: DownloadCompletionReview; plans: OrganizationPlan[]; omitted: DownloadCompletionReview["files"]; fingerprint: string };
-export type DownloadOrganizationBatch = { id: string; origin: DownloadOrganizationOrigin; fingerprint: string; state: string; reason?: string; jobs: string[]; omitted: DownloadCompletionReview["files"]; created: string; resultProof?: string; expected: number; mode: string };
+export type DownloadOrganizationBatch = { remote?:OrganizationRemote;id: string; origin: DownloadOrganizationOrigin; fingerprint: string; state: string; reason?: string; jobs: string[]; omitted: DownloadCompletionReview["files"]; created: string; resultProof?: string; expected: number; mode: string };
 export type DownloadResultReview = { batchId: string; actor: string; operation: string; beforeLabels: string[]; afterLabels: string[]; needsExclusiveLabels: boolean; fingerprint: string };
-export type DownloadBatchConsent = { confirmSourceRemoval?: boolean; confirmTaskStopped?: boolean; confirmTaskRemoval?: boolean; confirmExclusiveLabels?: boolean };
+export type DownloadBatchConsent = {confirmOldExecutorsStopped?:boolean;confirmRemoteExclusive?:boolean;confirmRemoteRecoveryCopy?:boolean; confirmSourceRemoval?: boolean; confirmTaskStopped?: boolean; confirmTaskRemoval?: boolean; confirmExclusiveLabels?: boolean };
 export type DownloadReservationReview = { batchId: string; actor: string; reason: string; state: string; jobs: string[]; missing: number[]; plans: OrganizationPlan[]; omitted: DownloadCompletionReview["files"]; fingerprint: string };
 export async function reviewDownloadReservation(token: string, id: string, reason: string): Promise<DownloadReservationReview> {
   if (!reason.trim() || reason.length > 1000) throw new ApiError("请说明补齐原预留的原因", 400);
@@ -1119,6 +1122,7 @@ export async function findDownloadOrganization(token: string, input: DownloadCom
   return result.data;
 }
 export async function controlDownloadOrganization(token: string, id: string, action: "execute" | "reconcile" | "reconcile-result", confirm = false, consent: DownloadBatchConsent = {}): Promise<DownloadOrganizationBatch> {
+  if(action==="execute" && (consent.confirmRemoteExclusive!==undefined || consent.confirmRemoteRecoveryCopy!==undefined) && (!consent.confirmRemoteExclusive || !consent.confirmRemoteRecoveryCopy || !consent.confirmOldExecutorsStopped))throw new ApiError("请独立确认远程独占／非原子发布、保留副本及停止外部写入器",400);
   if (!confirm) throw new ApiError("此操作需要单独确认", 400);
   const result = await readResponse<DownloadOrganizationBatch>(await fetch(`/api/v1/organization/downloads/batches/${encodeURIComponent(id)}/${action}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ confirm, ...consent }) }));
   if (!result.success || result.code !== 0 || !result.data?.id) throw new ApiError(result.message || "操作响应未核实；只读刷新批次和任务，不自动重试", result.code);
@@ -1141,7 +1145,7 @@ export async function reviewDownloadCompletion(token: string, input: DownloadCom
   if (!result.success || result.code !== 0 || result.data?.reviewOnly !== true || !/^[a-f0-9]{64}$/.test(result.data.fingerprint)) throw new ApiError(result.message || "下载完成证据无法核实；未自动整理或标记任务", result.code);
   return result.data;
 }
-export type SyncMonitorReview = { lease: { ids: string[]; actor: string; includeExisting: boolean }; records: OrganizationSyncRecord[]; snapshots: Array<{ configId: string; scope: string; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }> }>; fingerprint: string; needsSourceRemoval: boolean };
+export type SyncMonitorReview = { remoteTargets?:OrganizationRemoteTarget[];lease: { ids: string[]; actor: string; includeExisting: boolean }; records: OrganizationSyncRecord[]; snapshots: Array<{ configId: string; scope: string; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }> }>; fingerprint: string; needsSourceRemoval: boolean };
 export type SyncMonitorStatus = { control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[]; includeExisting?: boolean; sourceRemoval?: boolean } }; events: Array<{ key: string; generation: string; snapshot: { configId: string; scope: string }; firstSeen: string; state: string; jobs: string[]; reason?: string; updated: string }> };
 export type OrganizationSourceRestoreItem = {index:number;source:string;outcome:string};
 export type OrganizationSourceRestoreReview = {jobId:string;state:string;fingerprint:string;canRestore:boolean;reason:string;items:OrganizationSourceRestoreItem[]};
@@ -1588,9 +1592,10 @@ export async function reviewSyncMonitor(token: string, input: SyncMonitorInput):
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "监控范围审核失败", result.code);
   return result.data;
 }
-export async function activateSyncMonitor(token: string, input: SyncMonitorInput, fingerprint: string, confirm = false, confirmOldExecutorsStopped = false, confirmSourceRemoval = false): Promise<void> {
+export async function activateSyncMonitor(token: string, input: SyncMonitorInput, fingerprint: string, confirm = false, confirmOldExecutorsStopped = false, confirmSourceRemoval = false, remote?:RemoteOrganizationConsent): Promise<void> {
+  if(remote && (!remote.confirmRemoteExclusive || !remote.confirmRemoteRecoveryCopy || !remote.confirmOldExecutorsStopped))throw new ApiError("远程后台整理须独立确认独占／非原子发布、保留副本费用及实际停止外部写入器",400);
   if (!confirm || !confirmOldExecutorsStopped || !/^[a-f0-9]{64}$/.test(fingerprint)) throw new ApiError("须审核来源范围并确认实际已停止旧执行器", 400);
-  const result = await readResponse<unknown>(await fetch("/api/v1/organization/sync/monitor/activate", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm, confirmOldExecutorsStopped, confirmSourceRemoval }) }));
+  const result = await readResponse<unknown>(await fetch("/api/v1/organization/sync/monitor/activate", { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, fingerprint, confirm, confirmOldExecutorsStopped, confirmSourceRemoval,...(remote?{confirmRemoteExclusive:true,confirmRemoteRecoveryCopy:true}:{}) }) }));
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "监控启用回执未核实，请只读取状态，不自动重试", result.code);
 }
 export async function stopSyncMonitor(token: string, confirm = false): Promise<void> {

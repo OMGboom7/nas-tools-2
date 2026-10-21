@@ -226,8 +226,11 @@ func (api organizationAPI) reviewSyncConfig(ctx context.Context, input syncConfi
 				if field.path == "" {
 					continue
 				}
-				local := field.key == "unknown" || organization.SupportedMode(mode)
+				local := field.key == "unknown" || organization.SupportedMode(mode) && !organization.RemoteMode(mode)
 				if !local {
+					if _, err := logicalRemoteRoot(field.path); err != nil {
+						return fail(422, "remote destination must be an absolute logical root")
+					}
 					continue
 				}
 				physical, err := configuredSyncPath(field.path)

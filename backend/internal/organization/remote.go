@@ -22,13 +22,22 @@ func RemoteMode(mode string) bool { return mode == "rclonecopy" || mode == "rclo
 func MoveMode(mode string) bool   { return mode == "move" || mode == "rclone" }
 
 type RemoteApproval struct {
+	Origin                  string `json:"origin,omitempty"`
+	Generation              string `json:"generation,omitempty"`
 	Actor, Created          string
 	Exclusive, RecoveryCopy bool
 }
 
 func (a RemoteApproval) Valid() bool {
 	_, err := time.Parse(time.RFC3339Nano, a.Created)
-	return a.Actor != "" && a.Exclusive && a.RecoveryCopy && err == nil
+	if a.Actor == "" || !a.Exclusive || !a.RecoveryCopy || err != nil {
+		return false
+	}
+	if a.Origin == "sync-monitor" || a.Origin == "download-monitor" {
+		_, err := hex.DecodeString(a.Generation)
+		return err == nil && len(a.Generation) == 32
+	}
+	return a.Generation == ""
 }
 
 type RemoteFile struct {
@@ -437,15 +446,29 @@ type remoteVerificationKey struct{}
 type remoteVerification struct {
 	client  *remotestore.Client
 	binding string
+	current func() error
 }
 
 func RemoteContext(ctx context.Context, c *remotestore.Client, d Definition) context.Context {
-	return context.WithValue(ctx, remoteVerificationKey{}, remoteVerification{c, Digest(d.Remote)})
+	return context.WithValue(ctx, remoteVerificationKey{}, remoteVerification{client: c, binding: Digest(d.Remote)})
+}
+func RemoteOperationContext(ctx context.Context, current func() error) context.Context {
+	g, ok := ctx.Value(remoteVerificationKey{}).(remoteVerification)
+	if !ok {
+		return ctx
+	}
+	g.current = current
+	return context.WithValue(ctx, remoteVerificationKey{}, g)
 }
 func remoteClient(ctx context.Context, d Definition) (*remotestore.Client, error) {
 	g, ok := ctx.Value(remoteVerificationKey{}).(remoteVerification)
 	if !ok || g.client == nil || d.Remote == nil || g.binding != Digest(d.Remote) || g.client.Binding() != *d.Remote {
 		return nil, ErrMode
+	}
+	if g.current != nil {
+		if err := g.current(); err != nil {
+			return nil, err
+		}
 	}
 	return g.client, g.client.Current()
 }

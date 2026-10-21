@@ -72,6 +72,9 @@ func (s *Store) remoteTransition(ctx context.Context, id string, index int, from
 	if json.Unmarshal([]byte(raw), &d) != nil || index < 0 || index >= len(d.Entries) || stage != from || json.Unmarshal([]byte(old), &previous) != nil || !match(previous) || remoteProofValid(d, d.Entries[index], p) != nil {
 		return ErrState
 	}
+	if err := verifyRemoteExecution(ctx, tx, d, &p); err != nil {
+		return err
+	}
 	data, err := json.Marshal(p)
 	if err != nil || len(data) > 16<<20 {
 		return ErrLimit
@@ -86,6 +89,9 @@ func (s *Store) remoteTransition(ctx context.Context, id string, index int, from
 	return tx.Commit()
 }
 func (s *Store) VerifyRemotePhase(ctx context.Context, id string, index int, p Proof, state string) error {
+	if err := s.verifyRemoteJobExecution(ctx, s.db, id, &p); err != nil {
+		return err
+	}
 	if state != "staging" && state != "prepared" && state != "publishing" {
 		return ErrState
 	}

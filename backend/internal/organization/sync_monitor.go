@@ -11,14 +11,15 @@ import (
 )
 
 type MonitorLease struct {
-	Generation      string   `json:"generation"`
-	Actor           string   `json:"actor"`
-	IDs             []string `json:"ids"`
-	ConfigDigest    string   `json:"configDigest"`
-	GraphDigest     string   `json:"graphDigest"`
-	Roots           []string `json:"roots"`
-	IncludeExisting bool     `json:"includeExisting"`
-	SourceRemoval   bool     `json:"sourceRemoval"`
+	Remote          *RemoteAutomation `json:"remote,omitempty"`
+	Generation      string            `json:"generation"`
+	Actor           string            `json:"actor"`
+	IDs             []string          `json:"ids"`
+	ConfigDigest    string            `json:"configDigest"`
+	GraphDigest     string            `json:"graphDigest"`
+	Roots           []string          `json:"roots"`
+	IncludeExisting bool              `json:"includeExisting"`
+	SourceRemoval   bool              `json:"sourceRemoval"`
 }
 type MonitorControl struct {
 	State  string       `json:"state"`
@@ -112,6 +113,9 @@ func MonitorEventKey(generation string, snapshot MonitorSnapshot) string {
 	}{generation, snapshot})
 }
 func (s *Store) EnableSyncMonitor(ctx context.Context, lease MonitorLease, snapshots []MonitorSnapshot, records []SyncRecord, now time.Time) (MonitorControl, error) {
+	if lease.Remote != nil && !lease.Remote.Valid() {
+		return MonitorControl{}, ErrState
+	}
 	if lease.Actor == "" || len(lease.IDs) == 0 || len(lease.IDs) > 16 || len(snapshots) > 2048 {
 		return MonitorControl{}, ErrState
 	}
