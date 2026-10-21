@@ -2,6 +2,23 @@ package config
 
 import "testing"
 
+func TestRcloneRequiresExplicitGoOnlyConfiguration(t *testing.T) {
+	t.Setenv("NASTOOL_RCLONE_CONFIG", "/config/rclone.conf")
+	t.Setenv("NASTOOL_DISABLE_LEGACY", "false")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("shared runtime remote config accepted")
+	}
+	t.Setenv("NASTOOL_DISABLE_LEGACY", "true")
+	cfg, err := FromEnv()
+	if err != nil || cfg.RcloneConfigFile != "/config/rclone.conf" || cfg.RcloneBinary != "rclone" {
+		t.Fatal(cfg, err)
+	}
+	t.Setenv("NASTOOL_RCLONE_CONFIG", "relative/rclone.conf")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("relative remote config accepted")
+	}
+}
+
 func TestDisableLegacyAllowsGoOnlyMode(t *testing.T) {
 	t.Setenv("NASTOOL_DISABLE_LEGACY", "true")
 	t.Setenv("NASTOOL_LEGACY_URL", "://invalid")

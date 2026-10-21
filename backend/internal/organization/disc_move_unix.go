@@ -14,7 +14,7 @@ import (
 )
 
 func prepareDiscMove(ctx context.Context, d Definition, e Entry, p Proof, name string) (Proof, error) {
-	if d.Mode != "move" || e.Source == "." || p.SourceHold != "" || !strings.HasPrefix(name, ".nastool-move-") || filepath.Base(name) != name {
+	if !MoveMode(d.Mode) || e.Source == "." || p.SourceHold != "" || !strings.HasPrefix(name, ".nastool-move-") || filepath.Base(name) != name {
 		return p, ErrState
 	}
 	if err := verifyMoveTarget(ctx, d, e, p); err != nil {

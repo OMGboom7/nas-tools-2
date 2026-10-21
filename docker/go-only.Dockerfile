@@ -17,7 +17,7 @@ RUN mkdir -p /out/licenses \
     && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/cedar-go)/LICENSE.md" /out/licenses/cedar-go-LICENSE
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata ffmpeg \
+RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone \
     && addgroup -S -g 911 nt \
     && adduser -S -u 911 -G nt -h /app nt
 WORKDIR /app

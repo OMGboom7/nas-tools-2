@@ -18,6 +18,13 @@ func ExistingSidecar(ctx context.Context, job Job, item JobItem, scope, name str
 	if err != nil {
 		return false, err
 	}
+	if RemoteMode(job.Mode) {
+		c, err := remoteClient(ctx, job.Definition)
+		if err != nil {
+			return false, err
+		}
+		return c.Existing(ctx, job.TargetRoot, target)
+	}
 	if err := validateDestinationBinding(job.Definition, item.Entry, item.Proof); err != nil {
 		return false, err
 	}
@@ -43,6 +50,12 @@ func ExistingSidecar(ctx context.Context, job Job, item JobItem, scope, name str
 // intake pins the original approved source instead of following an arbitrary
 // target link; current content/path bindings must survive the entire read.
 func ReadCompletedMedia(ctx context.Context, job Job, item JobItem, consume func(*os.File) ([]byte, error)) ([]byte, error) {
+	// The existing FFmpeg decoder requires a seekable, pinned local file.
+	// Do not treat a logical remote path as local or download an unbounded
+	// second video copy. NFO/artwork continue; thumbnail gets a failure receipt.
+	if RemoteMode(job.Mode) {
+		return nil, ErrMode
+	}
 	if job.State != "completed" || item.Kind != "media" || consume == nil {
 		return nil, ErrState
 	}

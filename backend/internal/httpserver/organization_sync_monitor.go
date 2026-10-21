@@ -74,7 +74,7 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 			return fail(422, "selected sync record is missing or disabled")
 		}
 		mode, known := syncConfigMode(record.Mode)
-		if !known || !organization.SupportedMode(mode) {
+		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
 			return fail(501, "selected remote/unknown sync mode is not migrated; no local fallback")
 		}
 		if record.Rename != 0 && record.Rename != 1 {

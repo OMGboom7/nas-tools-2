@@ -16,6 +16,8 @@ type Config struct {
 	DefaultCategoryPath   string
 	DisableLegacy         bool
 	HostsPath             string
+	RcloneConfigFile      string
+	RcloneBinary          string
 }
 
 func FromEnv() (Config, error) {
@@ -28,12 +30,17 @@ func FromEnv() (Config, error) {
 		DefaultCategoryPath:   os.Getenv("NASTOOL_DEFAULT_CATEGORY"),
 		DisableLegacy:         os.Getenv("NASTOOL_DISABLE_LEGACY") == "true",
 		HostsPath:             os.Getenv("NASTOOL_GO_HOSTS_PATH"),
+		RcloneConfigFile:      os.Getenv("NASTOOL_RCLONE_CONFIG"),
+		RcloneBinary:          envOrDefault("NASTOOL_RCLONE_BINARY", "rclone"),
 	}
 	if cfg.DisableLegacy {
 		cfg.LegacyBackendURL = ""
 	}
 	if cfg.HostsPath != "" && (!filepath.IsAbs(cfg.HostsPath) || !cfg.DisableLegacy) {
 		return Config{}, fmt.Errorf("NASTOOL_GO_HOSTS_PATH requires an absolute path and NASTOOL_DISABLE_LEGACY=true")
+	}
+	if cfg.RcloneConfigFile != "" && (!filepath.IsAbs(cfg.RcloneConfigFile) || !cfg.DisableLegacy) {
+		return Config{}, fmt.Errorf("NASTOOL_RCLONE_CONFIG requires an absolute path and NASTOOL_DISABLE_LEGACY=true")
 	}
 
 	if cfg.LegacyBackendURL != "" {

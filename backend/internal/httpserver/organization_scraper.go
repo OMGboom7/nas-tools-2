@@ -200,13 +200,18 @@ func (api *intakeScraper) tick(ctx context.Context) error {
 			return err
 		}
 		job, err := api.organizer.jobs.Get(ctx, row.JobID)
-		valid := err == nil && job.State == "completed" && row.Ordinal >= 0 && row.Ordinal < len(job.Items) && len(job.Items) == len(job.Definition.Entries)
+		jobCtx, closeRemote, remoteErr := api.organizer.remoteContext(ctx, job)
+		if errors.Is(remoteErr, organization.ErrBusy) {
+			return remoteErr
+		}
+		valid := err == nil && remoteErr == nil && job.State == "completed" && row.Ordinal >= 0 && row.Ordinal < len(job.Items) && len(job.Items) == len(job.Definition.Entries)
 		var item organization.JobItem
 		if valid {
 			item = job.Items[row.Ordinal]
-			valid = item.Kind == "media" && item.Index == row.Ordinal && organization.SubtitleOriginDigest(job, item) == row.Origin && api.current(ctx, job, row) == nil && organization.VerifyCompletedTarget(ctx, job, item) == nil
+			valid = item.Kind == "media" && item.Index == row.Ordinal && organization.SubtitleOriginDigest(job, item) == row.Origin && api.current(jobCtx, job, row) == nil && organization.VerifyCompletedTarget(jobCtx, job, item) == nil
 		}
 		if err := api.organizer.jobs.ClaimScrape(ctx, row); err != nil {
+			closeRemote()
 			if errors.Is(err, organization.ErrState) {
 				continue
 			}
@@ -214,8 +219,9 @@ func (api *intakeScraper) tick(ctx context.Context) error {
 		}
 		state, reason := "blocked", "original completed media or configuration changed; no sidecars written"
 		if valid {
-			state, reason = api.run(ctx, job, item, row)
+			state, reason = api.run(jobCtx, job, item, row)
 		}
+		closeRemote()
 		persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		err = api.organizer.jobs.FinishScrape(persist, row.ID, state, reason)
 		cancel()

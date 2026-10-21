@@ -103,7 +103,7 @@ func captureSourceRestore(ctx context.Context, d Definition, e Entry, p Proof, p
 // A missing source name is never sufficient evidence. Restore only the original
 // identity and full bytes held by this journal. No target is opened or changed.
 func inspectSourceRestore(ctx context.Context, d Definition, e Entry, p Proof, apply bool, current func() error) (string, string, error) {
-	if d.Mode != "move" || p.Identity == "" || len(p.Digest) != 64 || e.Source == "." {
+	if !MoveMode(d.Mode) || p.Identity == "" || len(p.Digest) != 64 || e.Source == "." {
 		return "", "", ErrState
 	}
 	var parent, hold *os.File

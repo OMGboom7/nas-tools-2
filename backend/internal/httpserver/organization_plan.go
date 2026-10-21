@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
 
 type organizationAPI struct {
@@ -26,6 +27,8 @@ type organizationAPI struct {
 	jobs               *organization.Store
 	records            *organization.Store
 	pureGo             bool
+	rclone             remotestore.Factory
+	remoteApproval     organization.RemoteApproval
 }
 type organizationRoot struct {
 	ID    string `json:"id"`
@@ -79,6 +82,7 @@ type organizationPlanItem struct {
 	SeasonEpisode string                 `json:"seasonEpisode,omitempty"`
 }
 type organizationPlan struct {
+	Remote         *remotestore.Summary   `json:"remote,omitempty"`
 	ScraperEnabled bool                   `json:"scraperEnabled"`
 	Items          []organizationPlanItem `json:"items"`
 	Mode           string                 `json:"mode"`
@@ -124,6 +128,9 @@ func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error)
 	result.RecordManagement = api.pureGo && api.records != nil
 	if api.pureGo && api.jobs != nil && organization.CopySupported {
 		result.ExecutionModes = []string{"copy", "link", "softlink", "move"}
+		if api.rclone.Available() {
+			result.ExecutionModes = append(result.ExecutionModes, "rclonecopy", "rclone")
+		}
 	}
 	seen := map[string]bool{}
 	add := func(role, path, label, kind string) error {
@@ -244,7 +251,7 @@ func (api organizationAPI) servePlan(w http.ResponseWriter, r *http.Request) {
 	if input.Path == "" {
 		input.Path = "."
 	}
-	if input.Mode != "copy" && input.Mode != "move" && input.Mode != "link" && input.Mode != "softlink" {
+	if !organization.SupportedMode(input.Mode) {
 		writeAPIError(w, 400, 400, "unsupported organization mode")
 		return
 	}
@@ -306,6 +313,21 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	sourcePath, e1 := filepath.EvalSymlinks(source.Path)
 	targetPath, e2 := filepath.EvalSymlinks(target.Path)
+	var remote *remotestore.Client
+	if organization.RemoteMode(input.Mode) {
+		// Automatic sources need separate remote lease consent and are not
+		// silently upgraded by enabling this manually reviewed provider.
+		if input.Sync != nil || input.Download != nil || input.LegacySelection != nil || input.UnknownRecord != nil || input.HistoryRecord != nil {
+			return fail(422, "Rclone currently requires a new manual task; automatic and legacy source authorization is separate")
+		}
+		remote, err = api.remoteRoot(ctx, target.Path)
+		if err != nil {
+			return fail(422, "reviewed Rclone configuration or remote target root is unavailable")
+		}
+		defer remote.Close()
+		targetPath, e2 = filepath.Clean(target.Path), nil
+		result.Remote = remote.Binding().Summary()
+	}
 	inside := func(a, b string) bool {
 		relative, err := filepath.Rel(a, b)
 		return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
@@ -313,14 +335,16 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	if e1 != nil || e2 != nil {
 		return fail(422, "organization roots must be existing directories")
 	}
-	if inside(sourcePath, targetPath) || inside(targetPath, sourcePath) {
+	if remote == nil && (inside(sourcePath, targetPath) || inside(targetPath, sourcePath)) {
 		return fail(422, "source and target roots must not overlap")
 	}
-	root, err := organization.OpenRoot(target.Path)
-	if err != nil {
-		return fail(422, "target root is unavailable")
+	if remote == nil {
+		root, err := organization.OpenRoot(target.Path)
+		if err != nil {
+			return fail(422, "target root is unavailable")
+		}
+		root.Close()
 	}
-	root.Close()
 	scanner := organization.Scan
 	if input.Sync != nil && input.Sync.Record.Rename == 1 {
 		scanner = organization.ScanDirectory
@@ -377,11 +401,24 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			return fail(422, "invalid sync ignore rule")
 		}
 	}
-	targetInfo, e2 := os.Stat(targetPath)
-	if e1 != nil || e2 != nil || !sourceInfo.IsDir() || !targetInfo.IsDir() || os.SameFile(sourceInfo, targetInfo) {
+	var targetIdentity string
+	if remote == nil {
+		targetInfo, err := os.Stat(targetPath)
+		if err != nil || e1 != nil || !targetInfo.IsDir() || os.SameFile(sourceInfo, targetInfo) {
+			return fail(422, "organization roots changed")
+		}
+		targetIdentity = organization.Identity(targetInfo)
+	} else {
+		targetIdentity = organization.RemoteTargetIdentity(targetPath)
+	}
+	if e1 != nil || !sourceInfo.IsDir() {
 		return fail(422, "organization roots changed")
 	}
-	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: organization.Identity(targetInfo), ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode, Discs: map[string]organization.DiscManifest{}, AllowDiscExpansion: input.AllowDiscExpansion}
+	result.definition = organization.Definition{SourceRoot: sourcePath, TargetRoot: targetPath, SourceIdentity: organization.Identity(sourceInfo), TargetIdentity: targetIdentity, ConfigDigest: organization.Digest(snapshot), SourceID: source.ID, TargetID: target.ID, Mode: input.Mode, Discs: map[string]organization.DiscManifest{}, AllowDiscExpansion: input.AllowDiscExpansion}
+	if remote != nil {
+		binding := remote.Binding()
+		result.definition.Remote = &binding
+	}
 	result.ScraperEnabled, _ = media["nfo_poster"].(bool)
 	result.definition.ScraperEnabled = result.ScraperEnabled
 	result.definition.Unknown = unknown
@@ -543,7 +580,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			continue
 		}
 		item.Target = relative
-		item.Status, err = organization.TargetStatus(ctx, target.Path, relative)
+		item.Status, err = organizationTargetStatus(ctx, targetPath, relative, remote)
 		if err != nil {
 			if ctx.Err() != nil {
 				return fail(504, "organization preview was cancelled or timed out")
@@ -600,7 +637,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		item.PartOverride = video.PartOverride
 		item.EpisodeFormat, item.EpisodeOffset = video.EpisodeFormat, video.EpisodeOffset
 		item.Title, item.Year, item.MediaType, item.Category, item.SeasonEpisode = video.Title, video.Year, video.MediaType, video.Category, video.SeasonEpisode
-		item.Status, err = organization.TargetStatus(ctx, target.Path, item.Target)
+		item.Status, err = organizationTargetStatus(ctx, targetPath, item.Target, remote)
 		if err != nil {
 			if ctx.Err() != nil {
 				return fail(504, "organization preview was cancelled or timed out")

@@ -9,6 +9,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
 
 func (api organizationAPI) jobsAuthorized(w http.ResponseWriter, r *http.Request) bool {
@@ -35,6 +36,9 @@ func writeOrganizationError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, organization.ErrMode) {
 		status, message = 422, "selected organization mode is unavailable on this filesystem or with current permissions; no mode fallback was performed"
+	}
+	if errors.Is(err, remotestore.ErrChanged) {
+		status, message = 409, "reviewed remote configuration or content changed; inspect saved receipts"
 	}
 	if errors.Is(err, organization.ErrBusy) {
 		status, message = 409, "organization operation is already active; refresh its saved state instead of retrying execution"
@@ -187,19 +191,25 @@ func (api organizationAPI) validateJobConfiguration(ctx context.Context, job org
 	if err != nil {
 		return err
 	}
-	find := func(list []organizationRoot, id, path string) bool {
+	find := func(list []organizationRoot, id, path string, remote bool) bool {
 		for _, root := range list {
 			// Earlier anime roots shared TV's ID. Preserve existing reviewed jobs
 			// at their exact saved physical root, never reinterpret their entries.
 			if root.ID == id || root.Type == "ANIME" && subscriptionResourceKey("target:"+root.Path+":TV") == id {
+				if remote {
+					return filepath.Clean(root.Path) == path
+				}
 				canonical, err := filepath.EvalSymlinks(root.Path)
 				return err == nil && canonical == path
 			}
 		}
 		return false
 	}
-	if !find(roots.Sources, job.Definition.SourceID, job.Definition.SourceRoot) || !find(roots.Targets, job.Definition.TargetID, job.Definition.TargetRoot) {
+	if !find(roots.Sources, job.Definition.SourceID, job.Definition.SourceRoot, false) || !find(roots.Targets, job.Definition.TargetID, job.Definition.TargetRoot, job.Definition.Remote != nil) {
 		return organization.ErrState
+	}
+	if job.Definition.Remote != nil {
+		return api.rclone.Validate(*job.Definition.Remote)
 	}
 	return nil
 }
@@ -209,7 +219,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 	action := r.PathValue("action")
-	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" && action != "detach-unknown" && action != "restore-source" {
+	if action != "execute" && action != "reconcile" && action != "cancel" && action != "resume-move" && action != "resume-publication" && action != "abandon-unpublished" && action != "reconcile-unknown" && action != "detach-unknown" && action != "restore-source" && action != "close-remote" {
 		writeAPIError(w, 404, 404, "organization action not found")
 		return
 	}
@@ -222,6 +232,8 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		ConfirmDiscardStaging      bool   `json:"confirmDiscardStaging"`
 		ConfirmOldExecutorsStopped bool   `json:"confirmOldExecutorsStopped"`
 		ConfirmDetachUnknown       bool   `json:"confirmDetachUnknown"`
+		ConfirmRemoteExclusive     bool   `json:"confirmRemoteExclusive"`
+		ConfirmRemoteRecoveryCopy  bool   `json:"confirmRemoteRecoveryCopy"`
 		ReviewFingerprint          string `json:"reviewFingerprint"`
 		Reason                     string `json:"reason"`
 	}
@@ -244,6 +256,10 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, 400, 400, "explicit detach confirmation, reviewed snapshot and reason are required")
 		return
 	}
+	if action == "close-remote" && (!input.ConfirmOldExecutorsStopped || input.Reason == "" || len(input.Reason) > 512) {
+		writeAPIError(w, 400, 400, "stopped executors and a closure reason are required; no remote objects will be deleted")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), organization.ExecutionTimeout)
 	defer cancel()
 	job, err := api.jobs.Get(ctx, r.PathValue("id"))
@@ -251,11 +267,23 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		writeOrganizationError(w, err)
 		return
 	}
-	if action == "resume-move" && job.Definition.Mode != "move" {
+	if organization.RemoteMode(job.Mode) && (action == "execute" || action == "reconcile" || action == "resume-move" || action == "resume-publication") {
+		if !input.ConfirmRemoteExclusive || !input.ConfirmRemoteRecoveryCopy || !input.ConfirmOldExecutorsStopped {
+			writeAPIError(w, 400, 400, "separate exclusive-remote/non-atomic publication, retained recovery-copy and stopped-writer confirmations are required")
+			return
+		}
+		claims, authErr := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
+		if authErr != nil {
+			writeAPIError(w, 401, 401, "authorization expired")
+			return
+		}
+		api.remoteApproval = organization.RemoteApproval{Actor: claims.Username, Created: time.Now().UTC().Format(time.RFC3339Nano), Exclusive: true, RecoveryCopy: true}
+	}
+	if action == "resume-move" && !organization.MoveMode(job.Definition.Mode) {
 		writeOrganizationError(w, organization.ErrState)
 		return
 	}
-	if job.Definition.Mode == "move" && (action == "execute" || action == "resume-move" || action == "resume-publication") && !input.ConfirmSourceRemoval {
+	if organization.MoveMode(job.Definition.Mode) && (action == "execute" || action == "resume-move" || action == "resume-publication") && !input.ConfirmSourceRemoval {
 		writeAPIError(w, 400, 400, "separate source-removal confirmation is required for moving files")
 		return
 	}
@@ -287,6 +315,16 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 			return
 		}
 		err = api.jobs.RestoreSource(ctx, job, input.ReviewFingerprint, claims.Username, input.Reason, func() error { return api.validateSourceRestoreConfiguration(ctx, job, claims.Username) })
+	} else if action == "close-remote" {
+		claims, authErr := api.auth.service.VerifyToken(r.Header.Get("Authorization"))
+		if authErr != nil {
+			writeAPIError(w, 401, 401, "authorization expired")
+			return
+		}
+		err = api.validateSourceRestoreConfiguration(ctx, job, claims.Username)
+		if err == nil {
+			err = api.jobs.CloseRemoteJob(ctx, job, claims.Username, input.Reason)
+		}
 	} else if action == "cancel" {
 		err = api.jobs.Cancel(ctx, job.ID)
 	} else if action == "reconcile-unknown" {
@@ -299,6 +337,10 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 		}
 		err = api.jobs.DetachUnknown(ctx, job, input.ReviewFingerprint, claims.Username, input.Reason)
 	} else if action == "abandon-unpublished" {
+		if job.Remote != nil {
+			writeOrganizationError(w, organization.ErrMode)
+			return
+		}
 		err = api.validateJobConfiguration(ctx, job)
 		if err == nil {
 			err = api.jobs.AbandonUnpublished(ctx, job, func() error { return api.validateJobConfiguration(ctx, job) })
@@ -306,8 +348,10 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 	} else {
 		err = api.validateJob(ctx, job)
 		if err == nil {
-			if job.State == "abandoning" || job.State == "abandoned" || job.State == organization.SourceRestoring || job.State == organization.SourceRestored {
+			if job.State == "abandoning" || job.State == "abandoned" || job.State == organization.SourceRestoring || job.State == organization.SourceRestored || job.State == "remote_closed" {
 				err = organization.ErrState
+			} else if organization.RemoteMode(job.Mode) {
+				err = api.runRemoteJob(ctx, job, action)
 			} else if action == "resume-move" {
 				err = api.resumeMove(ctx, job)
 			} else if action == "resume-publication" {
@@ -317,7 +361,7 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	if err == nil && action != "cancel" && action != "abandon-unpublished" && action != "detach-unknown" && action != "restore-source" {
+	if err == nil && action != "cancel" && action != "abandon-unpublished" && action != "detach-unknown" && action != "restore-source" && action != "close-remote" {
 		err = api.jobs.ResolveUnknown(ctx, job)
 	}
 	if err != nil {
@@ -333,6 +377,9 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 }
 
 func (api organizationAPI) runJob(ctx context.Context, job organization.Job, reconcile bool) error {
+	if organization.RemoteMode(job.Mode) {
+		return organization.ErrMode
+	}
 	ctx, close, err := api.guardSeedingMove(ctx, job)
 	if err != nil {
 		return err
@@ -507,7 +554,7 @@ func (api organizationAPI) cleanupMove(ctx context.Context, job organization.Job
 }
 
 func (api organizationAPI) resumeMove(ctx context.Context, job organization.Job) error {
-	if job.Definition.Mode != "move" || job.State == "cancelled" {
+	if !organization.MoveMode(job.Definition.Mode) || job.State == "cancelled" || job.State == "remote_closed" {
 		return organization.ErrState
 	}
 	for _, item := range job.Items {

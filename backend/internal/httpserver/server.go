@@ -22,6 +22,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/mediasync"
 	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/0xforee/nas-tools/backend/internal/rssparserconfig"
 	"github.com/0xforee/nas-tools/backend/internal/rsstaskconfig"
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
@@ -353,6 +354,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		organizationJobs = nil
 	}
 	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, records: organizationRecords, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
+	if cfg.DisableLegacy {
+		organizer.rclone = remotestore.Factory{ConfigFile: cfg.RcloneConfigFile, Binary: cfg.RcloneBinary}
+	}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("POST /api/v1/organization/downloads/completion/review", organizer.serveDownloadCompletionReview)
 	mux.HandleFunc("GET /api/v1/organization/downloads/monitor", organizer.serveDownloadMonitorStatus)

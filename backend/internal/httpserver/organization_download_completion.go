@@ -50,7 +50,7 @@ func (api organizationAPI) reviewDownloadCompletion(ctx context.Context, input d
 		return fail(422, "downloader must explicitly enable completion transfer")
 	}
 	mode, known := syncConfigMode(item.RmtMode)
-	if !known || !organization.SupportedMode(mode) {
+	if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
 		return fail(501, "remote/unknown completion transfer mode is not migrated; no fallback")
 	}
 	if item.OnlyNastool < 0 || item.OnlyNastool > 1 || item.MatchPath < 0 || item.MatchPath > 1 {

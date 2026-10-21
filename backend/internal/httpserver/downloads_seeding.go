@@ -133,7 +133,7 @@ func (api organizationAPI) protectSeedingClient(item downloaderconfig.Downloader
 
 func (api organizationAPI) guardSeedingMove(ctx context.Context, job organization.Job) (context.Context, func(), error) {
 	o := job.Definition.Download
-	if o == nil || job.Definition.Mode != "move" {
+	if o == nil || !organization.MoveMode(job.Definition.Mode) {
 		return ctx, func() {}, nil
 	}
 	id, err := syncConfigID(o.DownloaderID)

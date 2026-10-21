@@ -143,7 +143,7 @@ func (api organizationAPI) legacyRedoPlan(ctx context.Context, kind string, id i
 			input.Mode = "copy"
 		}
 	}
-	if !organization.SupportedMode(input.Mode) {
+	if !organization.SupportedMode(input.Mode) || organization.RemoteMode(input.Mode) {
 		return fail(501, "selected transfer mode is not migrated; no local fallback")
 	}
 	var best organizationPlan

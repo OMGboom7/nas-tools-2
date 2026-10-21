@@ -47,7 +47,7 @@ type organizationUnknownItem struct {
 
 func projectUnknown(record organization.UnknownRecord, roots organizationRoots) organizationUnknownItem {
 	item := organizationUnknownItem{UnknownRecord: record, IDText: strconv.FormatInt(record.ID, 10), Fingerprint: organization.Digest(record), NativeMode: transferModes[record.Mode]}
-	if record.Mode != "" && !organization.SupportedMode(item.NativeMode) {
+	if record.Mode != "" && (!organization.SupportedMode(item.NativeMode) || organization.RemoteMode(item.NativeMode)) {
 		item.Reason = "旧转移方式尚未迁移，不能自动改为本地方式"
 		return item
 	}

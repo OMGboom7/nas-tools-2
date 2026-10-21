@@ -11,6 +11,16 @@ import (
 // after its staging anchor has legitimately been cleaned up. Never use it to
 // adopt an uncertain/prepared publication or infer source removal from absence.
 func VerifyCompletedTarget(ctx context.Context, job Job, item JobItem) error {
+	if RemoteMode(job.Mode) {
+		if item.State != "completed" || item.Reason != "" || item.Proof.Remote == nil || !item.Proof.Remote.TargetVerified {
+			return ErrState
+		}
+		c, err := remoteClient(ctx, job.Definition)
+		if err != nil {
+			return err
+		}
+		return VerifyRemoteTarget(ctx, c, job.Definition, item.Entry, item.Proof, true)
+	}
 	if IsDisc(item.Entry) {
 		if item.State != "completed" || item.Reason != "" {
 			return ErrState

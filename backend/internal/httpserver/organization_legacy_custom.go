@@ -107,7 +107,7 @@ func decodeLegacyIdentification(w http.ResponseWriter, r *http.Request, linked b
 	if input.Mode == "" && organization.SupportedMode(fields["syncmod"]) {
 		input.Mode = fields["syncmod"]
 	}
-	if !organization.SupportedMode(input.Mode) {
+	if !organization.SupportedMode(input.Mode) || organization.RemoteMode(input.Mode) {
 		writeAPIError(w, 501, 501, "transfer mode is not migrated; no fallback")
 		return input, false
 	}

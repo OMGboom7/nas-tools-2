@@ -9,6 +9,9 @@ import (
 // disposal consent and stopped old executors. Never use it to reset an uncertain
 // running item, infer publication from absence, or recover unjournaled objects.
 func (s *Store) AbandonUnpublished(ctx context.Context, job Job, validate func() error) error {
+	if RemoteMode(job.Mode) || job.Definition.Remote != nil {
+		return ErrMode
+	}
 	if validate == nil || (job.State != "needs_review" && job.State != "abandoning") {
 		return ErrState
 	}

@@ -59,7 +59,7 @@ func sourceRestorePolicy(item JobItem) string {
 		if item.Reason == "" {
 			return "completed_retained"
 		}
-	case "prepared", "staging":
+	case "prepared", "staging", "publishing":
 		if item.Proof.SourceHold == "" && item.Proof.Identity != "" && len(item.Proof.Digest) == 64 && (item.State == "staging") == item.Proof.Incomplete {
 			return "source_retained"
 		}
@@ -125,7 +125,7 @@ func (s *Store) sourceRestoreDocument(ctx context.Context, job Job) (*sourceRest
 // evidence; targets are intentionally not adopted, verified or changed here.
 func (s *Store) ReviewSourceRestore(ctx context.Context, job Job) (SourceRestoreReview, error) {
 	r := SourceRestoreReview{JobID: job.ID, State: job.State, Items: []SourceRestoreItem{}, CanRestore: true, Fingerprint: Digest([]any{job.ID, job.State, job.Definition})}
-	if job.Mode != "move" || (job.State != "needs_review" && job.State != SourceRestoring && job.State != SourceRestored) {
+	if !MoveMode(job.Mode) || (job.State != "needs_review" && job.State != SourceRestoring && job.State != SourceRestored) {
 		r.CanRestore = false
 		r.Reason = "only an interrupted move with durable original-source evidence can be restored"
 		return r, nil

@@ -133,6 +133,9 @@ func TransferJournaled(ctx context.Context, d Definition, item Entry, tempName s
 }
 
 func transfer(ctx context.Context, d Definition, item Entry, tempName string, staging, prepared func(Proof) error) (Proof, error) {
+	if RemoteMode(d.Mode) || d.Remote != nil {
+		return Proof{}, ErrMode
+	}
 	if IsDisc(item) {
 		return transferDisc(ctx, d, item, tempName, staging, prepared)
 	}

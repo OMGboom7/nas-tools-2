@@ -75,7 +75,7 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 			return fail(422, "selected downloader must enable completion transfer")
 		}
 		mode, known := syncConfigMode(item.RmtMode)
-		if !known || !organization.SupportedMode(mode) {
+		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
 			return fail(501, "remote or unknown completion mode is not migrated")
 		}
 		if item.Type != "qbittorrent" && item.Type != "transmission" && item.Type != "aria2" {

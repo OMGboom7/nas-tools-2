@@ -105,6 +105,9 @@ func sidecarTarget(item JobItem, scope, name string) (string, error) {
 // item. All path components are descriptor-relative and no leaf is truncated.
 // prepare must commit the private object's identity before writing any bytes.
 func PublishSidecar(ctx context.Context, job Job, item JobItem, scope, name string, data []byte, prepare func(SidecarProof) error, beforePublish func() error) (proof SidecarProof, state string, err error) {
+	if RemoteMode(job.Mode) {
+		return publishRemoteSidecar(ctx, job, item, scope, name, data, prepare, beforePublish)
+	}
 	state = "blocked"
 	if len(data) == 0 || len(data) > 16<<20 || prepare == nil || beforePublish == nil || job.State != "completed" || item.State != "completed" || item.Reason != "" {
 		return proof, state, ErrState

@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -24,7 +26,7 @@ var ErrMode = errors.New("organization mode is unavailable on this filesystem")
 var ErrBusy = errors.New("organization operation is already active")
 
 func SupportedMode(mode string) bool {
-	return mode == "copy" || mode == "link" || mode == "softlink" || mode == "move"
+	return mode == "copy" || mode == "link" || mode == "softlink" || mode == "move" || RemoteMode(mode)
 }
 
 // Persisted receipt values: keep stable across upgrades; translate in the UI,
@@ -37,7 +39,7 @@ const MoveTargetCleanupPending = "Move target recovery cleanup pending"
 const ExecutionTimeout = 2 * time.Hour
 
 func ModeLabel(mode string) string {
-	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动"}[mode]
+	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动", "rclonecopy": "Rclone复制", "rclone": "Rclone移动"}[mode]
 }
 
 type Entry struct {
@@ -97,6 +99,7 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	Remote                *remotestore.Binding      `json:"remote,omitempty"`
 	AllowDiscExpansion    bool                      `json:"allowDiscExpansion,omitempty"`
 	Discs                 map[string]DiscManifest   `json:"discs,omitempty"`
 	ScraperEnabled        bool                      `json:"scraperEnabled,omitempty"`
@@ -125,19 +128,20 @@ type Definition struct {
 }
 
 type Proof struct {
-	Disc                 *DiscProof `json:"disc,omitempty"`
-	Incomplete           bool       `json:"incomplete,omitempty"`
-	Anchor               bool       `json:"anchor,omitempty"`
-	Temp                 string     `json:"temp"`
-	Identity             string     `json:"identity"`
-	ParentIdentity       string     `json:"parentIdentity"`
-	StagingIdentity      string     `json:"stagingIdentity"`
-	Digest               string     `json:"digest"`
-	Kind                 string     `json:"kind,omitempty"`
-	LinkTarget           string     `json:"linkTarget,omitempty"`
-	SourceHold           string     `json:"sourceHold,omitempty"`
-	SourceHoldIdentity   string     `json:"sourceHoldIdentity,omitempty"`
-	SourceParentIdentity string     `json:"sourceParentIdentity,omitempty"`
+	Remote               *RemoteProof `json:"remote,omitempty"`
+	Disc                 *DiscProof   `json:"disc,omitempty"`
+	Incomplete           bool         `json:"incomplete,omitempty"`
+	Anchor               bool         `json:"anchor,omitempty"`
+	Temp                 string       `json:"temp"`
+	Identity             string       `json:"identity"`
+	ParentIdentity       string       `json:"parentIdentity"`
+	StagingIdentity      string       `json:"stagingIdentity"`
+	Digest               string       `json:"digest"`
+	Kind                 string       `json:"kind,omitempty"`
+	LinkTarget           string       `json:"linkTarget,omitempty"`
+	SourceHold           string       `json:"sourceHold,omitempty"`
+	SourceHoldIdentity   string       `json:"sourceHoldIdentity,omitempty"`
+	SourceParentIdentity string       `json:"sourceParentIdentity,omitempty"`
 }
 
 type JobItem struct {
@@ -149,6 +153,8 @@ type JobItem struct {
 }
 
 type Job struct {
+	RemoteClosure        *RemoteClosure            `json:"remoteClosure,omitempty"`
+	Remote               *remotestore.Summary      `json:"remote,omitempty"`
 	SourceRestore        *SourceRestoreReceipt     `json:"sourceRestore,omitempty"`
 	DownloadGeneration   string                    `json:"-"`
 	Download             *DownloadOrigin           `json:"download,omitempty"`
@@ -206,6 +212,8 @@ func OpenStore(path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_DETACH (JOB_ID TEXT PRIMARY KEY, RECEIPT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_UNKNOWN_DELETE (ID TEXT PRIMARY KEY,RECORD_ID INTEGER NOT NULL,RECEIPT TEXT NOT NULL,RESTORE TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_SOURCE_RESTORE (JOB_ID TEXT PRIMARY KEY,DOCUMENT TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_REMOTE_TARGETS (TARGET TEXT PRIMARY KEY,JOB_ID TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_REMOTE_CLOSURES (JOB_ID TEXT PRIMARY KEY,RECEIPT TEXT NOT NULL)`,
 	} {
 		if _, err = db.Exec(statement); err != nil {
 			db.Close()
@@ -274,6 +282,9 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 	if len(fingerprint) != 64 || !SupportedMode(d.Mode) || len(d.Entries) == 0 || len(d.Entries) > 1000 || d.SourceIdentity == "" || d.TargetIdentity == "" || !filepath.IsAbs(d.SourceRoot) || !filepath.IsAbs(d.TargetRoot) {
 		return "", ErrPath
 	}
+	if RemoteMode(d.Mode) != (d.Remote != nil) || d.Remote != nil && !remoteProfileValid(d) {
+		return "", ErrMode
+	}
 	for _, entry := range d.Entries {
 		if !validRelative(entry.Source) || !validRelative(entry.Target) || entry.Source == "." && !IsDisc(entry) || entry.Target == "." || entry.Identity == "" || entry.Size < 0 {
 			return "", ErrPath
@@ -285,7 +296,7 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 			if _, err := discManifestDefinition(d, entry); err != nil {
 				return "", err
 			}
-			if d.Mode == "move" && entry.Source == "." {
+			if MoveMode(d.Mode) && entry.Source == "." {
 				return "", ErrMode
 			}
 		}
@@ -375,8 +386,14 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 			return "", err
 		}
 	}
-	if err := reserveDiscTargets(ctx, tx, id, d); err != nil {
-		return "", err
+	if d.Remote != nil {
+		if err := reserveRemoteTargets(ctx, tx, id, d); err != nil {
+			return "", err
+		}
+	} else {
+		if err := reserveDiscTargets(ctx, tx, id, d); err != nil {
+			return "", err
+		}
 	}
 	return id, nil
 }
@@ -396,6 +413,9 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	}
 	job.EpisodeSelection = job.Definition.EpisodeSelection
 	job.Mode = job.Definition.Mode
+	if job.Definition.Remote != nil {
+		job.Remote = job.Definition.Remote.Summary()
+	}
 	job.LegacyOrigin = job.Definition.LegacyOrigin
 	job.LegacySelection = job.Definition.LegacySelection
 	job.LegacyRename = job.Definition.LegacyRename
@@ -458,6 +478,17 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 			return job, ErrState
 		}
 		job.SourceRestore = &doc.Receipt
+		return job, nil
+	}
+	if job.State == "remote_closed" {
+		var raw string
+		job.RemoteClosure = &RemoteClosure{}
+		if err := s.db.QueryRowContext(ctx, `SELECT RECEIPT FROM GO_ORGANIZATION_REMOTE_CLOSURES WHERE JOB_ID=?`, job.ID).Scan(&raw); err != nil {
+			return job, err
+		}
+		if json.Unmarshal([]byte(raw), job.RemoteClosure) != nil {
+			return job, ErrState
+		}
 		return job, nil
 	}
 	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" {
@@ -572,6 +603,17 @@ func (s *Store) Stage(ctx context.Context, id string, index int, p Proof) error 
 	if _, err := hex.DecodeString(p.Digest); err != nil {
 		return ErrState
 	}
+	var definition string
+	if err := s.db.QueryRowContext(ctx, `SELECT DEFINITION FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active'`, id).Scan(&definition); err != nil {
+		return err
+	}
+	var d Definition
+	if json.Unmarshal([]byte(definition), &d) != nil || index < 0 || index >= len(d.Entries) || (d.Remote != nil) != (p.Remote != nil) {
+		return ErrState
+	}
+	if p.Remote != nil && (remoteProofValid(d, d.Entries[index], p) != nil || p.Remote.StageReady || p.Remote.PublicationIntent || p.Remote.TargetVerified) {
+		return ErrState
+	}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -605,7 +647,7 @@ func (s *Store) VerifyPrepared(ctx context.Context, id string, index int, p Proo
 }
 
 func (s *Store) RecordError(ctx context.Context, id string, index int) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','staging','prepared','moving','quarantined')`, id, index)
+	_, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON='Execution interrupted or failed; verify the saved proof before any retry' WHERE JOB_ID=? AND ORDINAL=? AND STATE IN ('running','staging','prepared','publishing','moving','quarantined')`, id, index)
 	return err
 }
 
@@ -640,6 +682,9 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 		return err
 	}
 	if err := releaseDiscTargets(ctx, tx, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM GO_ORGANIZATION_REMOTE_TARGETS WHERE JOB_ID=?`, id); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, id); err != nil {
@@ -701,14 +746,17 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	if state == "completed" {
 		return nil
 	}
-	if job.Definition.Mode == "move" && state != "quarantined" || job.Definition.Mode != "move" && state != "prepared" {
+	if MoveMode(job.Definition.Mode) && state != "quarantined" || !MoveMode(job.Definition.Mode) && state != "prepared" {
 		return ErrState
 	}
 	var storedProof Proof
 	if err = json.Unmarshal([]byte(rawProof), &storedProof); err != nil || Digest(storedProof) != Digest(item.Proof) || item.Proof.Identity == "" {
 		return ErrState
 	}
-	if job.Definition.Mode == "move" && (storedProof.SourceHold == "" || storedProof.SourceHoldIdentity == "" || storedProof.SourceParentIdentity == "") {
+	if job.Definition.Remote != nil && (remoteProofValid(job.Definition, item.Entry, storedProof) != nil || !storedProof.Remote.TargetVerified || !storedProof.Remote.PublicationIntent || !storedProof.Remote.StageReady) {
+		return ErrState
+	}
+	if MoveMode(job.Definition.Mode) && (storedProof.SourceHold == "" || storedProof.SourceHoldIdentity == "" || storedProof.SourceParentIdentity == "") {
 		return ErrState
 	}
 	if job.Definition.Sync != nil && job.Definition.Sync.Record.Rename == 0 {
@@ -743,7 +791,7 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 		}
 	}
 	reason := ""
-	if job.Definition.Mode == "move" {
+	if MoveMode(job.Definition.Mode) {
 		reason = MoveSourceCleanupPending
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='completed',REASON=? WHERE JOB_ID=? AND ORDINAL=?`, reason, job.ID, item.Index); err != nil {
@@ -771,7 +819,7 @@ func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) er
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='moving',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='prepared' AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode')='move')`, string(raw), id, index, string(previous), id)
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='moving',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='prepared' AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone'))`, string(raw), id, index, string(previous), id)
 	if err != nil {
 		return err
 	}
@@ -816,7 +864,7 @@ func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p 
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode')='move')`, to, id, index, from, string(raw), id)
+	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone'))`, to, id, index, from, string(raw), id)
 	if err != nil {
 		return err
 	}

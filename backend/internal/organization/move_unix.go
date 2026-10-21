@@ -36,8 +36,11 @@ func PrepareMoveTargetJournaled(ctx context.Context, d Definition, item Entry, t
 }
 
 func verifyMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) error {
-	if d.Mode != "move" {
+	if !MoveMode(d.Mode) {
 		return ErrMode
+	}
+	if d.Remote != nil {
+		return verifyRemoteMove(ctx, d, item, p)
 	}
 	d.Mode = "copy"
 	err := VerifyPublished(ctx, d, item, p)
@@ -77,7 +80,7 @@ func PrepareMove(ctx context.Context, d Definition, item Entry, p Proof, name st
 	if IsDisc(item) {
 		return prepareDiscMove(ctx, d, item, p, name)
 	}
-	if d.Mode != "move" || !strings.HasPrefix(name, ".nastool-move-") || filepath.Base(name) != name || !validRelative(name) || p.SourceHold != "" {
+	if !MoveMode(d.Mode) || !strings.HasPrefix(name, ".nastool-move-") || filepath.Base(name) != name || !validRelative(name) || p.SourceHold != "" {
 		return p, ErrState
 	}
 	if err := verifyMoveTarget(ctx, d, item, p); err != nil {
@@ -134,7 +137,7 @@ func PrepareMove(ctx context.Context, d Definition, item Entry, p Proof, name st
 }
 
 func openMoveHold(d Definition, item Entry, p Proof) (*os.File, *os.File, string, error) {
-	if d.Mode != "move" || !strings.HasPrefix(p.SourceHold, ".nastool-move-") || filepath.Base(p.SourceHold) != p.SourceHold || !validRelative(p.SourceHold) || p.SourceHoldIdentity == "" || p.SourceParentIdentity == "" {
+	if !MoveMode(d.Mode) || !strings.HasPrefix(p.SourceHold, ".nastool-move-") || filepath.Base(p.SourceHold) != p.SourceHold || !validRelative(p.SourceHold) || p.SourceHoldIdentity == "" || p.SourceParentIdentity == "" {
 		return nil, nil, "", ErrState
 	}
 	root, err := anchoredRoot(d.SourceRoot, d.SourceIdentity)
@@ -392,6 +395,11 @@ func CleanupMovedSource(ctx context.Context, d Definition, item Entry, p Proof) 
 // target anchor. Recheck the published target while that anchor still exists;
 // empty/already removed stages can be retried without guessing file ownership.
 func CleanupMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) error {
+	if RemoteMode(d.Mode) {
+		// Remote recovery copies are deliberately retained, not deleted under
+		// the local target-cleanup permission.
+		return verifyRemoteMove(ctx, d, item, p)
+	}
 	if IsDisc(item) {
 		return cleanupDiscMoveTarget(ctx, d, item, p)
 	}

@@ -242,7 +242,7 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 	if mode == "" && organization.SupportedMode(record.Mode) {
 		mode = record.Mode
 	}
-	if !organization.SupportedMode(mode) {
+	if !organization.SupportedMode(mode) || organization.RemoteMode(mode) {
 		return fail(501, "sync transfer mode is not migrated; no fallback")
 	}
 	if record.Source == "" || record.Dest == "" {

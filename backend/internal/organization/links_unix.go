@@ -32,6 +32,12 @@ func modeOperationError(err error) error {
 // ValidateMode is read-only. For hard links, the nearest existing target
 // ancestor determines the device of directories we will create later.
 func ValidateMode(ctx context.Context, d Definition, item Entry) error {
+	if RemoteMode(d.Mode) {
+		if !remoteProfileValid(d) || MoveMode(d.Mode) && item.Source == "." {
+			return ErrMode
+		}
+		return ctx.Err()
+	}
 	if IsDisc(item) {
 		if _, err := discManifest(d, item); err != nil {
 			return err
