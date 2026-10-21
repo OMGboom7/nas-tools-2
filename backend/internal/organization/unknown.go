@@ -33,6 +33,9 @@ func (s *Store) GetUnknown(ctx context.Context, id int64) (UnknownRecord, error)
 // Never marks a row based on a target name, missing source, or operator guess.
 // All media/attachments and move cleanup receipts must already be committed.
 func (s *Store) ResolveUnknown(ctx context.Context, job Job) error {
+	if job.Definition.LegacyBatch != nil {
+		return nil
+	}
 	if job.Definition.Unknown == nil {
 		return nil
 	}
@@ -153,7 +156,11 @@ func (s *Store) VerifyUnknown(ctx context.Context, job Job) error {
 		return nil
 	}
 	var state string
-	if err := s.db.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, job.ID, job.Definition.Unknown.ID).Scan(&state); err != nil {
+	owner, err := legacyOwner(ctx, s.db, job.Definition, job.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, owner, job.Definition.Unknown.ID).Scan(&state); err != nil {
 		return err
 	}
 	if state != "pending" {

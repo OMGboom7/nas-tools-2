@@ -82,6 +82,8 @@ type organizationPlanItem struct {
 	SeasonEpisode string                 `json:"seasonEpisode,omitempty"`
 }
 type organizationPlan struct {
+	Partitions     []organizationPartition `json:"partitions,omitempty"`
+	partitions     []organizationPlan
 	Remote         *remotestore.Summary   `json:"remote,omitempty"`
 	ScraperEnabled bool                   `json:"scraperEnabled"`
 	Items          []organizationPlanItem `json:"items"`

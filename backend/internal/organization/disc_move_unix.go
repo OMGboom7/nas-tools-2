@@ -286,6 +286,18 @@ func cleanupDiscMoveTarget(ctx context.Context, d Definition, e Entry, p Proof) 
 			return err
 		}
 	}
+	if err := cleanupDiscSourceHold(ctx, d, e, p); err != nil {
+		return err
+	}
+	return cleanupDisc(ctx, d, e, p)
+}
+
+// Source-cleaned is already durable. Remove only the ledger-bound, verified
+// empty local hold; remote recovery objects remain under separate authority.
+func cleanupDiscSourceHold(ctx context.Context, d Definition, e Entry, p Proof) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	parent, hold, leaf, err := openMoveHold(d, e, p)
 	if err == nil {
 		same, e2 := discOriginalNamed(parent, leaf, e)
@@ -321,5 +333,5 @@ func cleanupDiscMoveTarget(ctx context.Context, d Definition, e Entry, p Proof) 
 	} else if !errors.Is(err, unix.ENOENT) {
 		return err
 	}
-	return cleanupDisc(ctx, d, e, p)
+	return nil
 }

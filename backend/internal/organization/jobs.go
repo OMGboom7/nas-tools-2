@@ -99,6 +99,8 @@ type LegacyRenameOptions struct {
 }
 
 type Definition struct {
+	LegacyBatch           *LegacyBatchRef           `json:"legacyBatch,omitempty"`
+	LegacyScope           string                    `json:"legacyScope,omitempty"`
 	Remote                *remotestore.Binding      `json:"remote,omitempty"`
 	AllowDiscExpansion    bool                      `json:"allowDiscExpansion,omitempty"`
 	Discs                 map[string]DiscManifest   `json:"discs,omitempty"`
@@ -153,6 +155,7 @@ type JobItem struct {
 }
 
 type Job struct {
+	LegacyBatch          *LegacyBatchRef           `json:"legacyBatch,omitempty"`
 	RemoteClosure        *RemoteClosure            `json:"remoteClosure,omitempty"`
 	Remote               *remotestore.Summary      `json:"remote,omitempty"`
 	SourceRestore        *SourceRestoreReceipt     `json:"sourceRestore,omitempty"`
@@ -214,6 +217,7 @@ func OpenStore(path string) (*Store, error) {
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_SOURCE_RESTORE (JOB_ID TEXT PRIMARY KEY,DOCUMENT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_REMOTE_TARGETS (TARGET TEXT PRIMARY KEY,JOB_ID TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_ORGANIZATION_REMOTE_CLOSURES (JOB_ID TEXT PRIMARY KEY,RECEIPT TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_LEGACY_ORGANIZATION_BATCHES (ID TEXT PRIMARY KEY,DOCUMENT TEXT NOT NULL,FINGERPRINT TEXT NOT NULL,STATE TEXT NOT NULL,REASON TEXT NOT NULL,ACTOR TEXT NOT NULL,CREATED TEXT NOT NULL)`,
 	} {
 		if _, err = db.Exec(statement); err != nil {
 			db.Close()
@@ -255,6 +259,9 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 
 // Shared by ordinary creation and atomic completion of a reviewed reservation.
 func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definition) (string, error) {
+	if err := verifyLegacyMember(ctx, tx, d, true); err != nil {
+		return "", err
+	}
 	if d.Sync != nil {
 		if d.Sync.Actor == "" || d.Sync.ScopeIdentity == "" || len(d.Sync.GraphDigest) != 64 || d.Sync.Record.Rename < 0 || d.Sync.Record.Rename > 1 || d.Unknown != nil || d.History != nil || d.LegacyOrigin != nil || !validRelative(d.Sync.Scope) {
 			return "", ErrState
@@ -353,11 +360,22 @@ func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definiti
 		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE RECORD_ID=? AND STATE='pending'`, current.ID).Scan(&claims); err != nil {
 			return "", err
 		}
-		if claims != 0 {
-			return "", ErrClaimed
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO GO_ORGANIZATION_UNKNOWN_LINKS VALUES (?,?,'pending')`, id, current.ID); err != nil {
-			return "", err
+		if d.LegacyBatch != nil && d.LegacyBatch.Index > 0 {
+			var ownerRaw string
+			if err := tx.QueryRowContext(ctx, `SELECT J.DEFINITION FROM GO_ORGANIZATION_UNKNOWN_LINKS L JOIN GO_ORGANIZATION_JOBS J ON J.ID=L.JOB_ID WHERE L.RECORD_ID=? AND L.STATE='pending'`, current.ID).Scan(&ownerRaw); err != nil {
+				return "", err
+			}
+			var owner Definition
+			if json.Unmarshal([]byte(ownerRaw), &owner) != nil || owner.LegacyBatch == nil || owner.LegacyBatch.ID != d.LegacyBatch.ID || owner.LegacyBatch.Index != 0 {
+				return "", ErrClaimed
+			}
+		} else {
+			if claims != 0 {
+				return "", ErrClaimed
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO GO_ORGANIZATION_UNKNOWN_LINKS VALUES (?,?,'pending')`, id, current.ID); err != nil {
+				return "", err
+			}
 		}
 	}
 	if d.History != nil {
@@ -420,6 +438,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		job.Remote = job.Definition.Remote.Summary()
 	}
 	job.LegacyOrigin = job.Definition.LegacyOrigin
+	job.LegacyBatch = job.Definition.LegacyBatch
 	job.LegacySelection = job.Definition.LegacySelection
 	job.LegacyRename = job.Definition.LegacyRename
 	job.LegacyTargetOverride = job.Definition.LegacyTargetOverride
@@ -458,7 +477,11 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 	rows.Close()
 	if job.Definition.Unknown != nil {
 		job.UnknownRecordID = job.Definition.Unknown.ID
-		if err = s.db.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, job.ID, job.UnknownRecordID).Scan(&job.UnknownState); err != nil {
+		owner, err := legacyOwner(ctx, s.db, job.Definition, job.ID)
+		if err != nil {
+			return job, err
+		}
+		if err = s.db.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_UNKNOWN_LINKS WHERE JOB_ID=? AND RECORD_ID=?`, owner, job.UnknownRecordID).Scan(&job.UnknownState); err != nil {
 			return job, err
 		}
 		if job.UnknownState == "detached" {
@@ -545,6 +568,9 @@ func (s *Store) List(ctx context.Context) ([]Job, error) {
 }
 
 func (s *Store) Claim(ctx context.Context, id string, index int) (bool, error) {
+	if err := verifyLegacyJob(ctx, s.db, id); err != nil {
+		return false, err
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='running' WHERE JOB_ID=? AND ORDINAL=? AND STATE='planned' AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active')`, id, index, id)
 	if err != nil {
 		return false, err
@@ -554,6 +580,9 @@ func (s *Store) Claim(ctx context.Context, id string, index int) (bool, error) {
 }
 
 func (s *Store) Prepare(ctx context.Context, id string, index int, p Proof) error {
+	if err := verifyLegacyJob(ctx, s.db, id); err != nil {
+		return err
+	}
 	if p.Incomplete {
 		return ErrState
 	}
@@ -620,6 +649,9 @@ func (s *Store) Stage(ctx context.Context, id string, index int, p Proof) error 
 	if err := verifyRemoteExecution(ctx, s.db, d, &p); err != nil {
 		return err
 	}
+	if err := verifyLegacyMember(ctx, s.db, d, false); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -638,6 +670,9 @@ func (s *Store) Stage(ctx context.Context, id string, index int, p Proof) error 
 // Read-only publication permission; this is not a lease, timeout, or reset.
 // Concurrent publication is bounded by atomic no-overwrite filesystem linking.
 func (s *Store) VerifyPrepared(ctx context.Context, id string, index int, p Proof) error {
+	if err := verifyLegacyJob(ctx, s.db, id); err != nil {
+		return err
+	}
 	if p.Incomplete {
 		return ErrState
 	}
@@ -658,6 +693,9 @@ func (s *Store) RecordError(ctx context.Context, id string, index int) error {
 }
 
 func (s *Store) Cancel(ctx context.Context, id string) error {
+	if err := verifyLegacyDisposition(ctx, s.db, id); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -693,7 +731,7 @@ func (s *Store) Cancel(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM GO_ORGANIZATION_REMOTE_TARGETS WHERE JOB_ID=?`, id); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, id); err != nil {
+	if err = cancelUnknownLink(ctx, tx, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -720,6 +758,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 	}
 	if jobState != "active" {
 		return ErrState
+	}
+	if err := verifyLegacyMember(ctx, tx, job.Definition, false); err != nil {
+		return err
 	}
 	if err := verifySyncRecord(ctx, tx, job.Definition); err != nil {
 		return err
@@ -815,6 +856,9 @@ func (s *Store) Complete(ctx context.Context, job Job, item JobItem) error {
 // BeginMove saves source disposition intent only when its target-copy proof
 // matches the existing prepared ledger. No mode conversion or automatic retry.
 func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) error {
+	if err := verifyLegacyJob(ctx, s.db, id); err != nil {
+		return err
+	}
 	if err := s.verifyRemoteJobExecution(ctx, s.db, id, &p); err != nil {
 		return err
 	}
@@ -845,6 +889,9 @@ func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) er
 // MarkQuarantined must be called by ContinueMove after positive source capture
 // verification. It cannot infer a completed move from a missing source name.
 func (s *Store) MarkQuarantined(ctx context.Context, id string, index int, p Proof) error {
+	if err := verifyLegacyJob(ctx, s.db, id); err != nil {
+		return err
+	}
 	if err := s.verifyRemoteJobExecution(ctx, s.db, id, &p); err != nil {
 		return err
 	}
@@ -880,6 +927,9 @@ func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p 
 	}
 	defer tx.Rollback()
 	if err := s.verifyRemoteJobExecution(ctx, tx, id, &p); err != nil {
+		return err
+	}
+	if err := verifyLegacyJob(ctx, tx, id); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone'))`, to, id, index, from, string(raw), id)

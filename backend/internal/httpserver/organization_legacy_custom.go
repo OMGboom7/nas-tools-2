@@ -222,53 +222,7 @@ func (api organizationAPI) legacyCustomPlan(ctx context.Context, request legacyC
 }
 
 func (api organizationAPI) legacyIdentificationTargets(ctx context.Context, roots organizationRoots, input organizationPlanInput, dest string, origin *organization.LegacyOrganizationOrigin) (organizationPlan, *recognitionFailure) {
-	input.LegacyTargetOverride = dest != "" // An explicit configured destination is not an automatic library choice.
-	var last *recognitionFailure
-	for _, root := range roots.Targets {
-		if dest != "" && !organizationTargetMatches(root.Path, ".", dest, input.Mode) || dest == "" && root.Type == "" {
-			continue
-		}
-		input.TargetID = root.ID
-		plan, failure := api.plan(ctx, input)
-		if failure != nil {
-			if ctx.Err() != nil {
-				return plan, failure
-			}
-			last = failure
-			continue
-		}
-		complete := len(plan.definition.Entries) > 0 && plan.Skipped == 0
-		for _, item := range plan.Items {
-			if item.Status != "available" && item.Status != "filtered" {
-				complete = false
-			}
-		}
-		if !complete {
-			last = &recognitionFailure{422, "custom selection contains skipped, blocked, ambiguous, conflicting or no available files"}
-			continue
-		}
-		if input.LegacyRename != nil {
-			options := *input.LegacyRename
-			if plan.definition.Unknown != nil {
-				for _, item := range plan.Items {
-					if item.Status == "filtered" {
-						options.PreserveUnknown = true
-					}
-				}
-			}
-			plan.definition.LegacyRename = &options
-		}
-		plan.definition.LegacyOrigin = origin
-		plan.Fingerprint = organization.Digest(struct {
-			Definition organization.Definition
-			Items      []organizationPlanItem
-		}{plan.definition, plan.Items})
-		return plan, nil
-	}
-	if last != nil {
-		return organizationPlan{}, last
-	}
-	return organizationPlan{}, &recognitionFailure{422, "identification must select an enabled compatible configured destination root"}
+	return api.legacyTargetPlans(ctx, roots, input, dest, origin, true)
 }
 
 func (api organizationAPI) serveLegacyCustomRename(w http.ResponseWriter, r *http.Request) {
@@ -338,19 +292,23 @@ func (api organizationAPI) serveLegacyIdentification(w http.ResponseWriter, r *h
 		writeAPIError(w, failure.status, failure.status, failure.message)
 		return
 	}
-	id, err := api.jobs.Create(ctx, plan.Fingerprint, plan.definition)
-	if err != nil {
-		failure = legacyRedoFailure(err, "job reservation failed; inspect saved jobs before retry")
-		writeAPIError(w, failure.status, failure.status, failure.message)
+	if len(plan.partitions) > 1 && (len(input.ReviewFingerprint) != 64 || !input.ConfirmOldExecutorsStopped) {
+		writeAPIError(w, 400, 400, "multi-target execution requires fresh full-scope review and stopped-writer confirmation")
 		return
 	}
-	job, err := api.runLegacyRedo(ctx, id, input.ConfirmSourceRemoval)
+	job, batch, err := api.reserveRunLegacyPlan(ctx, plan, claims.Username, input.ConfirmSourceRemoval)
+	id := job.ID
 	if err == nil && job.State != "completed" {
 		err = errors.New("custom identification did not complete")
 	}
 	if err != nil {
 		failure = legacyRedoFailure(err, "execution requires review; inspect saved job and do not automatically retry")
-		writeJSON(w, failure.status, map[string]any{"code": failure.status, "success": false, "message": failure.message, "data": map[string]any{"jobId": id, "state": job.State}})
+		data := map[string]any{"jobId": id, "state": job.State}
+		if batch != nil {
+			data["batchId"], data["jobs"] = batch.ID, batch.Jobs
+			data["state"] = "needs_review"
+		}
+		writeJSON(w, failure.status, map[string]any{"code": failure.status, "success": false, "message": failure.message, "data": data})
 		return
 	}
 	filtered := 0
@@ -359,5 +317,9 @@ func (api organizationAPI) serveLegacyIdentification(w http.ResponseWriter, r *h
 			filtered++
 		}
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "转移成功", "data": map[string]any{"jobId": id, "state": job.State, "filtered": filtered, "unknownState": job.UnknownState}})
+	data := map[string]any{"jobId": id, "state": job.State, "filtered": filtered, "unknownState": job.UnknownState}
+	if batch != nil {
+		data["batchId"], data["jobs"] = batch.ID, batch.Jobs
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "转移成功", "data": data})
 }

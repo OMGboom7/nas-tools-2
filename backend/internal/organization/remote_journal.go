@@ -75,6 +75,9 @@ func (s *Store) remoteTransition(ctx context.Context, id string, index int, from
 	if err := verifyRemoteExecution(ctx, tx, d, &p); err != nil {
 		return err
 	}
+	if err := verifyLegacyMember(ctx, tx, d, false); err != nil {
+		return err
+	}
 	data, err := json.Marshal(p)
 	if err != nil || len(data) > 16<<20 {
 		return ErrLimit
@@ -89,6 +92,9 @@ func (s *Store) remoteTransition(ctx context.Context, id string, index int, from
 	return tx.Commit()
 }
 func (s *Store) VerifyRemotePhase(ctx context.Context, id string, index int, p Proof, state string) error {
+	if err := verifyLegacyJob(ctx, s.db, id); err != nil {
+		return err
+	}
 	if err := s.verifyRemoteJobExecution(ctx, s.db, id, &p); err != nil {
 		return err
 	}
@@ -138,6 +144,9 @@ type RemoteClosure struct {
 }
 
 func (s *Store) CloseRemoteJob(ctx context.Context, job Job, actor, reason string) error {
+	if err := verifyLegacyDisposition(ctx, s.db, job.ID); err != nil {
+		return err
+	}
 	if !RemoteMode(job.Mode) || job.Definition.Remote == nil || actor == "" || strings.TrimSpace(reason) == "" || len(reason) > 512 || job.State == "completed" || job.State == "cancelled" || job.State == SourceRestoring || job.State == SourceRestored {
 		return ErrState
 	}
@@ -182,7 +191,7 @@ func (s *Store) CloseRemoteJob(ctx context.Context, job Job, actor, reason strin
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='remote_stopped',REASON='Remote work explicitly stopped; every target, recovery object and reservation retained' WHERE JOB_ID=? AND STATE!='completed'`, job.ID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, job.ID); err != nil {
+	if err := cancelUnknownLink(ctx, tx, job.ID); err != nil {
 		return err
 	}
 	var state, raw string

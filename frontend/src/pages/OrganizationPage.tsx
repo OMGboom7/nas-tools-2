@@ -5,6 +5,7 @@ import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { UnknownRecordManager } from "./UnknownRecordManager";
 import { RecordRenameForm } from "./RecordRenameForm";
 import { RecordRedoForm } from "./RecordRedoForm";
+import { LegacyBatchManager } from "./LegacyBatchManager";
 import { DirectSyncForm } from "./DirectSyncForm";
 import { SyncConfigManager } from "./SyncConfigManager";
 import { SyncMonitorManager } from "./SyncMonitorManager";
@@ -361,6 +362,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
           {job.legacySelection && <p>已保存自定义识别规则：{job.legacySelection.kind || "自动类型"} · TMDB {job.legacySelection.tmdbId || "自动识别"} · 季 {job.legacySelection.season ?? "识别值或 TV 默认 1"} · 集号模板 {job.legacySelection.episodeFormat || "无"} · 范围 {job.legacySelection.episodeDetails || "无"} · 偏移 {job.legacySelection.episodeOffset || 0} · 最小大小 {job.legacySelection.minimumMB === undefined ? "配置值" : `${job.legacySelection.minimumMB} MiB`}。只执行已保存项目，不重新扫描扩大范围。</p>}
           {job.legacyRename && <p>关联改名范围：{job.legacyRename.expandedScope ? "已独立授权扩展到原文件父目录" : "原记录范围"}。{job.legacyRename.preserveUnknown ? "仅代表保存条目成功，原未识别记录保持原状，不标记整条成功。" : "兼容状态只根据完整范围成功回执提交。"}</p>}
           {job.legacyTargetOverride && <p>本任务使用请求或原记录明确指定的配置目标根，不按媒体类型自动另选目录；仍不覆盖现有目标。</p>}
+          {job.legacyBatch&&<LegacyBatchManager token={session.token} batchId={job.legacyBatch.id} enabled={!busy} onChanged={refreshSavedJobs} onSessionExpired={onSessionExpired}/>}
           {job.sync && <p>同步配置 #{job.sync.record.id} · {job.sync.record.note || "无备注"} · 操作者 {job.sync.actor} · 审核范围 {job.sync.scope}。{job.sync.record.rename === 1 ? "识别整理：核验后记录媒体转移历史。" : "不识别、不改名：核验后仅写 SYNC_HISTORY，不造媒体识别历史。"}{job.sync.monitorGeneration && `监控批次 ${job.sync.monitorGeneration} · 事件 ${job.sync.monitorEvent}。`}旧记录抑制重做不等于当前文件存在；配置变动需重新审核，任务不因刷新自动执行。</p>}
           {job.download && <p>下载完成整理 · 下载器 #{job.download.downloaderId} · 任务 {job.download.task.id} · 批次 {job.download.batchId} · 操作者 {job.download.actor}。仅处理已保存的选择范围；中断后明确核对，不自动重跑。下载器标签／任务记录回写须在独立批次入口审核。</p>}
           {job.episodeSelection && <p>已保存批量 TV 规则：TMDB {job.episodeSelection.tmdbId} · 季 {job.episodeSelection.season} · {job.episodeSelection.episodeFormat} · 偏移 {job.episodeSelection.episodeOffset || 0} · 偏移前起始集筛选 {job.episodeSelection.startEpisode === undefined ? "不限制" : `${job.episodeSelection.startEpisode}–${job.episodeSelection.endEpisode}`}。只执行已保存项目，不重扫或扩大目录范围。</p>}

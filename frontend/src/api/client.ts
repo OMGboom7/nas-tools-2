@@ -1048,7 +1048,8 @@ export type OrganizationRemoteTarget={targetId:string;path:string;remote:Organiz
 export const organizationMovesSource=(mode?:string)=>mode==="move" || mode==="rclone";
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; allowDiscExpansion?: boolean; assignments?: OrganizationMediaAssignment[]; episodeSelection?: OrganizationEpisodeSelection; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
 export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number; partOverride?: string };
-export type OrganizationPlan = { remote?:OrganizationRemote; scraperEnabled?: boolean; previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ disc?: OrganizationDisc; source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; mediaType?: string; category?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
+export type OrganizationPlanPartition={targetId:string;targetRoot:string;items:OrganizationPlan["items"]};
+export type OrganizationPlan = { partitions?:OrganizationPlanPartition[];remote?:OrganizationRemote; scraperEnabled?: boolean; previewOnly: boolean; fingerprint: string; mode: string; skipped: number; items: Array<{ disc?: OrganizationDisc; source: string; target?: string; kind: string; size: number; modified: string; identity: string; status: string; reason?: string; tmdbId?: string; title?: string; year?: string; mediaType?: string; category?: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 export type OrganizationLegacySelection = OrganizationEpisodeRule & { kind?: string; tmdbId?: string; season?: number; episodeDetails?: string; minimumMB?: number };
 export type OrganizationLegacyRenameOptions = { expandedScope?: boolean; preserveUnknown?: boolean };
 export type OrganizationSyncRecord = { id: string; source: string; dest: string; unknown: string; mode: string; compatibility: number; rename: number; enabled: number; locating: number; note: string; nullFields?: string[] };
@@ -1150,7 +1151,7 @@ export type SyncMonitorStatus = { control: { state: string; reason?: string; lea
 export type OrganizationSourceRestoreItem = {index:number;source:string;outcome:string};
 export type OrganizationSourceRestoreReview = {jobId:string;state:string;fingerprint:string;canRestore:boolean;reason:string;items:OrganizationSourceRestoreItem[]};
 export type OrganizationSourceRestoreReceipt = {jobId:string;actor:string;reason:string;created:string;updated:string;state:string;targetsRetained:boolean;items:OrganizationSourceRestoreItem[]};
-export type OrganizationJob = { remote?:OrganizationRemote;remoteClosure?:{actor:string;reason:string;created:string}; sourceRestore?:OrganizationSourceRestoreReceipt; id: string; download?: DownloadOrganizationOrigin; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ disc?: OrganizationDisc; index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
+export type OrganizationJob = { legacyBatch?:{id:string;index:number};remote?:OrganizationRemote;remoteClosure?:{actor:string;reason:string;created:string}; sourceRestore?:OrganizationSourceRestoreReceipt; id: string; download?: DownloadOrganizationOrigin; sync?: OrganizationSyncOrigin; legacyTargetOverride?: boolean; legacyRename?: OrganizationLegacyRenameOptions; legacySelection?: OrganizationLegacySelection; legacyOrigin?: { action: string; kind: string; recordId: string; actor: string }; fingerprint: string; created: string; state: string; mode: string; episodeSelection?: OrganizationEpisodeSelection; sourceRoot: string; targetRoot: string; historyRecordId?: number; unknownRecordId?: number; unknownState?: string; unknownDetach?: { review: OrganizationUnknownReview; actor: string; reason: string; created: string }; items: Array<{ disc?: OrganizationDisc; index: number; source: string; target: string; kind: string; size: number; modified: string; state: string; reason?: string; tmdbId: string; assigned?: boolean; part?: string } & OrganizationEpisodeRule> };
 
 const sourceRestoreItemsValid=(items:unknown):items is OrganizationSourceRestoreItem[]=>Array.isArray(items) && items.length<=1000 && items.every((i,n)=>!!i && i.index===n && typeof i.source==="string" && !!i.source && ["pending","blocked","not_started","completed_retained","source_in_place","isolated_source","witness_only"].includes(i.outcome));
 const sourceRestoreReviewValid=(r:OrganizationSourceRestoreReview):boolean=>!!r && /^[a-f0-9]{32}$/.test(r.jobId) && typeof r.state==="string" && /^[a-f0-9]{64}$/.test(r.fingerprint) && typeof r.canRestore==="boolean" && typeof r.reason==="string" && sourceRestoreItemsValid(r.items) && (!r.canRestore || ["needs_review","source_restoring"].includes(r.state) && r.items.length>0 && !r.items.some(i=>i.outcome==="blocked" || i.outcome==="pending"));
@@ -1551,7 +1552,7 @@ async function readResponse<T>(response: Response): Promise<ApiResponse<T>> {
 
 export type OrganizationRenameInput = { logid?: string; unknown_id?: string; syncmod: string; type?: "MOV" | "TV" | "ANIME"; tmdb?: string; season?: string; episode_format?: string; episode_details?: string; episode_offset?: string; episode_part?: string; min_filesize?: string; confirmParentScope?: boolean };
 export type OrganizationRenameReview = { plan: OrganizationPlan; explicitTarget?: boolean; sourceRoot: string; targetRoot: string; origin: { kind: string; recordId: string; actor: string }; options: OrganizationLegacyRenameOptions; selection: OrganizationLegacySelection; unknown?: { path: string; mode: string; state: string }; history?: { sourcePath: string; sourceFilename: string; mode: string; title: string } };
-export type OrganizationRenameOutcome = { jobId: string; state: string; filtered?: number; unknownState?: string };
+export type OrganizationRenameOutcome = { batchId?:string;jobs?:string[];jobId: string; state: string; filtered?: number; unknownState?: string };
 export class OrganizationRenameError extends ApiError {
   constructor(message: string, code?: number, readonly jobId?: string) { super(message, code); }
 }
@@ -1622,7 +1623,7 @@ export async function executeRecordRename(token: string, input: OrganizationRena
   return executeIdentification(token,input,reviewFingerprint,confirmed,confirmSourceRemoval,"rename",remote);
 }
 function identificationRemoteConsent(mode:string,remote?:RemoteOrganizationConsent){
-  if(!["rclone","rclonecopy","Rclone移动","Rclone复制"].includes(mode))return {};
+  if(!["rclone","rclonecopy","Rclone移动","Rclone复制"].includes(mode))return remote?{confirmOldExecutorsStopped:remote.confirmOldExecutorsStopped}:{};
   if(!remote?.confirmRemoteExclusive || !remote.confirmRemoteRecoveryCopy || !remote.confirmOldExecutorsStopped)throw new ApiError("须独立确认远程独占／非原子发布、保留恢复副本及停止外部写入器",400);
   return remote;
 }
@@ -1645,7 +1646,7 @@ async function executeIdentification(token:string,input:OrganizationRenameInput|
 
 export type OrganizationRedoInput={flag:"unidentification"|"history";ids:string[]};
 export type OrganizationRedoReview={flag:OrganizationRedoInput["flag"];fingerprint:string;items:Array<{id:string;plan?:OrganizationPlan;sourceRoot?:string;targetRoot?:string;code:number;message?:string}>};
-export type OrganizationRedoResult={id:string;jobId?:string;state:string;code:number;message?:string};
+export type OrganizationRedoResult={id:string;batchId?:string;jobs?:string[];jobId?:string;state:string;code:number;message?:string};
 function validateRedoIDs(input:OrganizationRedoInput){
   if(!["unidentification","history"].includes(input.flag) || !input.ids.length || input.ids.length>100 || new Set(input.ids).size!==input.ids.length || input.ids.some(id=>!(/^[1-9][0-9]{0,18}$/.test(id)) || BigInt(id)>9223372036854775807n))throw new ApiError("选择 1–100 个不重复、精确的正整数记录 ID",400);
 }
@@ -1659,10 +1660,31 @@ export async function executeRecordRedo(token:string,input:OrganizationRedoInput
   validateRedoIDs(input);
   if(!confirmed || !/^[a-f0-9]{64}$/.test(review.fingerprint) || review.flag!==input.flag || JSON.stringify(review.items.map(item=>item.id))!==JSON.stringify(input.ids) || review.items.some(item=>organizationMovesSource(item.plan?.mode)) && !sourceRemoval)throw new ApiError("先审核同一批记录，移动需独立源移除授权",400);
   const cloud=review.items.find(item=>item.plan?.remote);
-  const consent=cloud?identificationRemoteConsent(cloud.plan!.mode,remote):{};
+  const multi=review.items.some(item=>(item.plan?.partitions?.length || 0)>1);
+  if(multi&&!remote?.confirmOldExecutorsStopped)throw new ApiError("多目标批次须独立确认已停止旧执行器和外部写入器",400);
+  const consent=cloud?identificationRemoteConsent(cloud.plan!.mode,remote):multi?{confirmOldExecutorsStopped:true}:{};
   const response=await fetch("/api/v1/organization/unknown/redo",{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify({...input,reviewFingerprint:review.fingerprint,confirmSourceRemoval:sourceRemoval,...consent})});
   let result:ApiResponse<{results:OrganizationRedoResult[]}>;
   try{result=await response.json();}catch{throw new ApiError("响应无法核实；只读刷新已保存任务，不自动重发",response.status);}
   if(!response.ok || !result.data?.results || ![0,2].includes(result.code))throw new ApiError(result.message || "重新识别回执未核实，不重跑",result.code || response.status);
   return {success:result.success,message:result.message,results:result.data.results};
+}
+
+export type OrganizationLegacyBatch={id:string;fingerprint:string;reviewFingerprint:string;state:string;reason?:string;actor:string;created:string;jobs:string[];mode:string;origin:{action:string;kind:string;recordId?:string;actor:string};unknownState?:string;sourceRoot:string;scope:string;targets:string[]};
+export type LegacyBatchConsent={confirm:boolean;confirmSourceRemoval?:boolean;confirmOldExecutorsStopped?:boolean;confirmRemoteExclusive?:boolean;confirmRemoteRecoveryCopy?:boolean;reason?:string};
+export async function getLegacyOrganizationBatch(token:string,id:string):Promise<OrganizationLegacyBatch>{
+  if(!/^[a-f0-9]{32}$/.test(id))throw new ApiError("请输入完整批次 ID",400);
+  const result=await readResponse<OrganizationLegacyBatch>(await fetch(`/api/v1/organization/legacy/batches/${id}`,{headers:{Authorization:token}}));
+  if(!result.success||result.code!==0||result.data?.id!==id||!/^[a-f0-9]{64}$/.test(result.data.reviewFingerprint)||!Array.isArray(result.data.jobs))throw new ApiError(result.message || "批次回执无法核实",result.code);
+  return result.data;
+}
+export async function controlLegacyOrganizationBatch(token:string,batch:OrganizationLegacyBatch,action:"execute"|"reconcile"|"stop"|"resume"|"close",consent:LegacyBatchConsent):Promise<OrganizationLegacyBatch>{
+  if(!consent.confirm||!/^[a-f0-9]{32}$/.test(batch.id)||!/^[a-f0-9]{64}$/.test(batch.reviewFingerprint))throw new ApiError("先读取完整批次并明确确认",400);
+  if(["execute","resume","close"].includes(action)&&!consent.confirmOldExecutorsStopped)throw new ApiError("须确认已停止旧执行器与外部写入器",400);
+  if(["stop","resume","close"].includes(action)&&(!consent.reason?.trim()||consent.reason.length>512))throw new ApiError("请填写独立处置原因",400);
+  if(action==="execute"&&organizationMovesSource(batch.mode)&&!consent.confirmSourceRemoval)throw new ApiError("移动需独立源移除授权",400);
+  if(["execute","resume"].includes(action)&&["rclone","rclonecopy"].includes(batch.mode)&&(!consent.confirmRemoteExclusive||!consent.confirmRemoteRecoveryCopy))throw new ApiError("远程需独立非原子／独占与恢复副本授权",400);
+  const result=await readResponse<OrganizationLegacyBatch>(await fetch(`/api/v1/organization/legacy/batches/${batch.id}/${action}`,{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify({...consent,reviewFingerprint:batch.reviewFingerprint})}));
+  if(!result.success||result.code!==0||result.data?.id!==batch.id)throw new ApiError(result.message || "批次操作回执未核实，只读刷新、不自动重发",result.code);
+  return result.data;
 }

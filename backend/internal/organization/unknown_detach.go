@@ -58,6 +58,9 @@ func (s *Store) ReviewUnknown(ctx context.Context, id string) (UnknownReview, er
 	if err != nil {
 		return UnknownReview{}, err
 	}
+	if job.LegacyBatch != nil && job.Definition.Unknown != nil {
+		return UnknownReview{JobID: job.ID, State: "batch_managed", Original: *job.Definition.Unknown, Eligible: false, Fingerprint: Digest(job.Definition)}, nil
+	}
 	return reviewUnknown(ctx, s.db, job)
 }
 
@@ -65,6 +68,9 @@ func (s *Store) ReviewUnknown(ctx context.Context, id string) (UnknownReview, er
 // This releases ONLY a completed job's legacy-record reservation. Target claims,
 // history, sources, staging, the legacy row and its state are never modified.
 func (s *Store) DetachUnknown(ctx context.Context, job Job, fingerprint, actor, reason string) error {
+	if job.Definition.LegacyBatch != nil {
+		return ErrState
+	}
 	reason = strings.TrimSpace(reason)
 	if job.Definition.Unknown == nil || len(fingerprint) != 64 || actor == "" || reason == "" || len(reason) > 512 {
 		return ErrState

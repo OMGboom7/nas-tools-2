@@ -31,6 +31,8 @@ export function RecordRenameForm({ token, enabled, executionModes=[], onChanged,
   const generation = useRef(0);
   const inFlight = useRef(false);
   const remoteRequired=!!review?.plan.remote;
+  const multi=(review?.plan.partitions?.length || 0)>1;
+  const stoppedRequired=remoteRequired||multi;
   const moves=organizationMovesSource(mode);
   function clearRemote(){setRemoteExclusive(false);setRemoteRecovery(false);setOldStopped(false);}
   useEffect(() => { generation.current++; inFlight.current = false; setReview(null); setRecordID(""); setTMDB(""); setMediaType(""); setSeason(""); setFormat(""); setDetails(""); setOffset(""); setMinimum(""); setPartMode("auto"); setPart(""); setParentConsent(false); setConfirmed(false); setSourceRemoval(false); setSavedID(""); setError(""); setBusy(false); return () => { generation.current++; }; }, [token]);
@@ -41,7 +43,7 @@ export function RecordRenameForm({ token, enabled, executionModes=[], onChanged,
     return { ...(kind === "custom" ? {} : kind === "unknown" ? { unknown_id: recordID } : { logid: recordID }), syncmod: mode, ...(mediaType ? { type: mediaType } : {}), ...(tmdb ? { tmdb } : {}), ...(season ? { season } : {}), ...(format ? { episode_format: format } : {}), ...(details ? { episode_details: details } : {}), ...(offset ? { episode_offset: offset } : {}), ...(minimum ? { min_filesize: minimum } : {}), ...(partMode === "auto" ? {} : { episode_part: partMode === "clear" ? "" : part }), ...(kind==="custom"?{}:{confirmParentScope: parentConsent}) };
   }
   async function operate(execute: boolean) {
-    if (!enabled || inFlight.current || execute && (!review || !confirmed || moves && !sourceRemoval || remoteRequired && (!remoteExclusive || !remoteRecovery || !oldStopped))) return;
+    if (!enabled || inFlight.current || execute && (!review || !confirmed || moves && !sourceRemoval || remoteRequired && (!remoteExclusive || !remoteRecovery) || stoppedRequired&&!oldStopped)) return;
     inFlight.current = true;
     const version = ++generation.current;
     setBusy(true); setError(""); setSavedID("");
@@ -53,7 +55,7 @@ export function RecordRenameForm({ token, enabled, executionModes=[], onChanged,
         const next = kind==="custom"?await previewCustomIdentification(token,custom):await previewRecordRename(token, request);
         if (version === generation.current) setReview(next);
       } else {
-        const remote=remoteRequired?{confirmRemoteExclusive:remoteExclusive,confirmRemoteRecoveryCopy:remoteRecovery,confirmOldExecutorsStopped:oldStopped}:undefined;
+        const remote=stoppedRequired?{confirmRemoteExclusive:remoteExclusive,confirmRemoteRecoveryCopy:remoteRecovery,confirmOldExecutorsStopped:oldStopped}:undefined;
         const result = kind==="custom"?await executeCustomIdentification(token,custom,review!.plan.fingerprint,true,sourceRemoval,remote):await executeRecordRename(token, request, review!.plan.fingerprint, true, sourceRemoval,remote);
         if (version !== generation.current) return;
         setSavedID(result.jobId); setReview(null); setConfirmed(false); setSourceRemoval(false); setParentConsent(false);clearRemote();
@@ -99,11 +101,12 @@ export function RecordRenameForm({ token, enabled, executionModes=[], onChanged,
       <p>{kind==="custom"?`自定义原来源：${source}`:`审核记录 #${review.origin.recordId}：${review.unknown?.path || `${review.history?.sourcePath}/${review.history?.sourceFilename}`}`} · 原方式 {review.unknown?.mode || review.history?.mode || "未指定"} → 本次 {review.plan.mode}</p>
       <p>来源根：<code>{review.sourceRoot}</code><br />目标根：<code>{review.targetRoot}</code>。{review.options?.expandedScope ? "本次已扩展到原文件的父目录。" : "未扩展来源范围。"}{review.options?.preserveUnknown ? "仅选中范围执行；旧未识别记录保持原状，不标记整条成功。" : review.history ? "原历史和已发布媒体不变；新的转移成功后另记历史。" : kind==="custom"?"自定义本次范围不关联或修改旧记录。":"关联未识别记录仅在全范围成功和完整回执后更新。"}</p>
       <p>{review.explicitTarget ? "本次使用原记录明确指定的配置目标根，不按媒体类型另选。" : "本次按已核验媒体类型选择配置媒体库。"}</p>
+      {!!review.plan.partitions?.length&&<div><p>多目标批次：全部子任务及完整来源核验后才提交旧记录；部分完成不会标整条成功。</p><ul>{review.plan.partitions.map(part=><li key={part.targetId}>{part.targetRoot}<ul>{part.items.map(item=><li key={item.source}>{item.source} → {item.target}</li>)}</ul></li>)}</ul></div>}
       <ul>{review.plan.items.map((item) => <li key={item.source}>{item.source} → {item.target || "不执行"} · {item.mediaType || "未核验类型"} · {item.category || "无分类"} · {item.status}</li>)}</ul>
       <label><input type="checkbox" checked={confirmed} disabled={!enabled || busy} onChange={(e) => setConfirmed(e.target.checked)} />我已审核本次范围、身份规则和路径，确认来源已下载完成且至少 30 秒未修改，同意执行以上可规划项。</label>
-      {remoteRequired&&<><label><input type="checkbox" checked={oldStopped} disabled={!enabled||busy} onChange={e=>setOldStopped(e.target.checked)}/>我已实际停止旧执行器及会写本轮来源／远程范围的外部程序。</label><RemoteTransferConsent busy={!enabled||busy} exclusive={remoteExclusive} recovery={remoteRecovery} onExclusive={setRemoteExclusive} onRecovery={setRemoteRecovery}/></>}
+      {stoppedRequired&&<><label><input type="checkbox" checked={oldStopped} disabled={!enabled||busy} onChange={e=>setOldStopped(e.target.checked)}/>我已实际停止旧执行器及会写本轮来源／远程范围的外部程序。</label>{remoteRequired&&<RemoteTransferConsent busy={!enabled||busy} exclusive={remoteExclusive} recovery={remoteRecovery} onExclusive={setRemoteExclusive} onRecovery={setRemoteRecovery}/>}</>}
       {moves && <label><input type="checkbox" checked={sourceRemoval} disabled={!enabled || busy} onChange={(e) => setSourceRemoval(e.target.checked)} />我另外同意移除上述来源中的原文件名，并在目标核验及历史提交后清理本任务源恢复备份；不删除源目录或其他文件。</label>}
-      <button type="button" disabled={!enabled || busy || !confirmed || moves && !sourceRemoval || remoteRequired&&(!remoteExclusive||!remoteRecovery||!oldStopped)} onClick={() => void operate(true)}>按已审核范围确认执行</button>
+      <button type="button" disabled={!enabled || busy || !confirmed || moves && !sourceRemoval || remoteRequired&&(!remoteExclusive||!remoteRecovery)||stoppedRequired&&!oldStopped} onClick={() => void operate(true)}>按已审核范围确认执行</button>
     </div>}
   </section>;
 }

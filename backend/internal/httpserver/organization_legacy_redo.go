@@ -22,11 +22,13 @@ type legacyRedoInput struct {
 	ConfirmOldExecutorsStopped bool            `json:"confirmOldExecutorsStopped,omitempty"`
 }
 type legacyRedoResult struct {
-	ID      string `json:"id"`
-	JobID   string `json:"jobId,omitempty"`
-	State   string `json:"state"`
-	Code    int    `json:"code"`
-	Message string `json:"message,omitempty"`
+	BatchID string   `json:"batchId,omitempty"`
+	Jobs    []string `json:"jobs,omitempty"`
+	ID      string   `json:"id"`
+	JobID   string   `json:"jobId,omitempty"`
+	State   string   `json:"state"`
+	Code    int      `json:"code"`
+	Message string   `json:"message,omitempty"`
 }
 
 func (api organizationAPI) legacyRequestMode(mode string) (string, error) {
@@ -183,51 +185,10 @@ func (api organizationAPI) legacyRedoPlan(ctx context.Context, kind string, id i
 		input.HistoryRecord = &organizationHistorySelector{ID: id, Fingerprint: organization.Digest(record)}
 		dest = record.Dest
 	}
-	input.LegacyTargetOverride = dest != ""
 	if !organization.SupportedMode(input.Mode) {
-		return fail(501, "selected transfer mode is not migrated; no local fallback")
+		return fail(501, "selected transfer mode is not migrated; no fallback")
 	}
-	var best organizationPlan
-	var last *recognitionFailure
-	for _, target := range roots.Targets {
-		if dest != "" && !organizationTargetMatches(target.Path, ".", dest, input.Mode) {
-			continue
-		}
-		if dest == "" && target.Type == "" {
-			continue
-		} // Default means configured media library, not an unrelated sync destination.
-		input.TargetID = target.ID
-		plan, failure := api.plan(ctx, input)
-		if failure != nil {
-			last = failure
-			continue
-		}
-		if len(plan.definition.Entries) == 0 || plan.Skipped != 0 {
-			best = plan
-			continue
-		}
-		complete := true
-		for _, item := range plan.Items {
-			if item.Status != "available" {
-				complete = false
-				break
-			}
-		}
-		if !complete {
-			best = plan
-			continue
-		}
-		plan.definition.LegacyOrigin = &organization.LegacyOrganizationOrigin{Action: "redo", Kind: kind, RecordID: strconv.FormatInt(id, 10), Actor: actor}
-		plan.Fingerprint = organization.Digest(struct {
-			Definition organization.Definition
-			Items      []organizationPlanItem
-		}{plan.definition, plan.Items})
-		return plan, nil
-	}
-	if last != nil && len(best.Items) == 0 {
-		return organizationPlan{}, last
-	}
-	return fail(422, "the full original scope is not available in one supported configured destination; review conflicts, skipped files or mixed destinations")
+	return api.legacyTargetPlans(ctx, roots, input, dest, &organization.LegacyOrganizationOrigin{Action: "redo", Kind: kind, RecordID: strconv.FormatInt(id, 10), Actor: actor}, false)
 }
 
 func (api organizationAPI) runLegacyRedo(ctx context.Context, id string, sourceRemoval bool) (organization.Job, error) {
@@ -311,6 +272,10 @@ func (api organizationAPI) serveLegacyRedo(w http.ResponseWriter, r *http.Reques
 	failures := make([]*recognitionFailure, len(selectors))
 	for i, selector := range selectors {
 		plans[i], failures[i] = api.legacyRedoPlan(ctx, input.Flag, selector.ID, claims.Username)
+		if failures[i] == nil && len(plans[i].partitions) > 1 && (len(input.ReviewFingerprint) != 64 || !input.ConfirmOldExecutorsStopped) {
+			writeAPIError(w, 400, 400, "multi-target execution requires fresh full-scope review and stopped-writer confirmation before any reservation")
+			return
+		}
 		if failures[i] == nil && organization.MoveMode(plans[i].definition.Mode) && !input.ConfirmSourceRemoval {
 			writeAPIError(w, 400, 400, "separate source-removal consent is required before any job is created or executed")
 			return
@@ -344,16 +309,16 @@ func (api organizationAPI) serveLegacyRedo(w http.ResponseWriter, r *http.Reques
 				failure = &recognitionFailure{409, "source or plan changed; review a fresh request"}
 			}
 			if failure == nil {
-				id, err := api.jobs.Create(ctx, fresh.Fingerprint, fresh.definition)
-				if err != nil {
-					failure = legacyRedoFailure(err, "job reservation failed; inspect saved jobs before retry")
-				} else {
-					result.JobID = id
-					job, err := api.runLegacyRedo(ctx, id, input.ConfirmSourceRemoval)
-					result.State = job.State
-					if err != nil {
-						failure = legacyRedoFailure(err, "execution or compatibility receipt requires review; do not automatically retry")
+				job, batch, err := api.reserveRunLegacyPlan(ctx, fresh, claims.Username, input.ConfirmSourceRemoval)
+				result.JobID, result.State = job.ID, job.State
+				if batch != nil {
+					result.BatchID, result.Jobs = batch.ID, batch.Jobs
+					if batch.State != "completed" {
+						result.State = "needs_review"
 					}
+				}
+				if err != nil {
+					failure = legacyRedoFailure(err, "reservation, execution or complete scope receipt requires review; inspect the original batch and jobs, never replay")
 				}
 			}
 		}

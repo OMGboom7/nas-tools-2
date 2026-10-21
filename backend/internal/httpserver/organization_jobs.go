@@ -135,6 +135,9 @@ func (api organizationAPI) serveCreateJob(w http.ResponseWriter, r *http.Request
 // Revalidate admin configuration before any write, not just the opaque root IDs
 // supplied by the browser. Stored destinations never come from client payloads.
 func (api organizationAPI) validateJob(ctx context.Context, job organization.Job) error {
+	if err := api.jobs.VerifyLegacyMember(ctx, job.Definition); err != nil {
+		return err
+	}
 	if err := api.jobs.VerifyRemoteExecution(ctx, job.Definition); err != nil {
 		return err
 	}
@@ -297,6 +300,24 @@ func (api organizationAPI) serveJobAction(w http.ResponseWriter, r *http.Request
 			return
 		}
 		defer batchGuard.Close()
+	}
+	if job.LegacyBatch != nil {
+		batchGuard, err := api.jobs.AcquireJob(ctx, "legacy-batch:"+job.LegacyBatch.ID)
+		if err != nil {
+			writeOrganizationError(w, err)
+			return
+		}
+		defer batchGuard.Close()
+		batch, err := api.jobs.GetLegacyBatch(ctx, job.LegacyBatch.ID)
+		if err != nil {
+			writeOrganizationError(w, err)
+			return
+		}
+		negative := action == "cancel" || action == "restore-source" || action == "abandon-unpublished" || action == "close-remote"
+		if action == "detach-unknown" || negative && batch.State != "closing" || !negative && action != "reconcile-unknown" && (batch.State == "closing" || batch.State == "closed") {
+			writeAPIError(w, 409, 409, "use the full legacy batch to stop/review its scope before disposition; individual actions cannot release sibling claims")
+			return
+		}
 	}
 	guard, err := api.jobs.AcquireJob(ctx, job.ID)
 	if err != nil {

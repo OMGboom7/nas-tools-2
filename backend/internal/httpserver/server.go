@@ -390,6 +390,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/organization/unknown/delete", organizer.serveCompatUnknownDelete)
 	mux.HandleFunc("POST /api/v1/organization/unknown/redo", organizer.serveLegacyRedo)
 	mux.HandleFunc("POST /api/v1/organization/unknown/redo/plan", organizer.serveLegacyRedoPreview)
+	mux.HandleFunc("GET /api/v1/organization/legacy/batches/{id}", organizer.serveLegacyBatch)
+	mux.HandleFunc("POST /api/v1/organization/legacy/batches/{id}/{action}", organizer.serveLegacyBatchAction)
 	mux.HandleFunc("POST /api/v1/organization/unknown/renameudf", organizer.serveLegacyCustomRename)
 	mux.HandleFunc("POST /api/v1/organization/unknown/renameudf/plan", organizer.serveLegacyCustomPreview)
 	mux.HandleFunc("POST /api/v1/organization/unknown/rename", organizer.serveLegacyRename)

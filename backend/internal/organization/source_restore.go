@@ -189,6 +189,9 @@ func (s *Store) ReviewSourceRestore(ctx context.Context, job Job) (SourceRestore
 // of source restoration and stopped external writers. It never deletes targets,
 // recovery/staging objects, history or claims, and never completes an intake.
 func (s *Store) RestoreSource(ctx context.Context, job Job, fingerprint, actor, reason string, validate func() error) error {
+	if err := verifyLegacyDisposition(ctx, s.db, job.ID); err != nil {
+		return err
+	}
 	if actor == "" || strings.TrimSpace(reason) == "" || len(reason) > 512 || len(fingerprint) != 64 || validate == nil {
 		return ErrState
 	}
@@ -441,7 +444,7 @@ func (s *Store) finishSourceRestore(ctx context.Context, id string, doc sourceRe
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_SOURCE_RESTORE SET DOCUMENT=? WHERE JOB_ID=?`, string(data), id); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_UNKNOWN_LINKS SET STATE='cancelled' WHERE JOB_ID=? AND STATE='pending'`, id); err != nil {
+	if err := cancelUnknownLink(ctx, tx, id); err != nil {
 		return err
 	}
 	if err := verifySourceRestoreTx(ctx, tx, id, doc); err != nil {

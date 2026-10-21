@@ -398,7 +398,13 @@ func CleanupMoveTarget(ctx context.Context, d Definition, item Entry, p Proof) e
 	if RemoteMode(d.Mode) {
 		// Remote recovery copies are deliberately retained, not deleted under
 		// the local target-cleanup permission.
-		return verifyRemoteMove(ctx, d, item, p)
+		if err := verifyRemoteMove(ctx, d, item, p); err != nil {
+			return err
+		}
+		if IsDisc(item) {
+			return cleanupDiscSourceHold(ctx, d, item, p)
+		}
+		return nil
 	}
 	if IsDisc(item) {
 		return cleanupDiscMoveTarget(ctx, d, item, p)
