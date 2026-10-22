@@ -50,9 +50,8 @@ func ExistingSidecar(ctx context.Context, job Job, item JobItem, scope, name str
 // intake pins the original approved source instead of following an arbitrary
 // target link; current content/path bindings must survive the entire read.
 func ReadCompletedMedia(ctx context.Context, job Job, item JobItem, consume func(*os.File) ([]byte, error)) ([]byte, error) {
-	// The existing FFmpeg decoder requires a seekable, pinned local file.
-	// Do not treat a logical remote path as local or download an unbounded
-	// second video copy. NFO/artwork continue; thumbnail gets a failure receipt.
+	// Remote sources have a separate content-bound range capability. They must
+	// never enter this pinned-local-descriptor path.
 	if RemoteMode(job.Mode) {
 		return nil, ErrMode
 	}

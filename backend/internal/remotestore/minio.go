@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -454,6 +455,36 @@ func (c *Client) minioRead(ctx context.Context, location string, size int64, out
 		return minioError(ctx, err)
 	}
 	if n != size {
+		return ErrChanged
+	}
+	return c.Current()
+}
+
+func (c *Client) minioReadRange(ctx context.Context, location string, size, offset, count int64, out io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	bucket, object, err := minioLocation(location)
+	if err != nil || object == "" {
+		return ErrUnavailable
+	}
+	options := minio.GetObjectOptions{}
+	if err := options.SetRange(offset, offset+count-1); err != nil {
+		return ErrLimit
+	}
+	r, info, headers, err := (minio.Core{Client: c.s3.client}).GetObject(ctx, bucket, object, options)
+	if err != nil {
+		return minioError(ctx, err)
+	}
+	defer r.Close()
+	want := "bytes " + strconv.FormatInt(offset, 10) + "-" + strconv.FormatInt(offset+count-1, 10) + "/" + strconv.FormatInt(size, 10)
+	if info.Size != count || headers.Get("Content-Range") != want {
+		return ErrChanged
+	}
+	n, err := io.Copy(out, io.LimitReader(r, count+1))
+	if err != nil {
+		return minioError(ctx, err)
+	}
+	if n != count {
 		return ErrChanged
 	}
 	return c.Current()

@@ -32,7 +32,7 @@ export function IntakeScraperManager({ token, enabled, onSessionExpired, onChang
   function toggle(family:keyof ScraperOptions,kind:string,name:string,value:boolean){setOptions({...options,[family]:{...options[family],[kind]:{...options[family][kind],[name]:value}}});setSaveConsent(false);}
   return <section aria-label="入库刮削与回执"><h2>入库 NFO 与图片</h2>
     <p>读取原有刮削配置。仅处理新审核并完整完成的原生入库任务；保存选项不会启用后台写入。已有文件和媒体文件不覆盖，普通文件同步不刮削，中断回执不自动重跑；此处不扫描整个媒体库、不执行强制覆盖刮削。</p>
-    <p>中文名无法可靠匹配时保留原名并提示。仅在集图来源缺失且选中回退时读取已核验视频截帧；不调用命令行模板、不读取网络视频。缺少 FFmpeg、视频过短或生成失败会留下部分完成回执，不改视频、不自动重试。</p>
+    <p>中文名无法可靠匹配时保留原名并提示。仅在集图来源缺失且选中回退时读取已核验视频截帧，不接受任意网络地址。Rclone／MinIO 入库使用原任务账户，完整视频核验和分块读取会产生额外流量；不落盘保存第二份视频，单个视频最多 1 TiB，解码读取最多 512 MiB／90 秒。已有缩略图保留；蓝光不猜选内部片段。缺少 FFmpeg、视频过短、超限或核验失败会留下部分完成回执，不改视频、不自动重试。</p>
     {error && <p role="alert">{error}</p>}
     <button type="button" disabled={!enabled || busy} onClick={()=>void operate("load")}>只读刷新刮削配置与回执</button>
     {status && <><p>后续新任务入库刮削：{status.enabled ? "已启用" : "已停用"}。配置变更会使旧待处理范围失效，请重新审核尚未执行的整理计划。</p>

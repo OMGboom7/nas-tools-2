@@ -16,8 +16,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-var ErrThumbnail = errors.New("video thumbnail unavailable; no media was changed")
-
 type thumbnailBuffer struct {
 	buffer bytes.Buffer
 	cancel context.CancelFunc
@@ -53,13 +51,23 @@ func renderThumbnail(ctx context.Context, source *os.File, newCommand func(conte
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return nil, ErrThumbnail
 	}
+	return runThumbnail(ctx, source, "fd,pipe", []string{"-fd", "3", "-i", "fd:"}, newCommand, timeout)
+}
+
+const thumbnailFormats = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,mpegts,avi,mpeg,mpegvideo,flv,asf,ogg"
+
+func runThumbnail(ctx context.Context, source *os.File, protocols string, input []string, newCommand func(context.Context, ...string) *exec.Cmd, timeout time.Duration) ([]byte, error) {
 	call, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	// fd supports seeking; excluding file/http/concat/etc. also prevents a
-	// container or playlist from opening external media or network resources.
-	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", "fd,pipe", "-format_whitelist", "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,mpegts,avi,mpeg,mpegvideo,flv,asf,ogg", "-ss", "181", "-fd", "3", "-i", "fd:", "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease", "-threads", "1", "-c:v", "mjpeg", "-f", "image2pipe", "pipe:1"}
+	// Only fixed options and an internally generated capability enter argv.
+	// Playlist/concat/image demuxers and the file protocol are never allowed.
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", protocols, "-format_whitelist", thumbnailFormats, "-ss", "181"}
+	args = append(args, input...)
+	args = append(args, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-vf", "scale=1280:720:force_original_aspect_ratio=decrease", "-threads", "1", "-c:v", "mjpeg", "-f", "image2pipe", "pipe:1")
 	cmd := newCommand(call, args...)
-	cmd.ExtraFiles = []*os.File{source}
+	if source != nil {
+		cmd.ExtraFiles = []*os.File{source}
+	}
 	cmd.Env = []string{"LANG=C", "LC_ALL=C"}
 	cmd.Stdin = nil
 	cmd.Stderr = io.Discard

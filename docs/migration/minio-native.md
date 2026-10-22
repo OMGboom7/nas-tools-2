@@ -42,6 +42,6 @@ MinIO 的后台授权按 provider 与目标分别绑定；原 Rclone 授权摘�
 
 补充独立社区服务的官方 ARM64 下载地址于 2026-10-22 返回 HTTP 410，未下载或运行该服务。Docker daemon 当前不可用，候选镜像实际构建、运行、存量升级和回滚仍未验收；不能用模拟协议或静态构建代替这些证据。
 
-远程已有库刮削／FFmpeg、未知无凭证对象及保留恢复副本的独立清理、其余保留业务和最终 Go-only 生产升级／健康／权限／回滚仍待继续。未达到完整退出门禁前不删除旧 Python，也不按新增模式或接口数量提高整体完成率。
+后续已接通普通剧集的 [远程入库 FFmpeg 缺图回退](remote-thumbnail.md)，不是远程已有库遍历／强制覆盖的完成声明。远程已有库刮削、未知无凭证对象及保留恢复副本的独立清理、其余保留业务和最终 Go-only 生产升级／健康／权限／回滚仍待继续。未达到完整退出门禁前不删除旧 Python，也不按新增模式或接口数量提高整体完成率。
 
 上游依据：[mc 配置与别名](https://github.com/minio/mc)、[官方 Go SDK](https://github.com/minio/minio-go)、[固定 SDK 与重试选项](https://github.com/minio/minio-go/blob/v7.0.98/api.go)。

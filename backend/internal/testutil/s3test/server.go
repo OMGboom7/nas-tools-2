@@ -25,7 +25,7 @@ import (
 const AccessKey = "fixture-access"
 const SecretKey = "fixture-secret-not-for-production"
 
-type Request struct{ Method, Key, CopySource, Query, Authorization string }
+type Request struct{ Method, Key, CopySource, Query, Authorization, Range string }
 type object struct {
 	data     []byte
 	modified time.Time
@@ -46,6 +46,7 @@ type Server struct {
 	failCopy   bool
 	afterWrite func()
 	closed     bool
+	rangeFault string
 }
 
 func New(t testing.TB) *Server {
@@ -101,7 +102,11 @@ func (s *Server) FailNextWrite(prefix string, copyOnly bool, status int) {
 // The one-shot callback runs after a write, before its response, under the
 // fixture lock. It may revoke external configuration, but must not call Server.
 func (s *Server) AfterNextWrite(fn func()) { s.mu.Lock(); defer s.mu.Unlock(); s.afterWrite = fn }
-func etag(b []byte) string                 { h := md5.Sum(b); return hex.EncodeToString(h[:]) }
+
+// RangeFault simulates a server ignoring, misreporting, truncating or corrupting
+// a range while its full read/listing/HEAD still report the original object.
+func (s *Server) RangeFault(mode string) { s.mu.Lock(); defer s.mu.Unlock(); s.rangeFault = mode }
+func etag(b []byte) string               { h := md5.Sum(b); return hex.EncodeToString(h[:]) }
 func replyXML(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/xml")
 	_ = xml.NewEncoder(w).Encode(v)
@@ -134,7 +139,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := strings.TrimPrefix(r.URL.Path, "/")
-	s.requests = append(s.requests, Request{r.Method, key, r.Header.Get("X-Amz-Copy-Source"), r.URL.RawQuery, r.Header.Get("Authorization")})
+	s.requests = append(s.requests, Request{r.Method, key, r.Header.Get("X-Amz-Copy-Source"), r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Range")})
 	if !strings.Contains(r.Header.Get("Authorization"), AccessKey) {
 		failure(w, 403, "AccessDenied")
 		return
@@ -243,7 +248,28 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Last-Modified", o.modified.Format(http.TimeFormat))
 		w.Header().Set("Content-Type", "application/octet-stream")
 		if r.Method == "GET" {
-			_, _ = w.Write(o.data)
+			data := o.data
+			if bounds := r.Header.Get("Range"); bounds != "" && s.rangeFault != "ignore" {
+				var first, last int
+				if _, err := fmt.Sscanf(bounds, "bytes=%d-%d", &first, &last); err != nil || first < 0 || first > last || last >= len(data) {
+					w.Header().Del("Content-Length")
+					failure(w, 416, "InvalidRange")
+					return
+				}
+				data = append([]byte{}, data[first:last+1]...)
+				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", first, last, len(o.data)))
+				switch s.rangeFault {
+				case "bounds":
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", first+1, last+1, len(o.data)))
+				case "corrupt":
+					data[0] ^= 1
+				case "short":
+					data = data[:len(data)-1]
+				}
+				w.WriteHeader(http.StatusPartialContent)
+			}
+			_, _ = w.Write(data)
 		}
 		return
 	}

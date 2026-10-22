@@ -12,15 +12,17 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/0xforee/nas-tools/backend/internal/scraper"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 type intakeScraper struct {
-	organizer *organizationAPI
-	system    *systemconfig.Store
-	transport http.RoundTripper
-	thumbnail func(context.Context, *os.File) ([]byte, error)
+	organizer       *organizationAPI
+	system          *systemconfig.Store
+	transport       http.RoundTripper
+	thumbnail       func(context.Context, *os.File) ([]byte, error)
+	remoteThumbnail func(context.Context, *remotestore.VerifiedObject) ([]byte, error)
 }
 
 func (api *intakeScraper) authorize(w http.ResponseWriter, r *http.Request) bool {
@@ -285,11 +287,20 @@ func (api *intakeScraper) run(ctx context.Context, job organization.Job, item or
 			if checkErr != nil || api.current(ctx, job, row) != nil {
 				return "partial", "thumbnail scope changed; video reader not started"
 			}
-			render := api.thumbnail
-			if render == nil {
-				render = scraper.RenderThumbnail
+			if organization.RemoteMode(job.Mode) {
+				data, err = organization.ReadCompletedRemoteMedia(ctx, job, item, func(call context.Context) error { return api.current(call, job, row) }, func(call context.Context, object *remotestore.VerifiedObject) ([]byte, error) {
+					if api.remoteThumbnail != nil {
+						return api.remoteThumbnail(call, object)
+					}
+					return scraper.RenderRemoteThumbnail(call, object)
+				})
+			} else {
+				render := api.thumbnail
+				if render == nil {
+					render = scraper.RenderThumbnail
+				}
+				data, err = organization.ReadCompletedMedia(ctx, job, item, func(file *os.File) ([]byte, error) { return render(ctx, file) })
 			}
-			data, err = organization.ReadCompletedMedia(ctx, job, item, func(file *os.File) ([]byte, error) { return render(ctx, file) })
 			if err != nil || scraper.ValidateImage(data, ".jpg") != nil {
 				out := organization.SidecarRecord{Name: artifact.Name, Scope: artifact.Scope, State: "blocked", Reason: "video thumbnail unavailable or media changed; no image published"}
 				persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
