@@ -12,6 +12,9 @@ import (
 )
 
 type libraryTriggerInput struct {
+	Driver                     string `json:"driver,omitempty"`
+	ConfirmRemoteExclusive     bool   `json:"confirmRemoteExclusive"`
+	ConfirmRemoteRecoveryCopy  bool   `json:"confirmRemoteRecoveryCopy"`
 	AllowDiscExpansion         bool   `json:"allowDiscExpansion,omitempty"`
 	Path                       string `json:"path"`
 	Force                      bool   `json:"force"`
@@ -59,6 +62,14 @@ func (api *libraryScraper) serveScrapeEvent(w http.ResponseWriter, r *http.Reque
 	api.trigger(w, r, in.Data, true)
 }
 func (api *libraryScraper) trigger(w http.ResponseWriter, r *http.Request, in libraryTriggerInput, event bool) {
+	if in.Driver != "" && organization.LibraryRemoteMode(in.Driver) == "" {
+		writeOrganizationError(w, organization.ErrMode)
+		return
+	}
+	if !in.Review && in.Driver != "" && (!in.ConfirmRemoteExclusive || !in.ConfirmRemoteRecoveryCopy) {
+		writeAPIError(w, 400, 400, "remote scrape requires separate exclusive/non-atomic and retained-copy consent")
+		return
+	}
 	if !in.Review && (!in.Confirm || !in.ConfirmOldExecutorsStopped || in.Force && !in.ConfirmOverwrite || len(in.RequestID) != 32 || len(in.Fingerprint) != 64) {
 		writeAPIError(w, 400, 400, "request a readonly review, then confirm its fingerprint, stopped writers and overwrite consent")
 		return
@@ -103,7 +114,12 @@ func (api *libraryScraper) trigger(w http.ResponseWriter, r *http.Request, in li
 		if root.Type != "MOV" && root.Type != "TV" && root.Type != "ANIME" {
 			continue
 		}
-		bound, err := libraryRootSnapshot(root)
+		var bound organization.LibraryRoot
+		if in.Driver != "" {
+			bound, _, err = api.remoteDefinition(ctx, root, in.Driver)
+		} else {
+			bound, err = libraryRootSnapshot(root)
+		}
 		if err != nil {
 			continue
 		}
@@ -122,7 +138,7 @@ func (api *libraryScraper) trigger(w http.ResponseWriter, r *http.Request, in li
 	if in.Force {
 		mode = "force_all"
 	}
-	p, err := api.plan(ctx, libraryPlanInput{AllowDiscExpansion: in.AllowDiscExpansion, RootID: rootID, Path: relative, Mode: mode, Excludes: []string{}, RequestID: in.RequestID}, claims.Username)
+	p, err := api.plan(ctx, libraryPlanInput{Driver: in.Driver, AllowDiscExpansion: in.AllowDiscExpansion, RootID: rootID, Path: relative, Mode: mode, Excludes: []string{}, RequestID: in.RequestID}, claims.Username)
 	if err != nil {
 		writeOrganizationError(w, err)
 		return
@@ -159,6 +175,10 @@ func (api *libraryScraper) trigger(w http.ResponseWriter, r *http.Request, in li
 	}
 	if p.Total == 0 {
 		writeAPIError(w, 422, 422, "no eligible media in reviewed scope")
+		return
+	}
+	if err := approveLibraryRemote(&p.definition, claims.Username, "library-event", in.ConfirmRemoteExclusive, in.ConfirmRemoteRecoveryCopy); err != nil {
+		writeOrganizationError(w, err)
 		return
 	}
 	id := organization.Digest([]string{claims.Username, in.RequestID})

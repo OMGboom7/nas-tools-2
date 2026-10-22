@@ -148,3 +148,45 @@ func libraryDiscMutable(d LibraryDefinition, path, name string) bool {
 	}
 	return discMetadataName(LibraryDiscStem(d, LibraryMedia{Path: path}), name)
 }
+
+func libraryDiscLayout(root string, disc LibraryDisc) error {
+	dirs, files := map[string]bool{}, map[string]bool{}
+	for _, d := range disc.Directories {
+		dirs[filepath.ToSlash(d.Path)] = true
+	}
+	for _, f := range disc.Files {
+		relative, err := filepath.Rel(root, f.Path)
+		if err != nil || !validRelative(relative) {
+			return ErrPath
+		}
+		files[filepath.ToSlash(relative)] = true
+	}
+	direct := func(prefix string) bool {
+		bd := filepath.ToSlash(filepath.Join(prefix, "BDMV"))
+		if !dirs[bd] || !dirs[bd+"/STREAM"] || !files[bd+"/index.bdmv"] {
+			return false
+		}
+		for f := range files {
+			if strings.HasPrefix(f, bd+"/STREAM/") && strings.EqualFold(filepath.Ext(f), ".m2ts") {
+				return true
+			}
+		}
+		return false
+	}
+	if direct("") {
+		return nil
+	}
+	volumes := 0
+	for p := range dirs {
+		if p != "." && !strings.Contains(p, "/") && discVolumeName.MatchString(p) {
+			if !direct(p) {
+				return ErrState
+			}
+			volumes++
+		}
+	}
+	if volumes == 0 {
+		return ErrState
+	}
+	return nil
+}

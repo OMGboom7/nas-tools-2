@@ -12,6 +12,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/0xforee/nas-tools/backend/internal/scraper"
 )
 
@@ -241,11 +242,20 @@ func (api *libraryScraper) runMedia(ctx context.Context, job organization.Librar
 		}
 		data := a.Data
 		if a.Thumbnail {
-			render := api.intake.thumbnail
-			if render == nil {
-				render = scraper.RenderThumbnail
+			if d.Remote != nil {
+				data, err = organization.ReadLibraryRemoteMedia(ctx, d, m, func(call context.Context, o *remotestore.VerifiedObject) ([]byte, error) {
+					if api.intake.remoteThumbnail != nil {
+						return api.intake.remoteThumbnail(call, o)
+					}
+					return scraper.RenderRemoteThumbnail(call, o)
+				})
+			} else {
+				render := api.intake.thumbnail
+				if render == nil {
+					render = scraper.RenderThumbnail
+				}
+				data, err = organization.ReadLibraryMedia(ctx, d, m, func(f *os.File) ([]byte, error) { return render(ctx, f) })
 			}
-			data, err = organization.ReadLibraryMedia(ctx, d, m, func(f *os.File) ([]byte, error) { return render(ctx, f) })
 			if err == nil {
 				err = scraper.ValidateImage(data, ".jpg")
 			}
@@ -299,81 +309,111 @@ func (api *libraryScraper) tick(ctx context.Context) error {
 		return err
 	}
 	for _, job := range jobs {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err := store.ClaimLibraryJob(ctx, job.ID); err != nil {
-			if errors.Is(err, organization.ErrState) {
-				continue
-			}
+		if err := api.runJob(ctx, job); err != nil {
 			return err
 		}
-		job.State = "running"
-		if job.Total != job.Definition.Count || job.Total < 1 || job.Total > 50000 {
-			if err := store.FinishLibraryJob(ctx, job.ID, "needs_review", "saved media count is inconsistent; no files handled"); err != nil {
+	}
+	return nil
+}
+func (api *libraryScraper) runJob(ctx context.Context, job organization.LibraryJob) error {
+	store := api.intake.organizer.jobs
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	opCtx, closeRemote, remoteErr := api.libraryContext(ctx, job.Definition)
+	if errors.Is(remoteErr, organization.ErrBusy) {
+		return remoteErr
+	}
+	defer closeRemote()
+	if err := store.ClaimLibraryJob(ctx, job.ID); err != nil {
+		if errors.Is(err, organization.ErrState) {
+			return nil
+		}
+		return err
+	}
+	job.State = "running"
+	if remoteErr != nil {
+		return store.FinishLibraryJob(ctx, job.ID, "needs_review", "reviewed remote account unavailable; no item started or replayed")
+	}
+	ctx, stopWatch, watchErr := api.libraryJobContext(opCtx, job)
+	if watchErr != nil {
+		return store.FinishLibraryJob(ctx, job.ID, "needs_review", "reviewed scope or configuration changed; no item started")
+	}
+	defer stopWatch()
+	if job.Total != job.Definition.Count || job.Total < 1 || job.Total > 50000 {
+		if err := store.FinishLibraryJob(ctx, job.ID, "needs_review", "saved media count is inconsistent; no files handled"); err != nil {
+			return err
+		}
+		return nil
+	}
+	state, reason := "completed", ""
+	for page := 1; page <= 500; page++ {
+		items, err := store.LibraryItems(ctx, job.ID, page)
+		if err != nil {
+			state, reason = "needs_review", "media journal could not be read; unfinished items were not replayed"
+			break
+		}
+		stop := false
+		for _, item := range items {
+			if ctx.Err() != nil || store.CheckLibraryRunning(ctx, job.ID) != nil {
+				stop = true
+				state, reason = "needs_review", "job interrupted; unfinished items are not automatically replayed"
+				break
+			}
+			if item.State != "pending" {
+				state, reason = "needs_review", "unexpected previous execution state; no item replayed"
+				stop = true
+				break
+			}
+			if err := store.LibraryItemState(ctx, job.ID, item.Ordinal, "pending", "running", ""); err != nil {
 				return err
 			}
-			continue
-		}
-		state, reason := "completed", ""
-		for page := 1; page <= 500; page++ {
-			items, err := store.LibraryItems(ctx, job.ID, page)
+			outcome, why := "blocked", "reviewed remote media could not be adopted; no metadata written"
+			prepared, prepareErr := item.Media, error(nil)
+			if job.Definition.Remote != nil && item.Media.Blocked == "" {
+				prepared, prepareErr = organization.PrepareLibraryRemoteMedia(ctx, job.Definition, item.Media)
+				if prepareErr == nil {
+					prepareErr = store.BindLibraryRemoteMedia(ctx, job.ID, item.Ordinal, item.Media, prepared)
+				}
+			}
+			if prepareErr == nil {
+				outcome, why = api.runMedia(ctx, job, prepared)
+			}
+			if outcome == "needs_review" {
+				state, reason = "needs_review", why
+				stop = true
+				outcome = "partial"
+			} else if outcome != "completed" && state != "needs_review" {
+				state, reason = "partial", "one or more media files have incomplete or blocked metadata; inspect receipts"
+			}
+			persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			err = store.LibraryItemState(persist, job.ID, item.Ordinal, "running", outcome, why)
 			if err != nil {
-				state, reason = "needs_review", "media journal could not be read; unfinished items were not replayed"
-				break
-			}
-			stop := false
-			for _, item := range items {
-				if ctx.Err() != nil || store.CheckLibraryRunning(ctx, job.ID) != nil {
-					stop = true
-					state, reason = "needs_review", "job interrupted; unfinished items are not automatically replayed"
-					break
-				}
-				if item.State != "pending" {
-					state, reason = "needs_review", "unexpected previous execution state; no item replayed"
-					stop = true
-					break
-				}
-				if err := store.LibraryItemState(ctx, job.ID, item.Ordinal, "pending", "running", ""); err != nil {
-					return err
-				}
-				outcome, why := api.runMedia(ctx, job, item.Media)
-				if outcome == "needs_review" {
-					state, reason = "needs_review", why
-					stop = true
-					outcome = "partial"
-				} else if outcome != "completed" && state != "needs_review" {
-					state, reason = "partial", "one or more media files have incomplete or blocked metadata; inspect receipts"
-				}
-				persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-				err = store.LibraryItemState(persist, job.ID, item.Ordinal, "running", outcome, why)
-				if err != nil {
-					current, e := store.LibraryJob(persist, job.ID)
-					cancel()
-					if e == nil && current.State == "cancelled" {
-						stop = true
-						break
-					}
-					return err
-				}
+				current, e := store.LibraryJob(persist, job.ID)
 				cancel()
-				if stop {
+				if e == nil && current.State == "cancelled" {
+					stop = true
 					break
 				}
+				return err
 			}
-			if stop || len(items) < 100 {
+			cancel()
+			if stop {
 				break
 			}
 		}
-		persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		current, e := store.LibraryJob(persist, job.ID)
-		if e == nil && current.State == "running" {
-			e = store.FinishLibraryJob(persist, job.ID, state, reason)
+		if stop || len(items) < 100 {
+			break
 		}
-		cancel()
-		if e != nil {
-			return e
-		}
+	}
+	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	current, e := store.LibraryJob(persist, job.ID)
+	if e == nil && current.State == "running" {
+		e = store.FinishLibraryJob(persist, job.ID, state, reason)
+	}
+	cancel()
+	if e != nil {
+		return e
 	}
 	return nil
 }

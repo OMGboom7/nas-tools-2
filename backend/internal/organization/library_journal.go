@@ -8,23 +8,26 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
+
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
 type LibraryJob struct {
-	ID         string            `json:"id"`
-	State      string            `json:"state"`
-	Mode       string            `json:"mode"`
-	RootID     string            `json:"rootId"`
-	Path       string            `json:"path"`
-	Created    string            `json:"created"`
-	Updated    string            `json:"updated"`
-	Reason     string            `json:"reason"`
-	Total      int               `json:"total"`
-	Done       int               `json:"done"`
-	Blocked    int               `json:"blocked"`
-	Definition LibraryDefinition `json:"-"`
+	Remote     *remotestore.Summary `json:"remote,omitempty"`
+	ID         string               `json:"id"`
+	State      string               `json:"state"`
+	Mode       string               `json:"mode"`
+	RootID     string               `json:"rootId"`
+	Path       string               `json:"path"`
+	Created    string               `json:"created"`
+	Updated    string               `json:"updated"`
+	Reason     string               `json:"reason"`
+	Total      int                  `json:"total"`
+	Done       int                  `json:"done"`
+	Blocked    int                  `json:"blocked"`
+	Definition LibraryDefinition    `json:"-"`
 }
 type LibraryItem struct {
 	Disc    *DiscInfo    `json:"disc,omitempty"`
@@ -35,13 +38,14 @@ type LibraryItem struct {
 	Media   LibraryMedia `json:"-"`
 }
 type LibraryOutput struct {
-	ID     string             `json:"id"`
-	JobID  string             `json:"jobId"`
-	Target string             `json:"target"`
-	State  string             `json:"state"`
-	Reason string             `json:"reason"`
-	Owner  string             `json:"-"`
-	Proof  LibraryOutputProof `json:"-"`
+	Remote *remotestore.Summary `json:"remote,omitempty"`
+	ID     string               `json:"id"`
+	JobID  string               `json:"jobId"`
+	Target string               `json:"target"`
+	State  string               `json:"state"`
+	Reason string               `json:"reason"`
+	Owner  string               `json:"-"`
+	Proof  LibraryOutputProof   `json:"-"`
 }
 
 func LibraryOutputDigest(out LibraryOutput) string {
@@ -88,6 +92,9 @@ func (s *Store) CreateLibraryJob(ctx context.Context, fingerprint string, d Libr
 	return id, nil
 }
 func createLibraryJob(ctx context.Context, tx *sql.Tx, fingerprint string, d LibraryDefinition, files []LibraryMedia) (string, error) {
+	if d.Remote != nil && !LibraryRemoteApproved(d) {
+		return "", ErrState
+	}
 	if len(fingerprint) != 64 || len(files) == 0 || len(files) > 50_000 || d.Count != len(files) || !LibraryMode(d.Mode) || d.Actor == "" || len(d.RequestID) != 32 {
 		return "", ErrState
 	}
@@ -122,6 +129,9 @@ func createLibraryJob(ctx context.Context, tx *sql.Tx, fingerprint string, d Lib
 	defer stmt.Close()
 	worklistBytes := 0
 	for i, m := range files {
+		if d.Remote != nil && m.Blocked == "" && (m.Remote == nil || m.Remote.Digest != "") {
+			return "", ErrState
+		}
 		if m.Disc != nil {
 			if err := libraryDiscDefinition(d, m); err != nil {
 				return "", err
@@ -190,6 +200,9 @@ func (s *Store) LibraryJob(ctx context.Context, id string) (LibraryJob, error) {
 		return j, ErrState
 	}
 	j.Mode = j.Definition.Mode
+	if j.Definition.Remote != nil {
+		j.Remote = j.Definition.Remote.Summary()
+	}
 	j.RootID, j.Path = j.Definition.Root.ID, j.Definition.Selection
 	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(STATE='completed'),0),COALESCE(SUM(STATE IN('partial','blocked')),0) FROM GO_LIBRARY_SCRAPE_ITEMS WHERE JOB_ID=?`, id).Scan(&j.Total, &j.Done, &j.Blocked)
 	return j, err
@@ -348,6 +361,9 @@ func scanLibraryOutput(row interface{ Scan(...any) error }) (LibraryOutput, erro
 	if err == nil && json.Unmarshal([]byte(raw), &r.Proof) != nil {
 		err = ErrState
 	}
+	if err == nil && r.Proof.Remote != nil {
+		r.Remote = (&remotestore.Binding{Driver: r.Proof.Remote.Driver}).Summary()
+	}
 	return r, err
 }
 
@@ -392,14 +408,29 @@ func (s *Store) SaveLibraryOutput(ctx context.Context, job string, root LibraryR
 		return err
 	}
 	defer tx.Rollback()
-	var js string
-	if err := tx.QueryRowContext(ctx, `SELECT STATE FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, job).Scan(&js); err != nil {
+	var js, definition string
+	if err := tx.QueryRowContext(ctx, `SELECT STATE,DEFINITION FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, job).Scan(&js, &definition); err != nil {
 		return err
+	}
+	if proof.Remote != nil {
+		var d LibraryDefinition
+		if json.Unmarshal([]byte(definition), &d) != nil {
+			return ErrState
+		}
+		sameRoot := d.Root.ID == root.ID && d.Root.Path == root.Path && d.Root.Identity == root.Identity && (d.Root.Kind == root.Kind || d.Root.Kind == "auto" && (root.Kind == "movie" || root.Kind == "tv"))
+		if !sameRoot || !LibraryRemoteApproved(d) || !libraryRemoteOutputValid(d, proof) {
+			return ErrState
+		}
 	}
 	if js != "running" && state == "writing" {
 		return ErrState
 	}
 	id := Digest([]string{job, target})
+	if state == "writing" && proof.Remote != nil {
+		if err := checkRemoteMetadataClaims(ctx, tx, root.Path, target, id, ""); err != nil {
+			return err
+		}
+	}
 	raw, err := json.Marshal(proof)
 	if err != nil {
 		return err
@@ -471,6 +502,19 @@ func (s *Store) LibraryRestoreIntent(ctx context.Context, id, expectedProof stri
 		return ErrState
 	}
 	key := libraryTargetClaim(out.Target, out.Proof)
+	if out.Proof.Remote != nil {
+		var raw string
+		if err := tx.QueryRowContext(ctx, `SELECT DEFINITION FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, out.JobID).Scan(&raw); err != nil {
+			return err
+		}
+		var d LibraryDefinition
+		if json.Unmarshal([]byte(raw), &d) != nil || !libraryRemoteOutputValid(d, out.Proof) {
+			return ErrState
+		}
+		if err := checkRemoteMetadataClaims(ctx, tx, d.Root.Path, out.Target, id, ""); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO GO_LIBRARY_SCRAPE_CLAIMS(TARGET_KEY,OUTPUT_ID) VALUES(?,?)`, key, id); err != nil {
 		return err
 	}

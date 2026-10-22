@@ -25,7 +25,7 @@ import (
 const AccessKey = "fixture-access"
 const SecretKey = "fixture-secret-not-for-production"
 
-type Request struct{ Method, Key, CopySource, Query, Authorization, Range string }
+type Request struct{ Method, Key, CopySource, Query, Authorization, Range, IfMatch string }
 type object struct {
 	data     []byte
 	modified time.Time
@@ -139,7 +139,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := strings.TrimPrefix(r.URL.Path, "/")
-	s.requests = append(s.requests, Request{r.Method, key, r.Header.Get("X-Amz-Copy-Source"), r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Range")})
+	s.requests = append(s.requests, Request{r.Method, key, r.Header.Get("X-Amz-Copy-Source"), r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Range"), r.Header.Get("If-Match")})
 	if !strings.Contains(r.Header.Get("Authorization"), AccessKey) {
 		failure(w, 403, "AccessDenied")
 		return
@@ -274,6 +274,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "PUT" {
+		if match := r.Header.Get("If-Match"); match != "" && (!exists || strings.Trim(match, `"`) != etag(o.data)) {
+			failure(w, 412, "PreconditionFailed")
+			return
+		}
 		if exists && r.Header.Get("If-None-Match") == "*" {
 			failure(w, 412, "PreconditionFailed")
 			return

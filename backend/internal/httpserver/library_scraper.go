@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/0xforee/nas-tools/backend/internal/scraper"
 )
 
@@ -22,6 +23,7 @@ type libraryScraper struct {
 	workers atomic.Int32
 }
 type libraryPlanInput struct {
+	Driver             string   `json:"driver,omitempty"`
 	AllowDiscExpansion bool     `json:"allowDiscExpansion,omitempty"`
 	RootID             string   `json:"rootId"`
 	Path               string   `json:"path"`
@@ -35,6 +37,7 @@ type libraryPreviewItem struct {
 	Blocked string                 `json:"blocked,omitempty"`
 }
 type libraryPreview struct {
+	Remote      *remotestore.Summary `json:"remote,omitempty"`
 	Input       libraryPlanInput     `json:"input"`
 	Fingerprint string               `json:"fingerprint"`
 	Total       int                  `json:"total"`
@@ -92,6 +95,9 @@ func (api *libraryScraper) definition(ctx context.Context, input libraryPlanInpu
 	if !organization.LibraryMode(input.Mode) || len(input.Excludes) > 128 || len(input.RequestID) != 32 {
 		return p, organization.ErrPath
 	}
+	if input.Driver != "" && organization.LibraryRemoteMode(input.Driver) == "" {
+		return p, organization.ErrMode
+	}
 	if b, err := hex.DecodeString(input.RequestID); err != nil || hex.EncodeToString(b) != input.RequestID {
 		return p, organization.ErrPath
 	}
@@ -103,7 +109,11 @@ func (api *libraryScraper) definition(ctx context.Context, input libraryPlanInpu
 	d := organization.LibraryDefinition{AllowDiscExpansion: input.AllowDiscExpansion, Selection: p.Input.Path, Mode: input.Mode, Excludes: p.Input.Excludes, Actor: actor, RequestID: input.RequestID, Allowed: []organization.LibraryRoot{}}
 	for _, root := range roots.Targets {
 		if root.ID == input.RootID && (root.Type == "MOV" || root.Type == "TV" || root.Type == "ANIME") {
-			d.Root, err = libraryRootSnapshot(root)
+			if input.Driver != "" {
+				d.Root, d.Remote, err = api.remoteDefinition(ctx, root, input.Driver)
+			} else {
+				d.Root, err = libraryRootSnapshot(root)
+			}
 			if err != nil {
 				return p, err
 			}
@@ -113,6 +123,9 @@ func (api *libraryScraper) definition(ctx context.Context, input libraryPlanInpu
 		return p, organization.ErrPath
 	}
 	for _, root := range append(roots.Targets, roots.Sources...) {
+		if d.Remote != nil {
+			break
+		}
 		if root.ID == d.Root.ID {
 			continue
 		}
@@ -134,6 +147,9 @@ func (api *libraryScraper) definition(ctx context.Context, input libraryPlanInpu
 		return p, err
 	}
 	p.definition = d
+	if d.Remote != nil {
+		p.Remote = d.Remote.Summary()
+	}
 	return p, nil
 }
 func (api *libraryScraper) plan(ctx context.Context, input libraryPlanInput, actor string) (libraryPreview, error) {
@@ -142,7 +158,12 @@ func (api *libraryScraper) plan(ctx context.Context, input libraryPlanInput, act
 		return p, err
 	}
 	d := p.definition
-	scan, err := organization.ScanLibrary(ctx, d)
+	scanCtx, closeRemote, err := api.libraryContext(ctx, d)
+	if err != nil {
+		return p, err
+	}
+	defer closeRemote()
+	scan, err := organization.ScanLibrary(scanCtx, d)
 	if err != nil {
 		return p, err
 	}
@@ -182,7 +203,13 @@ func (api *libraryScraper) serveStatus(w http.ResponseWriter, r *http.Request) {
 		writeOrganizationError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"roots": targets, "jobs": jobs}})
+	drivers := []string{""}
+	for _, driver := range []string{"rclone", "minio"} {
+		if api.remoteFactory(driver).Available() {
+			drivers = append(drivers, driver)
+		}
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"roots": targets, "jobs": jobs, "drivers": drivers}})
 }
 func (api *libraryScraper) servePreview(w http.ResponseWriter, r *http.Request) {
 	if !api.authorize(w, r) {
@@ -224,12 +251,18 @@ func (api *libraryScraper) serveCreate(w http.ResponseWriter, r *http.Request) {
 		Confirm                    bool   `json:"confirm"`
 		ConfirmOverwrite           bool   `json:"confirmOverwrite"`
 		ConfirmOldExecutorsStopped bool   `json:"confirmOldExecutorsStopped"`
+		ConfirmRemoteExclusive     bool   `json:"confirmRemoteExclusive"`
+		ConfirmRemoteRecoveryCopy  bool   `json:"confirmRemoteRecoveryCopy"`
 	}
 	if !decodeOrganizationRequest(w, r, &in, "invalid library job") {
 		return
 	}
 	if !in.Confirm || !in.ConfirmOldExecutorsStopped || in.Mode != "no_force" && !in.ConfirmOverwrite || len(in.Fingerprint) != 64 || len(in.RequestID) != 32 {
 		writeAPIError(w, 400, 400, "reviewed scope, stopped external writers and explicit overwrite consent required")
+		return
+	}
+	if in.Driver != "" && (!in.ConfirmRemoteExclusive || !in.ConfirmRemoteRecoveryCopy) {
+		writeAPIError(w, 400, 400, "separate remote exclusive/non-atomic and retained-copy consent required")
 		return
 	}
 	claims, err := api.intake.organizer.auth.service.VerifyToken(r.Header.Get("Authorization"))
@@ -260,6 +293,10 @@ func (api *libraryScraper) serveCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.Total == 0 {
 		writeAPIError(w, 422, 422, "no media files in reviewed scope")
+		return
+	}
+	if err := approveLibraryRemote(&p.definition, claims.Username, "library-manual", in.ConfirmRemoteExclusive, in.ConfirmRemoteRecoveryCopy); err != nil {
+		writeOrganizationError(w, err)
 		return
 	}
 	id, err := api.intake.organizer.jobs.CreateLibraryJob(ctx, p.Fingerprint, p.definition, p.files)
@@ -350,6 +387,13 @@ func (api *libraryScraper) rootCurrent(ctx context.Context, d organization.Libra
 	}
 	for _, root := range roots.Targets {
 		if root.ID == d.Root.ID {
+			if d.Remote != nil {
+				logical, e := logicalRemoteRoot(root.Path)
+				if e != nil || logical != d.Root.Path {
+					return organization.ErrState
+				}
+				return api.remoteFactory(d.Remote.Driver).Validate(*d.Remote)
+			}
 			current, err := libraryRootSnapshot(root)
 			if err == nil && (current == d.Root || d.Root.Kind == "auto" && current.ID == d.Root.ID && current.Path == d.Root.Path && current.Identity == d.Root.Identity) {
 				return nil
@@ -384,6 +428,12 @@ func (api *libraryScraper) current(ctx context.Context, job organization.Library
 	if organization.ScrapeConfigDigest(raw) != job.Definition.SettingsDigest {
 		return organization.ErrState
 	}
+	if job.Definition.Remote != nil {
+		if !organization.LibraryRemoteApproved(job.Definition) {
+			return organization.ErrState
+		}
+		return api.rootCurrent(ctx, job.Definition)
+	}
 	roots, err := api.intake.organizer.roots(ctx)
 	if err != nil {
 		return err
@@ -409,7 +459,7 @@ func (api *libraryScraper) serveOutput(w http.ResponseWriter, r *http.Request) {
 	if !api.authorize(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	guard, err := api.intake.organizer.jobs.AcquireJob(ctx, "library-scraper-publication")
 	if err != nil {
@@ -431,6 +481,12 @@ func (api *libraryScraper) serveOutput(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, 409, "stop the job before inspecting recovery evidence")
 		return
 	}
+	ctx, closeRemote, err := api.libraryContext(ctx, job.Definition)
+	if err != nil {
+		writeOrganizationError(w, err)
+		return
+	}
+	defer closeRemote()
 	if err := api.rootCurrent(ctx, job.Definition); err != nil {
 		writeOrganizationError(w, err)
 		return
@@ -446,12 +502,18 @@ func (api *libraryScraper) serveOutput(w http.ResponseWriter, r *http.Request) {
 		Fingerprint                string `json:"fingerprint"`
 		Confirm                    bool   `json:"confirm"`
 		ConfirmOldExecutorsStopped bool   `json:"confirmOldExecutorsStopped"`
+		ConfirmRemoteExclusive     bool   `json:"confirmRemoteExclusive"`
+		ConfirmRemoteRecoveryCopy  bool   `json:"confirmRemoteRecoveryCopy"`
 	}
 	if !decodeOrganizationRequest(w, r, &in, "invalid recovery request") {
 		return
 	}
 	if !in.Confirm || !in.ConfirmOldExecutorsStopped || in.Fingerprint != fingerprint {
 		writeAPIError(w, 409, 409, "fresh recovery review and stopped external writers confirmation required")
+		return
+	}
+	if job.Definition.Remote != nil && (!in.ConfirmRemoteExclusive || !in.ConfirmRemoteRecoveryCopy) {
+		writeAPIError(w, 400, 400, "remote recovery requires separate exclusive namespace and retained-copy consent")
 		return
 	}
 	switch r.PathValue("action") {

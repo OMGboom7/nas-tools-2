@@ -117,6 +117,20 @@ func libraryOpenStage(parent *os.File, p LibraryOutputProof) (*os.File, error) {
 	return f, nil
 }
 func LibraryExisting(ctx context.Context, d LibraryDefinition, m LibraryMedia, scope, name string) (bool, error) {
+	if d.Remote != nil {
+		if VerifyLibraryMedia(ctx, d, m) != nil {
+			return false, ErrState
+		}
+		target, err := LibraryTarget(d, m, scope, name)
+		if err != nil {
+			return false, err
+		}
+		c, err := libraryRemoteClient(ctx, d)
+		if err != nil {
+			return false, err
+		}
+		return c.Existing(ctx, d.Root.Path, target)
+	}
 	if VerifyLibraryMedia(ctx, d, m) != nil {
 		return false, ErrState
 	}
@@ -145,6 +159,9 @@ func LibraryExisting(ctx context.Context, d LibraryDefinition, m LibraryMedia, s
 // displaced by the exchange remains in the private stage even if a late race
 // makes it differ from the expected old node; that outcome requires review.
 func PublishLibrarySidecar(ctx context.Context, d LibraryDefinition, m LibraryMedia, scope, name string, data []byte, prepare func(LibraryOutputProof) error, current func() error) (proof LibraryOutputProof, state string, err error) {
+	if d.Remote != nil {
+		return publishLibraryRemoteSidecar(ctx, d, m, scope, name, data, prepare, current)
+	}
 	state = "blocked"
 	if !LibraryMode(d.Mode) || len(data) == 0 || len(data) > 16<<20 || prepare == nil || current == nil || VerifyLibraryMedia(ctx, d, m) != nil {
 		return proof, state, ErrState
@@ -353,6 +370,9 @@ func PublishLibrarySidecar(ctx context.Context, d LibraryDefinition, m LibraryMe
 }
 
 func RestoreLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOutputProof, intent func() error) (string, error) {
+	if d.Remote != nil {
+		return restoreLibraryRemoteSidecar(ctx, d, p, intent)
+	}
 	if !validRelative(p.Target) || p.Old.Identity == "" || len(p.OldDigest) != 64 || len(p.NewDigest) != 64 || intent == nil {
 		return "uncertain", ErrState
 	}
@@ -460,6 +480,9 @@ func libraryProofCurrent(d LibraryDefinition, p LibraryOutputProof) error {
 // ObserveLibrarySidecar establishes a positive current outcome, not a reason
 // to retry an interrupted write. Incomplete stages are retained untouched.
 func ObserveLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOutputProof) (string, error) {
+	if d.Remote != nil {
+		return observeLibraryRemoteSidecar(ctx, d, p)
+	}
 	if !validRelative(p.Target) || p.Target == "." || p.NewIdentity == "" || len(p.NewDigest) != 64 {
 		return "uncertain", ErrState
 	}

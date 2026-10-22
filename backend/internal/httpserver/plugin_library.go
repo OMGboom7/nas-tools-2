@@ -24,6 +24,7 @@ var libraryPluginKeys = []string{"UserInstalledPlugins", libraryPluginKey, libra
 type libraryPluginConfig struct {
 	Cron, Mode           string
 	Paths, IDs, Excludes []string
+	Drivers              []string
 	Once                 bool
 }
 type libraryPluginLease struct {
@@ -31,6 +32,7 @@ type libraryPluginLease struct {
 	Templates                 []organization.LibraryDefinition
 }
 type libraryPluginControl struct {
+	RemoteGrant                   *organization.RemoteApproval `json:",omitempty"`
 	Epoch                         string
 	Authorized                    bool
 	Lease                         libraryPluginLease
@@ -98,6 +100,15 @@ func parseLibraryPlugin(values map[string]any) (libraryPluginConfig, error) {
 	c.IDs, err = libraryPluginStrings(values["go_root_ids"])
 	if err != nil || len(c.IDs) > 0 && len(c.IDs) != len(c.Paths) {
 		return c, errLibraryPlugin
+	}
+	c.Drivers, err = libraryPluginStrings(values["go_drivers"])
+	if err != nil || len(c.Drivers) > 0 && len(c.Drivers) != len(c.Paths) {
+		return c, errLibraryPlugin
+	}
+	for _, driver := range c.Drivers {
+		if driver != "" && organization.LibraryRemoteMode(driver) == "" {
+			return c, errLibraryPlugin
+		}
 	}
 	for _, p := range c.Paths {
 		if !filepath.IsAbs(p) || len(p) > 4096 || strings.ContainsAny(p, "\x00\r\n\\") {
@@ -172,7 +183,11 @@ func (api *libraryScraper) pluginLease(ctx context.Context, values map[string]an
 		if found == nil {
 			return l, errLibraryPlugin
 		}
-		preview, err := api.definition(ctx, libraryPlanInput{RootID: found.ID, Path: ".", Mode: c.Mode, Excludes: []string{}, RequestID: strings.Repeat("0", 32)}, actor)
+		driver := ""
+		if len(c.Drivers) > 0 {
+			driver = c.Drivers[i]
+		}
+		preview, err := api.definition(ctx, libraryPlanInput{Driver: driver, RootID: found.ID, Path: ".", Mode: c.Mode, Excludes: []string{}, RequestID: strings.Repeat("0", 32)}, actor)
 		if err != nil {
 			return l, err
 		}
@@ -209,7 +224,12 @@ func (api *libraryScraper) pluginLease(ctx context.Context, values map[string]an
 		sort.Strings(d.Excludes)
 		l.Templates = append(l.Templates, d)
 	}
-	sort.Slice(l.Templates, func(i, j int) bool { return l.Templates[i].Root.ID < l.Templates[j].Root.ID })
+	sort.Slice(l.Templates, func(i, j int) bool {
+		if l.Templates[i].Root.ID == l.Templates[j].Root.ID {
+			return libraryDefinitionDriver(l.Templates[i]) < libraryDefinitionDriver(l.Templates[j])
+		}
+		return l.Templates[i].Root.ID < l.Templates[j].Root.ID
+	})
 	return l, nil
 }
 func (s pluginService) nativeLibrary(id string) bool {
@@ -231,16 +251,26 @@ func (api *libraryScraper) libraryDetail(ctx context.Context, values map[string]
 	selected := []string{}
 	paths, _ := libraryPluginStrings(values["scraper_path"])
 	ids, _ := libraryPluginStrings(values["go_root_ids"])
+	drivers, _ := libraryPluginStrings(values["go_drivers"])
 	for _, r := range roots.Targets {
 		if r.Type != "MOV" && r.Type != "TV" && r.Type != "ANIME" {
 			continue
 		}
 		choices = append(choices, pluginConfigChoice{r.ID, r.Label + " · " + r.Path})
+		for _, driver := range []string{"rclone", "minio"} {
+			if api.remoteFactory(driver).Available() {
+				choices = append(choices, pluginConfigChoice{driver + ":" + r.ID, driver + " · " + r.Label + " · " + r.Path})
+			}
+		}
 	}
 	for i, p := range paths {
 		for _, r := range roots.Targets {
 			if (r.Type == "MOV" || r.Type == "TV" || r.Type == "ANIME") && filepath.Clean(p) == r.Path && (len(ids) == 0 || i < len(ids) && ids[i] == r.ID) {
-				selected = append(selected, r.ID)
+				value := r.ID
+				if i < len(drivers) && drivers[i] != "" {
+					value = drivers[i] + ":" + r.ID
+				}
+				selected = append(selected, value)
 				break
 			}
 		}
@@ -255,6 +285,8 @@ func (api *libraryScraper) libraryDetail(ctx context.Context, values map[string]
 		{Key: "go_confirm", Title: "确认本次所选范围的后台写入授权", Type: "switch", Options: []pluginConfigChoice{}},
 		{Key: "go_old_stopped", Title: "确认旧 Python、其他实例及外部写入器已实际停止", Type: "switch", Options: []pluginConfigChoice{}},
 		{Key: "go_overwrite", Title: "独立同意覆盖所选元数据并保留额外磁盘备份", Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "两种强制模式必须确认；备份不会自动删除。"},
+		{Key: "go_remote_exclusive", Title: "独立确认本轮远程范围独占、非原子可见性及停止所有外部写入器", Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "只对显式选择的 Rclone／MinIO 范围授权，不把同名路径当本机目录。"},
+		{Key: "go_remote_recovery", Title: "独立同意完整内容读取及长期保留原件／新件的云端空间与流量费用", Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "不自动清理；发生不确定结果必须先核验，不会自动重放覆盖。"},
 	}
 	for i := range fields {
 		fields[i].Configured = configuredPluginValue(values[fields[i].Key])
@@ -263,7 +295,7 @@ func (api *libraryScraper) libraryDetail(ctx context.Context, values map[string]
 	if v, ok := values["mode"].(string); ok {
 		mode = v
 	}
-	return pluginConfigDetail{ID: libraryPluginID, Name: "媒体库刮削", Fields: fields, Values: map[string]any{"mode": mode, "scraper_path": selected, "onlyonce": false, "go_stop": false, "go_confirm": false, "go_old_stopped": false, "go_overwrite": false}, Meta: pluginConfigDetailMeta{HasPage: true, Fingerprint: organization.Digest(raw)}}, nil
+	return pluginConfigDetail{ID: libraryPluginID, Name: "媒体库刮削", Fields: fields, Values: map[string]any{"mode": mode, "scraper_path": selected, "onlyonce": false, "go_stop": false, "go_confirm": false, "go_old_stopped": false, "go_overwrite": false, "go_remote_exclusive": false, "go_remote_recovery": false}, Meta: pluginConfigDetailMeta{HasPage: true, Fingerprint: organization.Digest(raw)}}, nil
 }
 func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request, action string) {
 	api := s.library
@@ -371,12 +403,19 @@ func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request
 			writeOrganizationError(w, err)
 			return
 		}
-		paths := []string{}
+		paths, drivers, rootIDs := []string{}, []string{}, []string{}
 		for _, id := range selected {
+			rootID, driver, err := libraryStorageSelection(id)
+			if err != nil {
+				writeOrganizationError(w, err)
+				return
+			}
 			found := false
 			for _, root := range roots.Targets {
-				if root.ID == id && (root.Type == "MOV" || root.Type == "TV" || root.Type == "ANIME") {
+				if root.ID == rootID && (root.Type == "MOV" || root.Type == "TV" || root.Type == "ANIME") {
 					paths = append(paths, root.Path)
+					drivers = append(drivers, driver)
+					rootIDs = append(rootIDs, rootID)
 					found = true
 					break
 				}
@@ -386,7 +425,7 @@ func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
-		next["scraper_path"], next["go_root_ids"] = paths, selected
+		next["scraper_path"], next["go_root_ids"], next["go_drivers"] = paths, rootIDs, drivers
 	}
 	if action == "legacy-save" {
 		next, err = decodeMetadataConfig(r.PostForm.Get("config"))
@@ -411,13 +450,19 @@ func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request
 				writeOrganizationError(w, err)
 				return
 			}
-			paths, ids := []string{}, []string{}
+			paths, ids, drivers := []string{}, []string{}, []string{}
 			for _, p := range selected {
+				rootID, driver, e := libraryStorageSelection(p)
+				if e != nil {
+					writeOrganizationError(w, e)
+					return
+				}
 				found := false
 				for _, root := range roots.Targets {
-					if (root.Type == "MOV" || root.Type == "TV" || root.Type == "ANIME") && (root.ID == p || filepath.IsAbs(p) && root.Path == filepath.Clean(p)) {
+					if (root.Type == "MOV" || root.Type == "TV" || root.Type == "ANIME") && (root.ID == rootID || filepath.IsAbs(p) && root.Path == filepath.Clean(p)) {
 						paths = append(paths, root.Path)
 						ids = append(ids, root.ID)
+						drivers = append(drivers, driver)
 						found = true
 						break
 					}
@@ -427,7 +472,7 @@ func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request
 					return
 				}
 			}
-			next["scraper_path"], next["go_root_ids"] = paths, ids
+			next["scraper_path"], next["go_root_ids"], next["go_drivers"] = paths, ids, drivers
 		}
 	}
 	if next == nil {
@@ -435,19 +480,24 @@ func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request
 	}
 	// Unknown persisted cache keys can never be carried forward as consent.
 	stop, activate, oldStopped, overwrite := false, false, false, false
+	remoteExclusive, remoteRecovery := false, false
 	if action == "save" {
 		stop = input.Values["go_stop"] == true
 		activate = input.Values["go_confirm"] == true
 		oldStopped = input.Values["go_old_stopped"] == true
 		overwrite = input.Values["go_overwrite"] == true
+		remoteExclusive = input.Values["go_remote_exclusive"] == true
+		remoteRecovery = input.Values["go_remote_recovery"] == true
 	}
 	if action == "legacy-save" {
 		stop = next["go_stop"] == true
 		activate = r.PostForm.Get("confirm") == "true"
 		oldStopped = r.PostForm.Get("confirmOldExecutorsStopped") == "true"
 		overwrite = r.PostForm.Get("confirmOverwrite") == "true"
+		remoteExclusive = r.PostForm.Get("confirmRemoteExclusive") == "true"
+		remoteRecovery = r.PostForm.Get("confirmRemoteRecoveryCopy") == "true"
 	}
-	for _, k := range []string{"go_stop", "go_confirm", "go_old_stopped", "go_overwrite"} {
+	for _, k := range []string{"go_stop", "go_confirm", "go_old_stopped", "go_overwrite", "go_remote_exclusive", "go_remote_recovery"} {
 		delete(next, k)
 	}
 	epoch, err := newIndexerClaim()
@@ -479,6 +529,16 @@ func (s pluginService) serveLibraryPlugin(w http.ResponseWriter, r *http.Request
 				return
 			}
 			state.Authorized, state.Lease, state.State, state.Reason = true, lease, "scheduled", ""
+			for _, template := range lease.Templates {
+				if template.Remote != nil {
+					if !remoteExclusive || !remoteRecovery {
+						writeAPIError(w, 400, 400, "separate remote namespace and retained-copy authorization required for this schedule")
+						return
+					}
+					state.RemoteGrant = &organization.RemoteApproval{Actor: claims.Username, Origin: "library-plugin", Created: time.Now().UTC().Format(time.RFC3339Nano), Exclusive: true, RecoveryCopy: true}
+					break
+				}
+			}
 			if cfg.Once {
 				state.OnceAt = time.Now().Add(3 * time.Second).UTC()
 			}

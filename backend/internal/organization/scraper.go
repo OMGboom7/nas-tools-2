@@ -7,6 +7,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/scraper"
@@ -203,6 +204,21 @@ func (s *Store) SaveScrapeOutput(ctx context.Context, id string, out SidecarReco
 	}
 	if r.State != "running" {
 		return ErrState
+	}
+	if out.State == "writing" && strings.HasPrefix(out.Proof.Identity, "remote:") {
+		var raw string
+		if err := tx.QueryRowContext(ctx, `SELECT DEFINITION FROM GO_ORGANIZATION_JOBS WHERE ID=?`, r.JobID).Scan(&raw); err != nil {
+			return err
+		}
+		var d Definition
+		if json.Unmarshal([]byte(raw), &d) != nil {
+			return ErrState
+		}
+		if d.Remote != nil {
+			if err := checkRemoteMetadataClaims(ctx, tx, d.TargetRoot, out.Proof.Target, "", id); err != nil {
+				return err
+			}
+		}
 	}
 	found := false
 	for i, old := range r.Outputs {

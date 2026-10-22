@@ -24,6 +24,11 @@ func (api *libraryScraper) pluginOriginCurrent(ctx context.Context, origin *orga
 	if origin.Event {
 		return nil
 	}
+	for _, d := range c.Lease.Templates {
+		if d.Remote != nil && (c.RemoteGrant == nil || !c.RemoteGrant.Valid() || c.RemoteGrant.Actor != c.Lease.Actor) {
+			return organization.ErrState
+		}
+	}
 	if !c.Authorized || c.State != "queued" || c.Batch != origin.Batch {
 		return organization.ErrState
 	}
@@ -74,6 +79,11 @@ func (api *libraryScraper) pluginTick(ctx context.Context, now time.Time) error 
 	c, err := decodeLibraryControl(raw[libraryControlKey])
 	if err != nil || !c.Authorized {
 		return err
+	}
+	for _, d := range c.Lease.Templates {
+		if d.Remote != nil && (c.RemoteGrant == nil || !c.RemoteGrant.Valid() || c.RemoteGrant.Actor != c.Lease.Actor) {
+			return api.pluginPause(ctx, raw, c, "remote scope requires separate current authorization; no old grant was expanded", now)
+		}
 	}
 	values, err := decodeMetadataConfig(raw[libraryPluginKey])
 	if err != nil {
@@ -143,6 +153,20 @@ func (api *libraryScraper) pluginTick(ctx context.Context, now time.Time) error 
 	if !once && !period {
 		return nil
 	}
+	for _, d := range c.Lease.Templates {
+		if d.Remote != nil {
+			guard, err := store.AcquireJob(ctx, "rclone-namespace:NASTOOL")
+			if errors.Is(err, organization.ErrBusy) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			defer guard.Close()
+			ctx = context.WithValue(ctx, libraryNamespaceKey{}, true)
+			break
+		}
+	}
 	cfg, err := parseLibraryPlugin(values)
 	if err != nil {
 		return err
@@ -189,9 +213,20 @@ func (api *libraryScraper) pluginTick(ctx context.Context, now time.Time) error 
 		}
 		d := template
 		d.RequestID = organization.Digest([]string{c.Epoch, c.Batch, d.Root.ID})[:32]
+		if d.Remote != nil {
+			d.RequestID = organization.Digest([]string{c.Epoch, c.Batch, d.Root.ID, d.Remote.Driver})[:32]
+			grant := *c.RemoteGrant
+			d.RemoteApproval = &grant
+		}
 		d.Schedule = &organization.LibraryScheduleOrigin{Epoch: c.Epoch, Batch: c.Batch}
 		var scan organization.LibraryScan
-		scan, err = organization.ScanLibrary(scanCtx, d)
+		remoteCtx, closeRemote, remoteErr := api.libraryContext(scanCtx, d)
+		if remoteErr != nil {
+			err = remoteErr
+			break
+		}
+		scan, err = organization.ScanLibrary(remoteCtx, d)
+		closeRemote()
 		if err != nil {
 			break
 		}

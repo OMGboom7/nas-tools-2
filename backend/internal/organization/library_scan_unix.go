@@ -110,6 +110,9 @@ func captureLibraryFile(d LibraryDefinition, path string) (LibraryMedia, error) 
 	return m, ErrPath
 }
 func VerifyLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia) error {
+	if d.Remote != nil {
+		return verifyLibraryRemoteMedia(ctx, d, m)
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -129,6 +132,9 @@ func VerifyLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia
 	return nil
 }
 func ReadLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia, consume func(*os.File) ([]byte, error)) ([]byte, error) {
+	if d.Remote != nil {
+		return nil, ErrMode
+	}
 	if m.Disc != nil {
 		return nil, ErrMode
 	} // Never guess a representative STREAM clip.
@@ -173,6 +179,26 @@ func ReadLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia, 
 	return b, nil
 }
 func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, relative string) ([]byte, error) {
+	if d.Remote != nil {
+		if VerifyLibraryMedia(ctx, d, m) != nil || !validRelative(relative) || filepath.Ext(relative) != ".nfo" {
+			return nil, ErrState
+		}
+		c, err := libraryRemoteClient(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+		data, node, err := libraryRemoteReadMetadata(ctx, c, d, relative, 2<<20)
+		if err != nil {
+			return nil, err
+		}
+		if node == nil {
+			return nil, os.ErrNotExist
+		}
+		if err := VerifyLibraryMedia(ctx, d, m); err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
 	if VerifyLibraryMedia(ctx, d, m) != nil || !validRelative(relative) || filepath.Ext(relative) != ".nfo" {
 		return nil, ErrState
 	}
@@ -216,6 +242,9 @@ func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, re
 	return b, nil
 }
 func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) {
+	if d.Remote != nil {
+		return scanLibraryRemote(ctx, d)
+	}
 	result := LibraryScan{Files: []LibraryMedia{}}
 	base := filepath.Base(d.Root.Path)
 	if strings.EqualFold(base, "BDMV") || strings.EqualFold(base, "STREAM") && strings.EqualFold(filepath.Base(filepath.Dir(d.Root.Path)), "BDMV") {

@@ -1,6 +1,10 @@
 package organization
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/0xforee/nas-tools/backend/internal/remotestore"
+)
 
 // Library media are adopted readonly from a reviewed existing library. They
 // are not invented completed intake jobs and never write transfer history.
@@ -12,7 +16,8 @@ type LibraryNode struct {
 	Links            uint64
 }
 type LibraryMedia struct {
-	Disc      *LibraryDisc `json:",omitempty"`
+	Remote    *LibraryRemoteMedia `json:",omitempty"`
+	Disc      *LibraryDisc        `json:",omitempty"`
 	Path      string
 	Blocked   string
 	Node      LibraryNode
@@ -22,7 +27,9 @@ type LibraryMedia struct {
 	Input     LibraryNode
 }
 type LibraryDefinition struct {
-	AllowDiscExpansion                                  bool `json:",omitempty"`
+	Remote                                              *remotestore.Binding `json:",omitempty"`
+	RemoteApproval                                      *RemoteApproval      `json:",omitempty"`
+	AllowDiscExpansion                                  bool                 `json:",omitempty"`
 	Root                                                LibraryRoot
 	Allowed                                             []LibraryRoot
 	Selection                                           string
@@ -42,11 +49,25 @@ type LibraryScan struct {
 	SnapshotBytes int
 }
 type LibraryOutputProof struct {
-	OldLink                                                              string `json:",omitempty"`
+	Remote                                                               *LibraryRemoteOutput `json:",omitempty"`
+	OldLink                                                              string               `json:",omitempty"`
 	Target, Stage, StageIdentity, ParentIdentity, NewIdentity, NewDigest string
 	NewSize                                                              int64
 	Old                                                                  LibraryNode
 	OldDigest                                                            string
+}
+
+// A remote review freezes the complete object inventory, not local inode
+// identities. Before metadata lookup/publication the worker adopts full SHA-256
+// content into the durable running item under a separately approved namespace.
+type LibraryRemoteMedia struct {
+	Node   remotestore.Node
+	Digest string
+}
+
+type LibraryRemoteOutput struct {
+	Driver, Operation, Manifest string
+	Old                         *remotestore.Node `json:",omitempty"`
 }
 
 func LibraryMode(mode string) bool {
