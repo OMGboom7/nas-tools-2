@@ -285,7 +285,16 @@ func (t minioSealedTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	// The SDK may abort its own known multipart upload, never delete an object,
 	// bucket, target, retained copy, or an upload discovered from a listing.
 	if r.Method == http.MethodDelete && r.URL.Query().Get("uploadId") == "" {
-		return nil, ErrChanged
+		permit, ok := r.Context().Value(minioDeleteKey{}).(minioDeletePermit)
+		if !ok || !permit.matches(r) {
+			return nil, ErrChanged
+		}
+		// This SDK exposes no conditional RemoveObject option. Add only this
+		// request's bounded precondition; it is additional protection, not a
+		// cross-provider atomic-delete or version-purge guarantee.
+		r = r.Clone(r.Context())
+		r.Header = r.Header.Clone()
+		r.Header.Set("If-Match", `"`+permit.etag+`"`)
 	}
 	response, err := t.t.RoundTrip(r)
 	if err != nil {

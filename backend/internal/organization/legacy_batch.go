@@ -278,7 +278,7 @@ func (s *Store) LegacyBatchJobs(ctx context.Context, b LegacyBatch) ([]Job, erro
 	return jobs, nil
 }
 func legacyFilesDone(j Job) bool {
-	if j.State == SourceRestoring || j.State == SourceRestored || j.State == "cancelled" || j.State == "abandoned" || j.State == "abandoning" || j.State == "remote_closed" {
+	if j.State == SourceRestoring || j.State == SourceRestored || j.State == "cancelled" || j.State == "abandoned" || j.State == "abandoning" || j.State == "remote_closed" || j.State == RecoveryClosed {
 		return false
 	}
 	if len(j.Items) == 0 {
@@ -404,7 +404,7 @@ func (s *Store) FinishLegacyBatch(ctx context.Context, b LegacyBatch, frame stri
 		if err = tx.QueryRowContext(ctx, `SELECT STATE FROM GO_ORGANIZATION_JOBS WHERE ID=?`, id).Scan(&state); err != nil {
 			return err
 		}
-		terminal := state == "cancelled" || state == "abandoned" || state == SourceRestored || state == "remote_closed"
+		terminal := state == "cancelled" || state == "abandoned" || state == SourceRestored || state == "remote_closed" || state == RecoveryClosed
 		if closeOnly && terminal {
 			continue
 		}

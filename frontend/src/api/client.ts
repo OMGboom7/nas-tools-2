@@ -37,7 +37,7 @@ const libraryPreviewValid = (p: LibraryScrapePreview, input: LibraryScrapeInput)
 const libraryItemValid = (i: LibraryScrapeDetail["items"][number]): boolean => !!i && libraryRelativePath(i.path) && typeof i.state==="string" && typeof i.reason==="string" && Number.isSafeInteger(i.ordinal) && i.ordinal>=0 && libraryDiscValid(i.disc);
 const libraryJobValid = (s: unknown): s is LibraryScrapeJob => {
   const j = s as LibraryScrapeJob | null;
-  return !!j && libraryRemoteValid(j.remote) && libraryHash(j.id) && ["ready","running","completed","partial","needs_review","cancelled"].includes(j.state) && ["no_force","force_nfo","force_all"].includes(j.mode) && [j.total,j.done,j.blocked].every((v)=>Number.isSafeInteger(v) && v>=0) && j.done+j.blocked<=j.total;
+  return !!j && libraryRemoteValid(j.remote) && libraryHash(j.id) && ["ready","running","completed","partial","needs_review","cancelled","recovery_closed"].includes(j.state) && ["no_force","force_nfo","force_all"].includes(j.mode) && [j.total,j.done,j.blocked].every((v)=>Number.isSafeInteger(v) && v>=0) && j.done+j.blocked<=j.total;
 };
 const libraryOutputValid = (s: unknown): s is LibraryScrapeOutput => { const o=s as LibraryScrapeOutput | null;return !!o && libraryRemoteValid(o.remote) && libraryHash(o.id) && libraryHash(o.jobId) && typeof o.target==="string" && typeof o.state==="string" && typeof o.reason==="string"; };
 async function libraryRequest<T>(token:string,path:string,body?:unknown):Promise<T> {

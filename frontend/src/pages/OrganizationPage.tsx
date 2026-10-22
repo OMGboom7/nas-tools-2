@@ -14,6 +14,7 @@ import { DownloadOrganizationManager } from "./DownloadOrganizationManager";
 import { DownloadMonitorManager } from "./DownloadMonitorManager";
 import { IntakeScraperManager } from "./IntakeScraperManager";
 import { LibraryScraperManager } from "./LibraryScraperManager";
+import { RecoveryObjectManager } from "./RecoveryObjectManager";
 import { canAbandonOrganizationJob, buildOrganizationAssignment, buildOrganizationEpisodeSelection } from "./organizationState";
 
 type Props = { session: AuthSession; currentPath: string; onNavigate: (path: string) => void; onLogout: () => Promise<void>; onSessionExpired: () => void };
@@ -25,6 +26,7 @@ modeLabels.miniocopy="MinIO 远程复制";modeLabels.minio="MinIO 远程移动";
 const movingMode=organizationMovesSource;
 jobLabels.publishing="远程发布意图已保存，须明确核验或续办";
 jobLabels.remote_closed="远程任务已明确停止；对象和预留全部保留";
+jobLabels.recovery_closed="独立恢复对象处置已停止旧任务；历史与目标预留保留";
 jobLabels.remote_stopped="项目已停止，不记整理成功";
 jobLabels.abandoning = "放弃意图已保存，暂存清理待核实";
 jobLabels.discarding = "暂存清理待回执";
@@ -293,6 +295,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       {!loading && <DownloadOrganizationManager token={session.token} enabled={!busy && !!roots.executionModes?.length} onSessionExpired={onSessionExpired} onChanged={refreshSavedJobs} />}
       {!loading && <DownloadMonitorManager token={session.token} enabled={!busy && !!roots.executionModes?.length} onSessionExpired={onSessionExpired} />}
       {!loading && <IntakeScraperManager token={session.token} enabled={!busy && !!roots.executionModes?.length} onSessionExpired={onSessionExpired} onChanged={invalidate} />}
+      {!loading && <RecoveryObjectManager token={session.token} enabled={!busy && !!roots.executionModes?.length} onSessionExpired={onSessionExpired} onChanged={invalidate} />}
       {!loading && <LibraryScraperManager token={session.token} enabled={!busy && !!roots.executionModes?.length} onSessionExpired={onSessionExpired} />}
       {!loading && <section aria-label="存量未识别记录"><h2>存量未识别记录</h2><p>列表读取不删除或自动重跑；记录删除／恢复须在独立管理入口审核确认。选择后须重新预览、纠正身份并另行确认执行；不能只处理目录的一部分就标记成功。</p><label>路径关键词<input value={unknownKeyword} disabled={busy} onChange={(event) => setUnknownKeyword(event.target.value)} /></label><button type="button" disabled={busy} onClick={() => void loadUnknown(1)}>查询／刷新记录</button><p>共 {unknown.total} 条，第 {unknown.page}/{unknown.totalPages} 页</p><div className="organization-table"><table><thead><tr><th>原路径／目标</th><th>原方式／核验</th><th>操作</th></tr></thead><tbody>{unknown.items.map((item) => <tr key={item.idText || item.id}><td>#{item.idText || item.id} · {item.path}<small>{item.dest || "未指定目标，需明确选择配置目录"}</small></td><td>{item.mode || "未记录方式，请自行确认"}{item.reason && <small>{item.reason}</small>}</td><td>{item.jobId ? <button type="button" disabled={busy || !roots.executionModes?.length} onClick={() => void loadUnknown(unknown.page, item.jobId)}>查看关联任务</button> : <button type="button" disabled={busy || !Number.isSafeInteger(item.id) || !!item.reason || !roots.executionModes?.length || !!item.nativeMode && !roots.executionModes.includes(item.nativeMode)} onClick={() => selectUnknown(item)}>选择并核验记录</button>}</td></tr>)}</tbody></table></div><button type="button" disabled={busy || unknown.page <= 1} onClick={() => void loadUnknown(unknown.page - 1)}>上一页</button><button type="button" disabled={busy || unknown.page >= unknown.totalPages} onClick={() => void loadUnknown(unknown.page + 1)}>下一页</button></section>}
       {selectedUnknown && <p>关联旧记录 #{selectedUnknown.id}：{selectedUnknown.path}。只有全范围成功才更新此条记录；原路径、方式和其他记录保留。<button type="button" disabled={busy} onClick={() => { invalidate(); setSelectedUnknown(null); }}>取消关联，返回普通规划</button></p>}

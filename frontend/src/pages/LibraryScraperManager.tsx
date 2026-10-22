@@ -5,6 +5,7 @@ import { ApiError, getLibraryScraper, previewLibraryScrape, createLibraryScrape,
 
 const states:Record<string,string>={ready:"等待处理",running:"执行中或中断（不自动重跑）",completed:"所选项目处理完成",partial:"部分完成／有缺口",needs_review:"需核查，禁止重发",cancelled:"已停止后续写入",pending:"待处理",blocked:"已阻止",writing:"写入意图待核查",created:"已生成",replaced:"已替换，原文件有备份",preserved:"已有文件保留（未验证内容）",uncertain:"结果不确定，目标仍保留占用",not_published:"核查未发布（暂存保留，不重跑）",restore_running:"恢复意图待核查",restored:"原文件已恢复，替换文件保留备份"};
 const modes:Record<string,string>={no_force:"仅补齐缺失文件",force_nfo:"仅重写所选 NFO",force_all:"重写所选 NFO 与图片"};
+states.recovery_closed="独立恢复对象处置已停止旧任务，不能继续刮削或恢复";
 
 export function LibraryScraperManager({token,enabled,onSessionExpired}:{token:string;enabled:boolean;onSessionExpired:()=>void}){
   const [status,setStatus]=useState<LibraryScrapeStatus|null>(null),[rootId,setRoot]=useState(""),[path,setPath]=useState("."),[mode,setMode]=useState<LibraryScrapeInput["mode"]>("no_force"),[exclude,setExclude]=useState("");

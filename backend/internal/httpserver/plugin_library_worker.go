@@ -116,7 +116,7 @@ func (api *libraryScraper) pluginTick(ctx context.Context, now time.Time) error 
 				pending = true
 			case "running", "needs_review":
 				interrupted = true
-			case "partial", "cancelled":
+			case "partial", "cancelled", organization.RecoveryClosed:
 				partial = true
 			case "completed":
 			default:

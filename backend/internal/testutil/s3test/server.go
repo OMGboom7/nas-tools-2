@@ -4,6 +4,7 @@ package s3test
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
@@ -35,18 +36,21 @@ type upload struct {
 	parts map[int][]byte
 }
 type Server struct {
-	HTTP       *httptest.Server
-	CA         []byte
-	mu         sync.Mutex
-	objects    map[string]object
-	uploads    map[string]*upload
-	requests   []Request
-	failPrefix string
-	failStatus int
-	failCopy   bool
-	afterWrite func()
-	closed     bool
-	rangeFault string
+	HTTP                *httptest.Server
+	CA                  []byte
+	mu                  sync.Mutex
+	objects             map[string]object
+	uploads             map[string]*upload
+	requests            []Request
+	failPrefix          string
+	failStatus          int
+	failCopy            bool
+	afterWrite          func()
+	closed              bool
+	rangeFault          string
+	deleteFailureKey    string
+	deleteFailureStatus int
+	beforeRead          func(context.Context)
 }
 
 func New(t testing.TB) *Server {
@@ -97,6 +101,17 @@ func (s *Server) FailNextWrite(prefix string, copyOnly bool, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failPrefix, s.failCopy, s.failStatus = prefix, copyOnly, status
+}
+func (s *Server) FailNextDelete(key string, status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteFailureKey = key
+	s.deleteFailureStatus = status
+}
+func (s *Server) BeforeNextRead(fn func(context.Context)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.beforeRead = fn
 }
 
 // The one-shot callback runs after a write, before its response, under the
@@ -238,6 +253,21 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o, exists := s.objects[key]
+	if r.Method == "DELETE" {
+		if match := r.Header.Get("If-Match"); match != "" && (!exists || strings.Trim(match, `"`) != etag(o.data)) {
+			failure(w, 412, "PreconditionFailed")
+			return
+		}
+		delete(s.objects, key)
+		if s.deleteFailureStatus != 0 && key == s.deleteFailureKey {
+			status := s.deleteFailureStatus
+			s.deleteFailureStatus = 0
+			failure(w, status, "InternalError")
+			return
+		}
+		w.WriteHeader(204)
+		return
+	}
 	if r.Method == "HEAD" || r.Method == "GET" {
 		if !exists {
 			failure(w, 404, "NoSuchKey")
@@ -248,6 +278,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Last-Modified", o.modified.Format(http.TimeFormat))
 		w.Header().Set("Content-Type", "application/octet-stream")
 		if r.Method == "GET" {
+			if s.beforeRead != nil {
+				fn := s.beforeRead
+				s.beforeRead = nil
+				fn(r.Context())
+			}
 			data := o.data
 			if bounds := r.Header.Get("Range"); bounds != "" && s.rangeFault != "ignore" {
 				var first, last int

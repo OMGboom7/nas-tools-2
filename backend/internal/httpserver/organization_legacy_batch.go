@@ -225,7 +225,7 @@ func (api organizationAPI) serveLegacyBatchAction(w http.ResponseWriter, r *http
 			}
 			if action == "resume" {
 				for _, j := range jobs {
-					if j.State == "cancelled" || j.State == "abandoned" || j.State == "abandoning" || j.State == organization.SourceRestoring || j.State == organization.SourceRestored || j.State == "remote_closed" {
+					if j.State == "cancelled" || j.State == "abandoned" || j.State == "abandoning" || j.State == organization.SourceRestoring || j.State == organization.SourceRestored || j.State == "remote_closed" || j.State == organization.RecoveryClosed {
 						err = organization.ErrState
 						break
 					}
@@ -244,6 +244,9 @@ func (api organizationAPI) serveLegacyBatchAction(w http.ResponseWriter, r *http
 				// Closing cancels only never-started children. Other unfinished
 				// objects require their existing proof-based disposition flows.
 				for _, j := range jobs {
+					if j.State == organization.RecoveryClosed {
+						continue
+					}
 					planned := len(j.Items) > 0
 					for _, item := range j.Items {
 						planned = planned && item.State == "planned"

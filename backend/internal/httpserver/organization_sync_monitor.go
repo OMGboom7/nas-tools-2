@@ -342,7 +342,7 @@ func (api organizationAPI) serveMonitorDismiss(w http.ResponseWriter, r *http.Re
 	ids := []string{}
 	for _, job := range jobs {
 		ids = append(ids, job.ID)
-		if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored && job.State != "remote_closed" {
+		if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored && job.State != "remote_closed" && job.State != organization.RecoveryClosed {
 			writeAPIError(w, 409, 409, "saved jobs must be explicitly completed/cancelled/abandoned/source-restored before dismissing their event")
 			return
 		}

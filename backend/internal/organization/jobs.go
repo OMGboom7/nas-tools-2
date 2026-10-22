@@ -517,7 +517,7 @@ func (s *Store) Get(ctx context.Context, id string) (Job, error) {
 		}
 		return job, nil
 	}
-	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" {
+	if job.State == "cancelled" || job.State == "abandoning" || job.State == "abandoned" || job.State == RecoveryClosed {
 		return job, nil
 	}
 	job.State = "completed"

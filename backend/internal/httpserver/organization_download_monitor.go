@@ -342,7 +342,7 @@ func (api organizationAPI) serveDownloadMonitorDismiss(w http.ResponseWriter, r 
 				writeOrganizationError(w, err)
 				return
 			}
-			if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored && job.State != "remote_closed" {
+			if job.State != "completed" && job.State != "cancelled" && job.State != "abandoned" && job.State != organization.SourceRestored && job.State != "remote_closed" && job.State != organization.RecoveryClosed {
 				writeAPIError(w, 409, 409, "complete/cancel/abandon every linked job before dismissing its event")
 				return
 			}

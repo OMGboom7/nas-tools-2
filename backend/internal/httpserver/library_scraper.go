@@ -477,6 +477,10 @@ func (api *libraryScraper) serveOutput(w http.ResponseWriter, r *http.Request) {
 		writeOrganizationError(w, err)
 		return
 	}
+	if job.State == organization.RecoveryClosed {
+		writeAPIError(w, 409, 409, "independent recovery disposal permanently closed this job; old proof cannot be reused")
+		return
+	}
 	if job.State == "ready" || job.State == "running" {
 		writeAPIError(w, 409, 409, "stop the job before inspecting recovery evidence")
 		return

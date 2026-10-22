@@ -526,6 +526,12 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	nativeScraper := &intakeScraper{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	rssRunner.scraper = nativeScraper
 	nativeLibrary := &libraryScraper{intake: nativeScraper}
+	mux.HandleFunc("GET /api/v1/organization/recovery-objects", organizer.serveRecoveryStatus)
+	mux.HandleFunc("POST /api/v1/organization/recovery-objects/browse", organizer.serveRecoveryBrowse)
+	mux.HandleFunc("POST /api/v1/organization/recovery-objects/preview", organizer.serveRecoveryPreview)
+	mux.HandleFunc("POST /api/v1/organization/recovery-objects/disposals", organizer.serveRecoveryCreate)
+	mux.HandleFunc("GET /api/v1/organization/recovery-objects/disposals/{id}", organizer.serveRecoveryRecord)
+	mux.HandleFunc("POST /api/v1/organization/recovery-objects/disposals/{id}/{action}", organizer.serveRecoveryRecord)
 	rssRunner.library = nativeLibrary
 	if nativeSystemConfig != nil {
 		plugins.library = nativeLibrary

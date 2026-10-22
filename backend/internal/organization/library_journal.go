@@ -412,6 +412,9 @@ func (s *Store) SaveLibraryOutput(ctx context.Context, job string, root LibraryR
 	if err := tx.QueryRowContext(ctx, `SELECT STATE,DEFINITION FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, job).Scan(&js, &definition); err != nil {
 		return err
 	}
+	if js == RecoveryClosed {
+		return ErrState
+	}
 	if proof.Remote != nil {
 		var d LibraryDefinition
 		if json.Unmarshal([]byte(definition), &d) != nil {
@@ -501,6 +504,9 @@ func (s *Store) LibraryRestoreIntent(ctx context.Context, id, expectedProof stri
 	if Digest(out.Proof) != expectedProof || out.State != "replaced" && out.State != "uncertain" && out.State != "writing" && out.State != "restore_running" {
 		return ErrState
 	}
+	if err := libraryRecoveryAuthority(ctx, tx, out.JobID); err != nil {
+		return err
+	}
 	key := libraryTargetClaim(out.Target, out.Proof)
 	if out.Proof.Remote != nil {
 		var raw string
@@ -548,6 +554,9 @@ func (s *Store) ReconcileLibraryOutput(ctx context.Context, id, expected, state 
 	if err != nil || LibraryOutputDigest(out) != expected || out.State != "writing" && out.State != "uncertain" {
 		return ErrState
 	}
+	if err := libraryRecoveryAuthority(ctx, tx, out.JobID); err != nil {
+		return err
+	}
 	key := libraryTargetClaim(out.Target, out.Proof)
 	var holder string
 	if err := tx.QueryRowContext(ctx, `SELECT OUTPUT_ID FROM GO_LIBRARY_SCRAPE_CLAIMS WHERE TARGET_KEY=?`, key).Scan(&holder); err != nil || holder != id {
@@ -574,6 +583,9 @@ func (s *Store) FinishLibraryRestore(ctx context.Context, id string, root Librar
 	out, err := scanLibraryOutput(tx.QueryRowContext(ctx, libraryOutputSelect+` WHERE ID=?`, id))
 	if err != nil || out.State != "restore_running" {
 		return ErrState
+	}
+	if err := libraryRecoveryAuthority(ctx, tx, out.JobID); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_LIBRARY_SCRAPE_OUTPUTS SET STATE='restored',REASON='original metadata restored; replacement retained in private backup' WHERE ID=?`, id); err != nil {
 		return err
