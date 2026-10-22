@@ -62,7 +62,8 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 	review := downloadMonitorReview{Sources: []downloadMonitorSource{}, Candidates: map[string][]string{}, Lease: organization.DownloadMonitorLease{IDs: ids, Downloaders: map[string]string{}, Roots: []string{}}}
 	seen := map[string]bool{}
 	total := 0
-	localTargets, cloudTargets := false, false
+	localTargets := false
+	cloudModes := map[string]string{}
 	cfg, err := api.service.configStore.Snapshot()
 	if err != nil {
 		return fail(503, "configuration unavailable")
@@ -79,11 +80,11 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 			return fail(422, "selected downloader must enable completion transfer")
 		}
 		mode, known := syncConfigMode(item.RmtMode)
-		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) && !api.rclone.Available() {
+		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) && !api.remoteFactory(mode).Available() {
 			return fail(501, "remote or unknown completion mode is not migrated")
 		}
 		if organization.RemoteMode(mode) {
-			cloudTargets = true
+			cloudModes[organization.RemoteDriver(mode)] = mode
 		} else {
 			localTargets = true
 		}
@@ -143,14 +144,18 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 		if target.Type == "" {
 			continue
 		}
-		if cloudTargets {
+		for _, driver := range []string{"rclone", "minio"} {
+			mode, selected := cloudModes[driver]
+			if !selected {
+				continue
+			}
 			var grant *organization.RemoteAutomation
 			if len(expected) > 0 {
 				grant = expected[0]
 			}
-			proof, public, _, err := api.monitorRemoteRoot(ctx, target, grant)
+			proof, public, _, err := api.monitorRemoteRoot(ctx, target, grant, mode)
 			if err != nil {
-				return fail(422, "reviewed Rclone profile or media destination changed/unavailable")
+				return fail(422, "reviewed remote provider profile or media destination changed/unavailable")
 			}
 			review.Lease.Roots = append(review.Lease.Roots, proof)
 			review.RemoteTargets = append(review.RemoteTargets, public)
@@ -171,7 +176,7 @@ func (api organizationAPI) downloadMonitorScope(ctx context.Context, ids []strin
 		usable++
 		review.Lease.Roots = append(review.Lease.Roots, "target:"+target.ID+":"+root+":"+organization.Identity(info))
 	}
-	if localTargets && usable == 0 || cloudTargets && remoteUsable == 0 {
+	if localTargets && usable == 0 || len(cloudModes) > 0 && remoteUsable == 0 {
 		return fail(422, "no existing configured media library")
 	}
 	sort.Strings(review.Lease.Roots)

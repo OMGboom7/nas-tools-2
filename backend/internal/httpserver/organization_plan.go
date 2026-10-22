@@ -28,6 +28,7 @@ type organizationAPI struct {
 	records            *organization.Store
 	pureGo             bool
 	rclone             remotestore.Factory
+	minio              remotestore.Factory
 	remoteApproval     organization.RemoteApproval
 }
 type organizationRoot struct {
@@ -132,6 +133,9 @@ func (api organizationAPI) roots(ctx context.Context) (organizationRoots, error)
 		result.ExecutionModes = []string{"copy", "link", "softlink", "move"}
 		if api.rclone.Available() {
 			result.ExecutionModes = append(result.ExecutionModes, "rclonecopy", "rclone")
+		}
+		if api.minio.Available() {
+			result.ExecutionModes = append(result.ExecutionModes, "miniocopy", "minio")
 		}
 	}
 	seen := map[string]bool{}
@@ -321,9 +325,9 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 	}
 	var remote *remotestore.Client
 	if organization.RemoteMode(input.Mode) {
-		remote, err = api.remoteRoot(ctx, target.Path)
+		remote, err = api.remoteRoot(ctx, target.Path, input.Mode)
 		if err != nil {
-			return fail(422, "reviewed Rclone configuration or remote target root is unavailable")
+			return fail(422, "reviewed remote provider configuration or target root is unavailable")
 		}
 		defer remote.Close()
 		targetPath, e2 = filepath.Clean(target.Path), nil
@@ -410,7 +414,7 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 		}
 		targetIdentity = organization.Identity(targetInfo)
 	} else {
-		targetIdentity = organization.RemoteTargetIdentity(targetPath)
+		targetIdentity = organization.RemoteTargetIdentityFor(input.Mode, targetPath)
 	}
 	if e1 != nil || !sourceInfo.IsDir() {
 		return fail(422, "organization roots changed")

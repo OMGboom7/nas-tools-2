@@ -92,6 +92,9 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 }
 
 func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rssRunAPI) (http.Handler, error) {
+	if cfg.MinioConfigFile != "" && (!filepath.IsAbs(cfg.MinioConfigFile) || !cfg.DisableLegacy) || cfg.MinioCAFile != "" && (!filepath.IsAbs(cfg.MinioCAFile) || cfg.MinioConfigFile == "" || !cfg.DisableLegacy) {
+		return nil, fmt.Errorf("MinIO requires explicit absolute account/trust paths and exclusive Go-only ownership")
+	}
 	if cfg.HostsPath != "" && (!filepath.IsAbs(cfg.HostsPath) || !cfg.DisableLegacy) {
 		return nil, fmt.Errorf("native hosts restoration requires an absolute path and disabled legacy backend")
 	}
@@ -356,6 +359,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	organizer := organizationAPI{service: subscriptions, auth: nativeAuth, jobs: organizationJobs, records: organizationRecords, pureGo: cfg.DisableLegacy, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}
 	if cfg.DisableLegacy {
 		organizer.rclone = remotestore.Factory{ConfigFile: cfg.RcloneConfigFile, Binary: cfg.RcloneBinary}
+		organizer.minio = remotestore.Factory{Driver: "minio", ConfigFile: cfg.MinioConfigFile, CAFile: cfg.MinioCAFile}
 	}
 	mux.HandleFunc("GET /api/v1/organization/roots", organizer.serveRoots)
 	mux.HandleFunc("POST /api/v1/organization/downloads/completion/review", organizer.serveDownloadCompletionReview)

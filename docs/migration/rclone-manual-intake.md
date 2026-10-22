@@ -48,7 +48,7 @@ Rclone 的 `copyto` 本身允许覆盖，`--immutable` 或零退出码都不能�
 ## 本批明确未完成
 
 - 同步／下载完成的后续接入已在 [独立自动授权模块](rclone-automatic-intake.md) 说明；旧未知记录／历史／rename 的远程接管仍待迁移，不降级本地复制，不继承旧租约。
-- MinIO 是另一个旧 provider；本批不把 Rclone 的 S3 支持当作 MinIO 旧配置／执行迁移完成。
+- MinIO 是另一个旧 provider，不由本批 Rclone 的 S3 支持替代；后续已独立接通 [MinIO 原配置与原生 Go 执行](minio-native.md)，以下数字保留为 Rclone 首批验证记录。
 - 已有远程库批量／强制刮削、远程缩略图、独立远程垃圾／已发布目标处置仍待实现；未知无凭证对象保留。
 - 真实云账户、真实 NAS、浏览器和 Go-only 容器健康／存量升级／回滚验收未完成，不据本批删除 Python 或替换生产服务。
 

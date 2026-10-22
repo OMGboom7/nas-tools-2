@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from "react";
-import {ApiError,controlLegacyOrganizationBatch,getLegacyOrganizationBatch,organizationMovesSource,type OrganizationLegacyBatch} from "../api/client";
+import {ApiError,controlLegacyOrganizationBatch,getLegacyOrganizationBatch,organizationMovesSource,organizationIsRemote,type OrganizationLegacyBatch} from "../api/client";
 import {RemoteTransferConsent} from "../components/RemoteTransferConsent";
 type Props={token:string;batchId:string;enabled:boolean;onChanged:(id:string)=>Promise<void>;onSessionExpired:()=>void};
 export function LegacyBatchManager({token,batchId,enabled,onChanged,onSessionExpired}:Props){
@@ -7,7 +7,7 @@ export function LegacyBatchManager({token,batchId,enabled,onChanged,onSessionExp
   const [action,setAction]=useState<"execute"|"reconcile"|"stop"|"resume"|"close">("reconcile");
   const [confirmed,setConfirmed]=useState(false),[stopped,setStopped]=useState(false),[removal,setRemoval]=useState(false),[exclusive,setExclusive]=useState(false),[recovery,setRecovery]=useState(false),[reason,setReason]=useState("");
   const [busy,setBusy]=useState(false);const generation=useRef(0),inFlight=useRef(false);
-  const remote=!!data&&["rclone","rclonecopy"].includes(data.mode)&&["execute","resume"].includes(action);
+  const remote=!!data&&organizationIsRemote(data.mode)&&["execute","resume"].includes(action);
   function clear(){setConfirmed(false);setStopped(false);setRemoval(false);setExclusive(false);setRecovery(false);}
   useEffect(()=>{generation.current++;setData(null);setError("");setReason("");clear();inFlight.current=false;setBusy(false);return()=>{generation.current++;};},[token,batchId]);
   async function load(){

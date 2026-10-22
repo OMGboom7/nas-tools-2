@@ -215,7 +215,7 @@ func (api organizationAPI) validateJobConfiguration(ctx context.Context, job org
 		return organization.ErrState
 	}
 	if job.Definition.Remote != nil {
-		return api.rclone.Validate(*job.Definition.Remote)
+		return api.remoteFactory(job.Mode).Validate(*job.Definition.Remote)
 	}
 	return nil
 }

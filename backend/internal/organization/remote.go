@@ -18,8 +18,17 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-func RemoteMode(mode string) bool { return mode == "rclonecopy" || mode == "rclone" }
-func MoveMode(mode string) bool   { return mode == "move" || mode == "rclone" }
+func RemoteDriver(mode string) string {
+	switch mode {
+	case "rclonecopy", "rclone":
+		return "rclone"
+	case "miniocopy", "minio":
+		return "minio"
+	}
+	return ""
+}
+func RemoteMode(mode string) bool { return RemoteDriver(mode) != "" }
+func MoveMode(mode string) bool   { return mode == "move" || mode == "rclone" || mode == "minio" }
 
 type RemoteApproval struct {
 	Origin                  string `json:"origin,omitempty"`
@@ -72,8 +81,11 @@ func remoteFileTarget(e Entry, f RemoteFile) string {
 func RemoteTargetIdentity(root string) string {
 	return Digest([]string{"rclone:NASTOOL", path.Clean(root)})
 }
+func RemoteTargetIdentityFor(mode, root string) string {
+	return Digest([]string{RemoteDriver(mode) + ":NASTOOL", path.Clean(root)})
+}
 func remoteProfileValid(d Definition) bool {
-	return RemoteMode(d.Mode) && d.Remote != nil && d.Remote.Driver == "rclone" && d.Remote.Protocol == 1 && d.Remote.ConfigFile != "" && len(d.Remote.ConfigDigest) == 64 && path.IsAbs(d.TargetRoot) && path.Clean(d.TargetRoot) == d.TargetRoot && d.TargetRoot != "/" && !strings.ContainsAny(d.TargetRoot, "\\\x00\r\n") && d.TargetIdentity == RemoteTargetIdentity(d.TargetRoot)
+	return RemoteMode(d.Mode) && d.Remote != nil && d.Remote.Driver == RemoteDriver(d.Mode) && d.Remote.Protocol == 1 && d.Remote.ConfigFile != "" && len(d.Remote.ConfigDigest) == 64 && path.IsAbs(d.TargetRoot) && path.Clean(d.TargetRoot) == d.TargetRoot && d.TargetRoot != "/" && !strings.ContainsAny(d.TargetRoot, "\\\x00\r\n") && d.TargetIdentity == RemoteTargetIdentityFor(d.Mode, d.TargetRoot)
 }
 func remoteProofValid(d Definition, e Entry, p Proof) error {
 	if !remoteProfileValid(d) || p.Remote == nil || p.Remote.Operation == "" || len(p.Remote.Operation) != 32 || p.Remote.Stage != path.Join(".nastool-remote", p.Remote.Operation) || !p.Remote.Approval.Valid() || p.Remote.Manifest == "" || p.LinkTarget != "" || !p.Anchor || p.Identity != "remote:"+p.Remote.Operation || p.ParentIdentity != d.TargetIdentity || p.StagingIdentity != p.Remote.Manifest || len(p.Remote.Files) == 0 || len(p.Remote.Files)+len(p.Remote.Directories) > 20000 {

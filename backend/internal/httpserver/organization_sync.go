@@ -123,7 +123,7 @@ func validateDirectSyncGraph(current organization.SyncRecord, records []organiza
 				continue
 			}
 			mode, _ := syncConfigMode(record.Mode)
-			if index == 0 && (organization.RemoteMode(mode) || mode == "minio" || mode == "miniocopy") {
+			if index == 0 && organization.RemoteMode(mode) {
 				if _, err := logicalRemoteRoot(dest); err != nil {
 					return err
 				}
@@ -305,9 +305,9 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 		if err != nil {
 			return fail(422, "remote logical root is unsafe")
 		}
-		remote, err = api.remoteRoot(ctx, target)
+		remote, err = api.remoteRoot(ctx, target, mode)
 		if err != nil {
-			return fail(422, "reviewed Rclone configuration or root unavailable")
+			return fail(422, "reviewed remote provider configuration or root unavailable")
 		}
 		defer remote.Close()
 	} else {
@@ -320,7 +320,7 @@ func (api organizationAPI) directSyncPlan(ctx context.Context, id int64, scope, 
 	if err != nil || !si.IsDir() {
 		return fail(422, "source root unavailable")
 	}
-	targetIdentity := organization.RemoteTargetIdentity(target)
+	targetIdentity := organization.RemoteTargetIdentityFor(mode, target)
 	if remote == nil {
 		ti, err := os.Stat(target)
 		if err != nil || !ti.IsDir() {

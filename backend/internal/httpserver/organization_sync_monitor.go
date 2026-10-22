@@ -77,7 +77,7 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 			return fail(422, "selected sync record is missing or disabled")
 		}
 		mode, known := syncConfigMode(record.Mode)
-		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) && !api.rclone.Available() {
+		if !known || !organization.SupportedMode(mode) || organization.RemoteMode(mode) && !api.remoteFactory(mode).Available() {
 			return fail(501, "selected remote/unknown sync mode is not migrated; no local fallback")
 		}
 		if record.Rename != 0 && record.Rename != 1 {
@@ -112,9 +112,9 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 				continue
 			}
 			if organization.RemoteMode(mode) {
-				remoteProof, _, _, err := api.monitorRemoteRoot(ctx, root, nil)
+				remoteProof, _, _, err := api.monitorRemoteRoot(ctx, root, nil, mode)
 				if err != nil {
-					return fail(422, "Rclone profile or destination unavailable; no automatic activation")
+					return fail(422, "remote provider profile or destination unavailable; no automatic activation")
 				}
 				usable++
 				if !seenProof[remoteProof] {

@@ -18,6 +18,8 @@ type Config struct {
 	HostsPath             string
 	RcloneConfigFile      string
 	RcloneBinary          string
+	MinioConfigFile       string
+	MinioCAFile           string
 }
 
 func FromEnv() (Config, error) {
@@ -32,6 +34,8 @@ func FromEnv() (Config, error) {
 		HostsPath:             os.Getenv("NASTOOL_GO_HOSTS_PATH"),
 		RcloneConfigFile:      os.Getenv("NASTOOL_RCLONE_CONFIG"),
 		RcloneBinary:          envOrDefault("NASTOOL_RCLONE_BINARY", "rclone"),
+		MinioConfigFile:       os.Getenv("NASTOOL_MINIO_CONFIG"),
+		MinioCAFile:           os.Getenv("NASTOOL_MINIO_CA"),
 	}
 	if cfg.DisableLegacy {
 		cfg.LegacyBackendURL = ""
@@ -41,6 +45,9 @@ func FromEnv() (Config, error) {
 	}
 	if cfg.RcloneConfigFile != "" && (!filepath.IsAbs(cfg.RcloneConfigFile) || !cfg.DisableLegacy) {
 		return Config{}, fmt.Errorf("NASTOOL_RCLONE_CONFIG requires an absolute path and NASTOOL_DISABLE_LEGACY=true")
+	}
+	if cfg.MinioConfigFile != "" && (!filepath.IsAbs(cfg.MinioConfigFile) || !cfg.DisableLegacy) || cfg.MinioCAFile != "" && (!filepath.IsAbs(cfg.MinioCAFile) || cfg.MinioConfigFile == "" || !cfg.DisableLegacy) {
+		return Config{}, fmt.Errorf("NASTOOL_MINIO_CONFIG and optional NASTOOL_MINIO_CA require absolute paths and NASTOOL_DISABLE_LEGACY=true")
 	}
 
 	if cfg.LegacyBackendURL != "" {

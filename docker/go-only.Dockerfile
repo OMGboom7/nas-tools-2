@@ -14,7 +14,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/nas-tools-go ./cmd
 RUN mkdir -p /out/licenses \
     && cp "$(go list -m -f '{{.Dir}}' github.com/longbridgeapp/opencc)/LICENSE" /out/licenses/opencc-LICENSE \
     && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/da)/LICENSE" /out/licenses/da-LICENSE \
-    && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/cedar-go)/LICENSE.md" /out/licenses/cedar-go-LICENSE
+    && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/cedar-go)/LICENSE.md" /out/licenses/cedar-go-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/minio/minio-go/v7)/LICENSE" /out/licenses/minio-go-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/minio/minio-go/v7)/NOTICE" /out/licenses/minio-go-NOTICE
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone \

@@ -23,10 +23,24 @@ func logicalRemoteRoot(root string) (string, error) {
 	}
 	return filepath.Clean(root), nil
 }
-func (api organizationAPI) monitorRemoteRoot(ctx context.Context, root organizationRoot, expected *organization.RemoteAutomation) (string, remoteMonitorTarget, organization.RemoteProfileSeal, error) {
+func (api organizationAPI) remoteFactory(mode string) remotestore.Factory {
+	if organization.RemoteDriver(mode) == "minio" {
+		return api.minio
+	}
+	return api.rclone
+}
+func remoteModeArgument(modes []string) string {
+	if len(modes) > 0 {
+		return modes[0]
+	}
+	return "rclonecopy"
+}
+func (api organizationAPI) monitorRemoteRoot(ctx context.Context, root organizationRoot, expected *organization.RemoteAutomation, modes ...string) (string, remoteMonitorTarget, organization.RemoteProfileSeal, error) {
 	var seal organization.RemoteProfileSeal
 	public := remoteMonitorTarget{TargetID: root.ID, Path: root.Path}
-	c, err := api.rclone.Open(nil)
+	mode := remoteModeArgument(modes)
+	profileID := organization.RemoteProfileKey(root.ID, organization.RemoteDriver(mode))
+	c, err := api.remoteFactory(mode).Open(nil)
 	if err != nil || !api.pureGo {
 		return "", public, seal, organization.ErrMode
 	}
@@ -37,21 +51,27 @@ func (api organizationAPI) monitorRemoteRoot(ctx context.Context, root organizat
 		}
 		b := c.Binding()
 		seal = organization.RemoteProfileSeal{Digest: organization.Digest(b), Directories: b.Directories}
+		if b.Driver == "minio" {
+			seal.Driver = "minio"
+		}
 		public.Remote = b.Summary()
 	} else {
-		wanted, ok := expected.Profiles[root.ID]
+		wanted, ok := expected.Profiles[profileID]
 		if !ok {
 			return "", public, seal, organization.ErrState
 		}
 		b := c.Binding()
 		b.Directories = wanted.Directories
 		seal = organization.RemoteProfileSeal{Digest: organization.Digest(b), Directories: b.Directories}
+		if b.Driver == "minio" {
+			seal.Driver = "minio"
+		}
 		public.Remote = b.Summary()
 		if seal != wanted {
 			return "", public, seal, organization.ErrState
 		}
 	}
-	return "remote:" + root.ID + ":" + strconv.FormatBool(seal.Directories) + ":" + seal.Digest, public, seal, nil
+	return "remote:" + profileID + ":" + strconv.FormatBool(seal.Directories) + ":" + seal.Digest, public, seal, nil
 }
 func remoteAutomationFromRoots(roots []string) *organization.RemoteAutomation {
 	var grant *organization.RemoteAutomation
@@ -70,7 +90,11 @@ func remoteAutomationFromRoots(roots []string) *organization.RemoteAutomation {
 		if grant == nil {
 			grant = &organization.RemoteAutomation{Protocol: 1, Profiles: map[string]organization.RemoteProfileSeal{}}
 		}
-		grant.Profiles[parts[1]] = organization.RemoteProfileSeal{Digest: parts[3], Directories: dirs}
+		p := organization.RemoteProfileSeal{Digest: parts[3], Directories: dirs}
+		if strings.HasPrefix(parts[1], "minio/") {
+			p.Driver = "minio"
+		}
+		grant.Profiles[parts[1]] = p
 	}
 	return grant
 }
@@ -80,8 +104,10 @@ func remoteTargets(roots organizationRoots, grant *organization.RemoteAutomation
 		return result
 	}
 	for _, root := range roots.Targets {
-		if profile, ok := grant.Profiles[root.ID]; ok {
-			result = append(result, remoteMonitorTarget{TargetID: root.ID, Path: root.Path, Remote: (remotestore.Binding{Driver: "rclone", Directories: profile.Directories}).Summary()})
+		for _, driver := range []string{"rclone", "minio"} {
+			if profile, ok := grant.Profiles[organization.RemoteProfileKey(root.ID, driver)]; ok {
+				result = append(result, remoteMonitorTarget{TargetID: root.ID, Path: root.Path, Remote: (remotestore.Binding{Driver: driver, Directories: profile.Directories}).Summary()})
+			}
 		}
 	}
 	return result
@@ -101,11 +127,11 @@ func approveRemoteAutomation(grant *organization.RemoteAutomation, exclusive, re
 	return nil
 }
 
-func (api organizationAPI) remoteRoot(ctx context.Context, root string) (*remotestore.Client, error) {
+func (api organizationAPI) remoteRoot(ctx context.Context, root string, modes ...string) (*remotestore.Client, error) {
 	if !api.pureGo {
 		return nil, organization.ErrMode
 	}
-	c, err := api.rclone.Open(nil)
+	c, err := api.remoteFactory(remoteModeArgument(modes)).Open(nil)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +155,7 @@ func (api organizationAPI) remoteContext(ctx context.Context, job organization.J
 	if err != nil {
 		return ctx, func() {}, err
 	}
-	c, err := api.rclone.Open(job.Definition.Remote)
+	c, err := api.remoteFactory(job.Mode).Open(job.Definition.Remote)
 	if err != nil {
 		guard.Close()
 		return ctx, func() {}, err
@@ -162,7 +188,7 @@ func (api organizationAPI) resolveUnknown(ctx context.Context, job organization.
 }
 
 func (api *organizationAPI) approveLegacyRemote(actor, origin string, exclusive, recovery, stopped bool) error {
-	if actor == "" || !exclusive || !recovery || !stopped || !api.pureGo || !api.rclone.Available() {
+	if actor == "" || !exclusive || !recovery || !stopped || !api.pureGo {
 		return organization.ErrState
 	}
 	api.remoteApproval = organization.RemoteApproval{Actor: actor, Origin: origin, Created: time.Now().UTC().Format(time.RFC3339Nano), Exclusive: true, RecoveryCopy: true}
@@ -181,7 +207,7 @@ func (api organizationAPI) runRemoteJob(ctx context.Context, job organization.Jo
 		return err
 	}
 	defer guard.Close()
-	c, err := api.rclone.Open(job.Definition.Remote)
+	c, err := api.remoteFactory(job.Mode).Open(job.Definition.Remote)
 	if err != nil {
 		return err
 	}

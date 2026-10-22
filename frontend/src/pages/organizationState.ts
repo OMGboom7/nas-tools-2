@@ -36,7 +36,7 @@ export function buildOrganizationEpisodeSelection(id: string, season: string, fo
 // Eligibility only; the server still verifies saved proof, physical objects,
 // original-source preservation, target absence and executor isolation.
 export function canAbandonOrganizationJob(job: { state: string; mode?:string;remote?:unknown;items: Array<{ state: string }> }): boolean {
-  if(job.remote || job.mode==="rclone" || job.mode==="rclonecopy")return false;
+  if(job.remote || ["rclone","rclonecopy","minio","miniocopy"].includes(job.mode || ""))return false;
   return job.state === "abandoning" || (job.state === "needs_review"
     && job.items.some((item) => item.state === "prepared" || item.state === "staging")
     && job.items.every((item) => item.state === "planned" || item.state === "prepared" || item.state === "staging"));

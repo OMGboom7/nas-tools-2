@@ -11,6 +11,7 @@ import (
 // Monitor leases contain only opaque account/executable/environment digests
 // and public capabilities, never private Binding/configuration paths.
 type RemoteProfileSeal struct {
+	Driver      string `json:"driver,omitempty"`
 	Digest      string `json:"digest"`
 	Directories bool   `json:"directories"`
 }
@@ -30,7 +31,7 @@ func (a *RemoteAutomation) Valid() bool {
 		return false
 	}
 	for id, p := range a.Profiles {
-		if id == "" || len(p.Digest) != 64 {
+		if id == "" || len(p.Digest) != 64 || p.Driver != "" && p.Driver != "minio" {
 			return false
 		}
 		if _, err := hex.DecodeString(p.Digest); err != nil {
@@ -40,11 +41,24 @@ func (a *RemoteAutomation) Valid() bool {
 	return true
 }
 func (a *RemoteAutomation) Allows(d Definition) bool {
-	if !a.Valid() || !RemoteMode(d.Mode) || d.Remote == nil {
+	if !a.Valid() || !RemoteMode(d.Mode) || d.Remote == nil || d.Remote.Driver != RemoteDriver(d.Mode) {
 		return false
 	}
-	p, ok := a.Profiles[d.TargetID]
-	return ok && p.Digest == Digest(d.Remote) && p.Directories == d.Remote.Directories
+	p, ok := a.Profiles[RemoteProfileKey(d.TargetID, d.Remote.Driver)]
+	driver := p.Driver
+	if driver == "" {
+		driver = "rclone"
+	}
+	return ok && driver == d.Remote.Driver && p.Digest == Digest(d.Remote) && p.Directories == d.Remote.Directories
+}
+
+// Existing Rclone lease keys and JSON stay unchanged. MinIO is a distinct
+// authorization even when a configured logical root has the same spelling.
+func RemoteProfileKey(targetID, driver string) string {
+	if driver == "minio" {
+		return "minio/" + targetID
+	}
+	return targetID
 }
 func (a *RemoteAutomation) Approval(actor, origin, generation string) RemoteApproval {
 	if !a.Valid() || actor == "" || generation == "" {

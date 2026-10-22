@@ -2,6 +2,29 @@ package config
 
 import "testing"
 
+func TestMinioRequiresExplicitGoOnlyAccountAndTrustPaths(t *testing.T) {
+	t.Setenv("NASTOOL_MINIO_CONFIG", "/config/mc/config.json")
+	t.Setenv("NASTOOL_MINIO_CA", "/config/mc/ca.pem")
+	t.Setenv("NASTOOL_DISABLE_LEGACY", "false")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("shared MinIO writer accepted")
+	}
+	t.Setenv("NASTOOL_DISABLE_LEGACY", "true")
+	c, err := FromEnv()
+	if err != nil || c.MinioConfigFile != "/config/mc/config.json" || c.MinioCAFile != "/config/mc/ca.pem" {
+		t.Fatal(c, err)
+	}
+	t.Setenv("NASTOOL_MINIO_CA", "relative.pem")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("relative trust accepted")
+	}
+	t.Setenv("NASTOOL_MINIO_CA", "/config/mc/ca.pem")
+	t.Setenv("NASTOOL_MINIO_CONFIG", "")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("trust without explicit account accepted")
+	}
+}
+
 func TestRcloneRequiresExplicitGoOnlyConfiguration(t *testing.T) {
 	t.Setenv("NASTOOL_RCLONE_CONFIG", "/config/rclone.conf")
 	t.Setenv("NASTOOL_DISABLE_LEGACY", "false")

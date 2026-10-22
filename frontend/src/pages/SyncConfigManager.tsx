@@ -66,7 +66,7 @@ export function SyncConfigManager({ token, enabled, onChanged, onSessionExpired 
   const changed = review ? [...review.before.filter((row) => !review.after.some((next) => next.id === row.id && JSON.stringify(next) === JSON.stringify(row))).map((row) => ({ before: row, after: review.after.find((next) => next.id === row.id) })), ...review.after.filter((row) => !review.before.some((old) => old.id === row.id)).map((row) => ({ before: undefined, after: row }))] : [];
   return <section aria-label="同步配置维护">
     <h2>同步配置维护</h2>
-    <p>只维护数据库配置，不创建目录、搬文件或启动后台监控。编辑保留原 ID；启用会关闭来源重叠的其他配置，先审核全部变更。远程模式可保存，不代表 Go 已支持执行。部署前须实际停止旧 Python 同步服务。</p>
+    <p>只维护数据库配置，不创建目录、搬文件或启动后台监控。编辑保留原 ID；启用会关闭来源重叠的其他配置，先审核全部变更。Rclone／MinIO 执行须先显式配置各自账户，再到独立入口审核授权；保存不启动。部署前须实际停止旧 Python 同步服务。</p>
     {error && <p role="alert">{error}</p>}
     <button type="button" disabled={!enabled || busy} onClick={() => void operate("load")}>读取／刷新配置和最近回执</button>
     <fieldset disabled={!enabled || busy}>
@@ -74,7 +74,7 @@ export function SyncConfigManager({ token, enabled, onChanged, onSessionExpired 
       <label>来源绝对路径<input value={draft.source} maxLength={4096} onChange={(e) => edit("source", e.target.value)} /></label>
       <label>目标路径（识别整理可留空）<input value={draft.dest} maxLength={4096} onChange={(e) => edit("dest", e.target.value)} /></label>
       <label>未识别目录<input value={draft.unknown} maxLength={4096} onChange={(e) => edit("unknown", e.target.value)} /></label>
-      <label>转移方式<select value={draft.mode} onChange={(e) => edit("mode", e.target.value)}>{!["copy", "link", "softlink", "move", "rclonecopy", "rclone", "miniocopy", "minio"].includes(draft.mode) && <option value={draft.mode}>原方式 {draft.mode || "未设置"}</option>}<option value="copy">复制</option><option value="link">硬链接</option><option value="softlink">软链接</option><option value="move">移动</option><option value="rclonecopy">Rclone 复制（执行待迁移）</option><option value="rclone">Rclone 移动（执行待迁移）</option><option value="miniocopy">Minio 复制（执行待迁移）</option><option value="minio">Minio 移动（执行待迁移）</option></select></label>
+      <label>转移方式<select value={draft.mode} onChange={(e) => edit("mode", e.target.value)}>{!["copy", "link", "softlink", "move", "rclonecopy", "rclone", "miniocopy", "minio"].includes(draft.mode) && <option value={draft.mode}>原方式 {draft.mode || "未设置"}</option>}<option value="copy">复制</option><option value="link">硬链接</option><option value="softlink">软链接</option><option value="move">移动</option><option value="rclonecopy">Rclone 复制（须独立审核）</option><option value="rclone">Rclone 移动（须独立审核）</option><option value="miniocopy">MinIO 复制（须独立审核）</option><option value="minio">MinIO 移动（须独立审核）</option></select></label>
       <label>备注<input value={draft.note} maxLength={4096} onChange={(e) => edit("note", e.target.value)} /></label>
       {(["enabled", "rename", "compatibility", "locating"] as const).map((key) => <label key={key}><input type="checkbox" checked={draft[key]} onChange={(e) => edit(key, e.target.checked)} />{{ enabled: "启用配置（不代表后台监控已启动）", rename: "识别并重命名", compatibility: "兼容轮询标志", locating: "自动定位标志" }[key]}</label>)}
       <button type="button" onClick={() => void operate("review")}>审核新增／编辑</button>

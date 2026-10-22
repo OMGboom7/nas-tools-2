@@ -47,10 +47,12 @@ func (b Binding) Summary() *Summary {
 }
 
 type Factory struct {
+	Driver, CAFile     string
 	ConfigFile, Binary string
 	Environment        []string
 }
 type Client struct {
+	s3          *minioRemote
 	factory     Factory
 	binding     Binding
 	dir, config string
@@ -128,6 +130,13 @@ func address(s string) (string, error) {
 	return "NASTOOL:" + s, nil
 }
 func (f Factory) base() (Binding, []byte, []string, error) {
+	if f.Driver == "minio" {
+		b, data, _, err := f.minioBase()
+		return b, data, nil, err
+	}
+	if f.Driver != "" && f.Driver != "rclone" {
+		return Binding{}, nil, nil, ErrUnavailable
+	}
 	if !filepath.IsAbs(f.ConfigFile) || filepath.Clean(f.ConfigFile) == "/" {
 		return Binding{}, nil, nil, ErrUnavailable
 	}
@@ -231,6 +240,9 @@ func (f Factory) Validate(expected Binding) error {
 	return nil
 }
 func (f Factory) Open(expected *Binding) (*Client, error) {
+	if f.Driver == "minio" {
+		return f.openMinio(expected)
+	}
 	b, data, env, err := f.base()
 	if err != nil {
 		return nil, err
@@ -264,6 +276,10 @@ func (f Factory) Open(expected *Binding) (*Client, error) {
 	return &Client{factory: f, binding: b, dir: dir, config: configFile, environment: env, dirInfo: info}, nil
 }
 func (c *Client) Close() error {
+	if c.s3 != nil {
+		c.s3.transport.CloseIdleConnections()
+		return nil
+	}
 	info, err := os.Lstat(c.dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -335,6 +351,10 @@ func (remoteExit) Error() string {
 func (remoteExit) Unwrap() error { return ErrUnavailable }
 func missing(err error) bool     { var e remoteExit; return errors.As(err, &e) && (e == 3 || e == 4) }
 func (c *Client) Probe(ctx context.Context, root string) error {
+	if c.s3 != nil {
+		_, err := c.List(ctx, root, false)
+		return err
+	}
 	a, err := address(root)
 	if err != nil {
 		return err
@@ -352,6 +372,9 @@ func (c *Client) Probe(ctx context.Context, root string) error {
 	return err
 }
 func (c *Client) List(ctx context.Context, location string, recursive bool) ([]Node, error) {
+	if c.s3 != nil {
+		return c.minioList(ctx, location, recursive)
+	}
 	a, err := address(location)
 	if err != nil {
 		return nil, err
@@ -434,6 +457,9 @@ func (c *Client) entry(ctx context.Context, root, relativePath string, equivalen
 	return nil, ErrChanged
 }
 func (c *Client) Read(ctx context.Context, location string, size int64, out io.Writer) error {
+	if c.s3 != nil {
+		return c.minioRead(ctx, location, size, out)
+	}
 	if size < 0 || size > 1<<50 {
 		return ErrLimit
 	}
@@ -444,6 +470,9 @@ func (c *Client) Read(ctx context.Context, location string, size int64, out io.W
 	return c.command(ctx, []string{"cat", a, "--count", strconv.FormatInt(size+1, 10)}, nil, out, size+1)
 }
 func (c *Client) Upload(ctx context.Context, location string, size int64, input io.Reader) error {
+	if c.s3 != nil {
+		return c.minioUpload(ctx, location, size, input)
+	}
 	if size < 0 || size > 1<<50 {
 		return ErrLimit
 	}
@@ -471,9 +500,15 @@ func (c *Client) Copy(ctx context.Context, from, to string) error {
 	} else if n != nil {
 		return ErrChanged
 	}
+	if c.s3 != nil {
+		return c.minioCopy(ctx, from, to)
+	}
 	return c.command(ctx, []string{"copyto", a, b, "--immutable", "--checksum", "--no-update-modtime"}, nil, io.Discard, 1<<20)
 }
 func (c *Client) Mkdir(ctx context.Context, location string) error {
+	if c.s3 != nil {
+		return c.minioMkdir(ctx, location)
+	}
 	if !c.binding.Directories {
 		return nil
 	}

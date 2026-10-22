@@ -1042,10 +1042,11 @@ export type OrganizationHistoryItem = { id: number; idText?: string; mode: strin
 export type OrganizationHistoryData = { items: OrganizationHistoryItem[]; total: number; page: number; totalPages: number };
 export type OrganizationUnknownReview = { jobId: string; state: string; original: { id: number; path: string; dest: string; mode: string; state: string }; current: { id: number; path: string; dest: string; mode: string; state: string } | null; fingerprint: string; eligible: boolean };
 export type OrganizationDisc = { files: number; directories: number; expanded: boolean; fingerprint: string; latestModified: number };
-export type OrganizationRemote = {driver:"rclone";atomic:false;recoveryCopy:true;directories:boolean;evidence:"exclusive-namespace/full-content"};
+export type OrganizationRemote = {driver:"rclone"|"minio";atomic:false;recoveryCopy:true;directories:boolean;evidence:"exclusive-namespace/full-content"};
 export type RemoteOrganizationConsent = {confirmRemoteExclusive:boolean;confirmRemoteRecoveryCopy:boolean;confirmOldExecutorsStopped:boolean};
 export type OrganizationRemoteTarget={targetId:string;path:string;remote:OrganizationRemote};
-export const organizationMovesSource=(mode?:string)=>mode==="move" || mode==="rclone";
+export const organizationMovesSource=(mode?:string)=>mode==="move" || mode==="rclone" || mode==="minio";
+export const organizationIsRemote=(mode?:string)=>!!mode && ["rclone","rclonecopy","minio","miniocopy","Rclone移动","Rclone复制","Minio移动","Minio复制"].includes(mode);
 export type OrganizationPlanInput = { sourceId: string; targetId: string; path: string; mode: string; allowDiscExpansion?: boolean; assignments?: OrganizationMediaAssignment[]; episodeSelection?: OrganizationEpisodeSelection; unknownRecord?: { id: number; fingerprint: string }; historyRecord?: { id: number; fingerprint: string } };
 export type OrganizationEpisodeRule = { episodeFormat?: string; episodeOffset?: number; partOverride?: string };
 export type OrganizationPlanPartition={targetId:string;targetRoot:string;items:OrganizationPlan["items"]};
@@ -1164,7 +1165,7 @@ export async function restoreOrganizationSource(token:string,review:Organization
   if(!sourceRestoreReviewValid(review) || !review.canRestore || !confirmRestoreSource || !confirmOldExecutorsStopped || !reason.trim() || new TextEncoder().encode(reason).length>512)throw new ApiError("请重新审核原源并独立确认恢复、停止外部写入器及处置原因",400);
   const r=await readResponse<OrganizationJob>(await fetch(`/api/v1/organization/jobs/${review.jobId}/restore-source`,{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify({confirm:true,confirmRestoreSource,confirmOldExecutorsStopped,reviewFingerprint:review.fingerprint,reason})}));
   const j=r.data,a=j?.sourceRestore;
-  if(!r.success || r.code!==0 || !j || j.id!==review.jobId || j.state!=="source_restored" || !["move","rclone"].includes(j.mode) || !a || a.jobId!==j.id || a.state!==j.state || a.reason!==reason || typeof a.actor!=="string" || !a.actor || !a.created || !a.updated || a.targetsRetained!==true || !sourceRestoreItemsValid(a.items) || a.items.length!==review.items.length || a.items.some((i,n)=>i.source!==review.items[n].source || !["source_in_place","not_started","completed_retained"].includes(i.outcome)) || !Array.isArray(j.items) || j.items.length!==review.items.length || j.items.some((i,n)=>i.index!==n || i.source!==review.items[n].source || !["source_restored","source_restore_stopped","completed"].includes(i.state)))throw new ApiError(r.message||"原源恢复回执未核实，请只读刷新，不要重发",r.code||503);
+  if(!r.success || r.code!==0 || !j || j.id!==review.jobId || j.state!=="source_restored" || !organizationMovesSource(j.mode) || !a || a.jobId!==j.id || a.state!==j.state || a.reason!==reason || typeof a.actor!=="string" || !a.actor || !a.created || !a.updated || a.targetsRetained!==true || !sourceRestoreItemsValid(a.items) || a.items.length!==review.items.length || a.items.some((i,n)=>i.source!==review.items[n].source || !["source_in_place","not_started","completed_retained"].includes(i.outcome)) || !Array.isArray(j.items) || j.items.length!==review.items.length || j.items.some((i,n)=>i.index!==n || i.source!==review.items[n].source || !["source_restored","source_restore_stopped","completed"].includes(i.state)))throw new ApiError(r.message||"原源恢复回执未核实，请只读刷新，不要重发",r.code||503);
   return j;
 }
 
@@ -1623,7 +1624,7 @@ export async function executeRecordRename(token: string, input: OrganizationRena
   return executeIdentification(token,input,reviewFingerprint,confirmed,confirmSourceRemoval,"rename",remote);
 }
 function identificationRemoteConsent(mode:string,remote?:RemoteOrganizationConsent){
-  if(!["rclone","rclonecopy","Rclone移动","Rclone复制"].includes(mode))return remote?{confirmOldExecutorsStopped:remote.confirmOldExecutorsStopped}:{};
+  if(!organizationIsRemote(mode))return remote?{confirmOldExecutorsStopped:remote.confirmOldExecutorsStopped}:{};
   if(!remote?.confirmRemoteExclusive || !remote.confirmRemoteRecoveryCopy || !remote.confirmOldExecutorsStopped)throw new ApiError("须独立确认远程独占／非原子发布、保留恢复副本及停止外部写入器",400);
   return remote;
 }
@@ -1635,7 +1636,7 @@ export async function previewCustomIdentification(token:string,input:Organizatio
 }
 export function executeCustomIdentification(token:string,input:OrganizationCustomInput,fingerprint:string,confirmed=false,sourceRemoval=false,remote?:RemoteOrganizationConsent){return executeIdentification(token,input,fingerprint,confirmed,sourceRemoval,"renameudf",remote);}
 async function executeIdentification(token:string,input:OrganizationRenameInput|OrganizationCustomInput,reviewFingerprint:string,confirmed:boolean,confirmSourceRemoval:boolean,action:"rename"|"renameudf",remote?:RemoteOrganizationConsent):Promise<OrganizationRenameOutcome>{
-  if (!confirmed || !/^[a-f0-9]{64}$/.test(reviewFingerprint) || ["move","rclone","移动","Rclone移动"].includes(input.syncmod) && !confirmSourceRemoval) throw new ApiError("须审核预览并明确确认；移动另需源移除授权", 400);
+  if (!confirmed || !/^[a-f0-9]{64}$/.test(reviewFingerprint) || (organizationMovesSource(input.syncmod)||["移动","Rclone移动","Minio移动"].includes(input.syncmod)) && !confirmSourceRemoval) throw new ApiError("须审核预览并明确确认；移动另需源移除授权", 400);
   const consent=identificationRemoteConsent(input.syncmod,remote);
   const response = await fetch(`/api/v1/organization/unknown/${action}`, { method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, reviewFingerprint, confirmSourceRemoval,...consent }) });
   let result: ApiResponse<OrganizationRenameOutcome>;
@@ -1683,7 +1684,7 @@ export async function controlLegacyOrganizationBatch(token:string,batch:Organiza
   if(["execute","resume","close"].includes(action)&&!consent.confirmOldExecutorsStopped)throw new ApiError("须确认已停止旧执行器与外部写入器",400);
   if(["stop","resume","close"].includes(action)&&(!consent.reason?.trim()||consent.reason.length>512))throw new ApiError("请填写独立处置原因",400);
   if(action==="execute"&&organizationMovesSource(batch.mode)&&!consent.confirmSourceRemoval)throw new ApiError("移动需独立源移除授权",400);
-  if(["execute","resume"].includes(action)&&["rclone","rclonecopy"].includes(batch.mode)&&(!consent.confirmRemoteExclusive||!consent.confirmRemoteRecoveryCopy))throw new ApiError("远程需独立非原子／独占与恢复副本授权",400);
+  if(["execute","resume"].includes(action)&&organizationIsRemote(batch.mode)&&(!consent.confirmRemoteExclusive||!consent.confirmRemoteRecoveryCopy))throw new ApiError("远程需独立非原子／独占与恢复副本授权",400);
   const result=await readResponse<OrganizationLegacyBatch>(await fetch(`/api/v1/organization/legacy/batches/${batch.id}/${action}`,{method:"POST",headers:{Authorization:token,"Content-Type":"application/json"},body:JSON.stringify({...consent,reviewFingerprint:batch.reviewFingerprint})}));
   if(!result.success||result.code!==0||result.data?.id!==batch.id)throw new ApiError(result.message || "批次操作回执未核实，只读刷新、不自动重发",result.code);
   return result.data;

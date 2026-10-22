@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { closeRemoteOrganizationJob, reviewOrganizationSourceRestore, restoreOrganizationSource, type OrganizationSourceRestoreReview } from "../api/client";
+import { closeRemoteOrganizationJob, reviewOrganizationSourceRestore, restoreOrganizationSource, organizationMovesSource, organizationIsRemote, type OrganizationSourceRestoreReview } from "../api/client";
 import { ApiError, getOrganizationRoots, previewOrganization, getOrganizationJobs, getOrganizationJob, getOrganizationUnknown, getOrganizationHistory, reviewOrganizationUnknown, detachOrganizationUnknown, createOrganizationJob, controlOrganizationJob, abandonOrganizationJob, type AuthSession, type OrganizationJob, type OrganizationPlan, type OrganizationRoots, type OrganizationMediaAssignment, type OrganizationUnknownItem, type OrganizationUnknownData, type OrganizationUnknownReview, type OrganizationHistoryItem, type OrganizationHistoryData } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { UnknownRecordManager } from "./UnknownRecordManager";
@@ -21,7 +21,8 @@ const statusLabels: Record<string, string> = { available: "可规划", conflict:
 const jobLabels: Record<string, string> = { ready: "待执行", completed: "已完成", needs_review: "需核对，禁止盲目重试", cancelled: "已取消", planned: "等待执行", running: "执行中或已中断", prepared: "转移凭证已保存，待核实", moving: "源移除意图已保存，需核验恢复对象", quarantined: "源文件已转入恢复目录，待提交" };
 const modeLabels: Record<string,string> = {copy:"复制",link:"硬链接",softlink:"软链接",move:"移动"};
 modeLabels.rclonecopy="Rclone 远程复制";modeLabels.rclone="Rclone 远程移动";
-const movingMode=(mode:string)=>mode==="move" || mode==="rclone";
+modeLabels.miniocopy="MinIO 远程复制";modeLabels.minio="MinIO 远程移动";
+const movingMode=organizationMovesSource;
 jobLabels.publishing="远程发布意图已保存，须明确核验或续办";
 jobLabels.remote_closed="远程任务已明确停止；对象和预留全部保留";
 jobLabels.remote_stopped="项目已停止，不记整理成功";
@@ -103,7 +104,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
   const [restoreConfirmed,setRestoreConfirmed]=useState(false),[restoreStopped,setRestoreStopped]=useState(false);
   const sourceRestoreGeneration=useRef(0),sourceRestoreInFlight=useRef(false);
   const job = jobs.find((item) => item.id === jobId);
-  const remoteJob=!!job && ["rclonecopy","rclone"].includes(job.mode);
+  const remoteJob=!!job && organizationIsRemote(job.mode);
   const remoteApproved=!remoteJob || remoteExclusive && remoteRecovery && remoteStopped;
   useEffect(()=>{setRemoteExclusive(false);setRemoteRecovery(false);setRemoteStopped(false);setCloseConfirmed(false);setCloseStopped(false);setCloseReason("");},[jobId,job?.state,session.token]);
   useEffect(()=>{sourceRestoreGeneration.current++;sourceRestoreInFlight.current=false;setSourceReview(null);setRestoreConfirmed(false);setRestoreStopped(false);setRestoreReason(job?.sourceRestore?.reason||"");return()=>{sourceRestoreGeneration.current++;};},[jobId,session.token,job?.sourceRestore?.created]);
@@ -301,7 +302,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
         <label>来源目录<select value={sourceId} disabled={busy || !!selectedUnknown || !!selectedHistory} required onChange={(e) => { setSourceId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.sources.map((root) => <option key={root.id} value={root.id}>{root.label} · {root.path}</option>)}</select></label>
         <label>源目录内的相对路径<input value={path} disabled={busy || !!selectedUnknown || !!selectedHistory} required placeholder=". 或 Movies/某个目录" onChange={(e) => { setPath(e.target.value); invalidate(); }} /></label>
         <label>目标目录<select value={targetId} disabled={busy} required onChange={(e) => { setTargetId(e.target.value); invalidate(); }}><option value="">请选择</option>{roots.targets.map((root) => <option key={root.id} value={root.id} disabled={!!selectedDest && selectedDest !== root.path}>{root.label} · {root.path}</option>)}</select></label>
-        <label>计划转移方式<select value={mode} disabled={busy || !!selectedUnknown?.nativeMode || !!selectedHistory?.nativeMode} onChange={(e) => { setMode(e.target.value); invalidate(); }}><option value="copy">复制</option><option value="move">移动</option><option value="link">硬链接</option><option value="softlink">软链接</option>{roots.executionModes?.includes("rclonecopy") && <option value="rclonecopy">Rclone 远程复制</option>}{roots.executionModes?.includes("rclone") && <option value="rclone">Rclone 远程移动</option>}</select></label>
+        <label>计划转移方式<select value={mode} disabled={busy || !!selectedUnknown?.nativeMode || !!selectedHistory?.nativeMode} onChange={(e) => { setMode(e.target.value); invalidate(); }}><option value="copy">复制</option><option value="move">移动</option><option value="link">硬链接</option><option value="softlink">软链接</option>{roots.executionModes?.includes("rclonecopy") && <option value="rclonecopy">Rclone 远程复制</option>}{roots.executionModes?.includes("rclone") && <option value="rclone">Rclone 远程移动</option>}{roots.executionModes?.includes("miniocopy") && <option value="miniocopy">MinIO 远程复制</option>}{roots.executionModes?.includes("minio") && <option value="minio">MinIO 远程移动</option>}</select></label>
         <label><input type="checkbox" checked={allowDiscExpansion} disabled={busy || !!selectedUnknown} onChange={(event)=>{setAllowDiscExpansion(event.target.checked);invalidate();}} />若选择的是蓝光内部文件或子目录，我同意扩大到完整光盘后重新审核。整盘包括菜单、证书、全部片段及其他文件，不拆成独立影片；勾选不会执行。</label>
         <label><input type="checkbox" checked={batchEnabled} disabled={busy} onChange={(event) => { setBatchEnabled(event.target.checked); invalidate(); }} />启用当前范围的批量 TV 集号选择</label>
         {batchEnabled && <fieldset disabled={busy}><legend>批量集号规则</legend>
@@ -320,7 +321,7 @@ export function OrganizationPage({ session, currentPath, onNavigate, onLogout, o
       {plan && <div aria-live="polite"><p>共 {plan.items.length} 个媒体或附件；跳过 {plan.skipped} 个隐藏、非媒体或常见未完成后缀项。此预览不能直接执行，也不证明文件已下载完成。</p>
         {plan.items.filter((item)=>item.disc).map((item)=><p key={`disc-${item.source}`}>蓝光整盘：{item.source} → {item.target || "尚无目标"}；{item.disc!.files} 个文件、{item.disc!.directories} 个子目录、合计 {item.size} 字节。{item.disc!.expanded && "已从内部选择扩展至整盘。"}四种本地方式保留全部目录结构，不逐片段改名；移动将移除这棵已审核的源目录，不移除配置的来源根。</p>)}
         {plan.scraperEnabled && <p>此计划启用了入库刮削：整组整理及移动清理完成后，按原配置补齐缺失 NFO 和图片；已有文件不覆盖，处理结果在刮削回执中独立核查。</p>}
-        {plan.remote && <p>远程目标：NASTOOL 下的逻辑目录，不校验或写入同名本机目录。发布非原子，执行前须独立确认停止外部写入器、命名空间独占及恢复副本／元数据暂存的长期空间和流量费用。远端不支持实体空目录时只保留清单；远程 FFmpeg 缺图回退和自动化仍未开放，不能据此替换生产服务。</p>}
+        {plan.remote && <p>{plan.remote.driver==="minio"?"MinIO 存储桶／对象":"Rclone"}目标：NASTOOL 下的逻辑路径，不校验或写入同名本机目录。发布非原子，执行前须独立确认停止外部写入器、命名空间独占及恢复副本／元数据暂存的长期空间和流量费用。MinIO 使用零字节目录标记保留空目录。同步／下载完成后台须另行审核授权；远程 FFmpeg 和已有库刮削仍待迁移，不能据此替换生产服务。</p>}
         {plan.items.filter((item) => item.kind === "media" && item.partOverride !== undefined).map((item) => <p key={`part-${item.source}`}>分段覆盖：{item.source} → {item.partOverride || "明确清空"}（唯一附件继承）</p>)}
         <div className="organization-table"><table><thead><tr><th>源文件</th><th>目标相对路径</th><th>核验状态</th></tr></thead><tbody>{plan.items.map((item) => <tr key={item.source}><td>{item.source}<small>{item.size} 字节 · {item.kind}{item.part ? ` · 分段 ${item.part}` : ""}</small>{(item.episodeFormat || !!item.episodeOffset) && <small>集号规则：{item.episodeFormat || "明确编号"} · 偏移 {item.episodeOffset || 0}</small>}</td><td>{item.target || "未生成"}{item.tmdbId && <small>{item.title} {item.year} · {item.mediaType || "待核验类型"} · TMDB {item.tmdbId}{item.assigned ? " · 人工指定" : ""}</small>}</td><td>{statusLabels[item.status] || item.status}{item.reason && <small>{item.reason}</small>}</td></tr>)}</tbody></table></div>
         {!batchEnabled && <form onSubmit={(event) => void assignIdentity(event)} aria-label="逐文件指定媒体身份">

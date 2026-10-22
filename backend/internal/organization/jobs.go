@@ -39,7 +39,7 @@ const MoveTargetCleanupPending = "Move target recovery cleanup pending"
 const ExecutionTimeout = 2 * time.Hour
 
 func ModeLabel(mode string) string {
-	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动", "rclonecopy": "Rclone复制", "rclone": "Rclone移动"}[mode]
+	return map[string]string{"copy": "复制", "link": "硬链接", "softlink": "软链接", "move": "移动", "rclonecopy": "Rclone复制", "rclone": "Rclone移动", "miniocopy": "Minio复制", "minio": "Minio移动"}[mode]
 }
 
 type Entry struct {
@@ -875,7 +875,7 @@ func (s *Store) BeginMove(ctx context.Context, id string, index int, p Proof) er
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='moving',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='prepared' AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone'))`, string(raw), id, index, string(previous), id)
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET STATE='moving',PROOF=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='prepared' AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone','minio'))`, string(raw), id, index, string(previous), id)
 	if err != nil {
 		return err
 	}
@@ -932,7 +932,7 @@ func (s *Store) AdvanceMoveCleanup(ctx context.Context, id string, index int, p 
 	if err := verifyLegacyJob(ctx, tx, id); err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone'))`, to, id, index, from, string(raw), id)
+	result, err := tx.ExecContext(ctx, `UPDATE GO_ORGANIZATION_ITEMS SET REASON=? WHERE JOB_ID=? AND ORDINAL=? AND STATE='completed' AND REASON=? AND PROOF=? AND EXISTS (SELECT 1 FROM GO_ORGANIZATION_JOBS WHERE ID=? AND STATE='active' AND json_extract(DEFINITION,'$.mode') IN('move','rclone','minio'))`, to, id, index, from, string(raw), id)
 	if err != nil {
 		return err
 	}

@@ -341,10 +341,12 @@ func TestDirectSyncRecordListExactIDsAndUnsupportedOrUnconfiguredModes(t *testin
 		status int
 	}{
 		{`UPDATE CONFIG_SYNC_PATHS SET RENAME=1`, 501},
-		// Rclone now has a native implementation, but this fixture has no
-		// reviewed account. It must reject without falling back to local I/O.
+		// Both remote providers are native, but this fixture has no reviewed
+		// account. Reject both literal modes without falling back to local I/O.
 		{`UPDATE CONFIG_SYNC_PATHS SET RENAME=0,MODE='Rclone移动'`, 422},
-		{`UPDATE CONFIG_SYNC_PATHS SET MODE='Minio移动'`, 501},
+		{`UPDATE CONFIG_SYNC_PATHS SET MODE='Minio移动'`, 422},
+		{`UPDATE CONFIG_SYNC_PATHS SET MODE='Minio复制'`, 422},
+		{`UPDATE CONFIG_SYNC_PATHS SET MODE='unmigrated-provider'`, 501},
 	} {
 		if _, err := f.db.Exec(test.sql); err != nil {
 			t.Fatal(err)

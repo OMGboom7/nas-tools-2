@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { DownloadReservationRecovery } from "./DownloadReservationRecovery";
 import { RemoteTransferConsent } from "../components/RemoteTransferConsent";
-import { organizationMovesSource } from "../api/client";
+import { organizationMovesSource,organizationIsRemote } from "../api/client";
 import { ApiError, previewDownloadOrganization, saveDownloadOrganization, findDownloadOrganization, controlDownloadOrganization, reviewDownloadOrganizationResult, finalizeDownloadOrganization, type DownloadOrganizationReview, type DownloadOrganizationBatch, type DownloadResultReview } from "../api/client";
 type Props = { token: string; enabled: boolean; onSessionExpired: () => void; onChanged: (id: string) => Promise<void> };
 export function DownloadOrganizationManager({ token, enabled, onSessionExpired, onChanged }: Props) {
@@ -10,7 +10,7 @@ export function DownloadOrganizationManager({ token, enabled, onSessionExpired, 
   const [confirm, setConfirm] = useState(false); const [oldStopped, setOldStopped] = useState(false); const [omitted, setOmitted] = useState(false); const [sourceRemoval, setSourceRemoval] = useState(false); const [taskStopped, setTaskStopped] = useState(false); const [confirmResult, setConfirmResult] = useState(false); const [taskRemoval, setTaskRemoval] = useState(false); const [exclusive, setExclusive] = useState(false); const [confirmReconcile, setConfirmReconcile] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const version = useRef(0); const inFlight = useRef(false);
   const [remoteExclusive,setRemoteExclusive]=useState(false),[remoteRecovery,setRemoteRecovery]=useState(false);
-  const remoteBatch=!!batch && ["rclonecopy","rclone"].includes(batch.mode);
+  const remoteBatch=!!batch && organizationIsRemote(batch.mode);
   function resetConsent() { setRemoteExclusive(false);setRemoteRecovery(false);setConfirm(false); setOldStopped(false); setOmitted(false); setSourceRemoval(false); setTaskStopped(false); setConfirmResult(false); setTaskRemoval(false); setExclusive(false); setConfirmReconcile(false); }
   useEffect(() => { version.current++; inFlight.current = false; setDownloaderID(""); setTaskID(""); setReview(null); setBatch(null); setResult(null); resetConsent(); setError(""); setBusy(false); return () => { version.current++; }; }, [token]);
   function invalidate() { version.current++; setReview(null); setBatch(null); setResult(null); resetConsent(); setError(""); }
