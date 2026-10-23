@@ -92,6 +92,16 @@ func (s *Store) CreateLibraryJob(ctx context.Context, fingerprint string, d Libr
 	return id, nil
 }
 func createLibraryJob(ctx context.Context, tx *sql.Tx, fingerprint string, d LibraryDefinition, files []LibraryMedia) (string, error) {
+	locations := []string{}
+	for _, m := range files {
+		locations = append(locations, filepath.Join(d.Root.Path, m.Path))
+		if m.InputRoot != "" && m.InputPath != "" {
+			locations = append(locations, filepath.Join(m.InputRoot, m.InputPath))
+		}
+	}
+	if err := mediaRemovalClaimed(ctx, tx, locations, nil, ""); err != nil {
+		return "", err
+	}
 	if d.Remote != nil && !LibraryRemoteApproved(d) {
 		return "", ErrState
 	}

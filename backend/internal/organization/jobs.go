@@ -259,6 +259,13 @@ func (s *Store) Create(ctx context.Context, fingerprint string, d Definition) (s
 
 // Shared by ordinary creation and atomic completion of a reviewed reservation.
 func createJobTx(ctx context.Context, tx *sql.Tx, fingerprint string, d Definition) (string, error) {
+	locations := []string{}
+	for _, e := range d.Entries {
+		locations = append(locations, filepath.Join(d.SourceRoot, e.Source), filepath.Join(d.TargetRoot, e.Target))
+	}
+	if err := mediaRemovalClaimed(ctx, tx, locations, nil, ""); err != nil {
+		return "", err
+	}
 	if err := verifyLegacyMember(ctx, tx, d, true); err != nil {
 		return "", err
 	}

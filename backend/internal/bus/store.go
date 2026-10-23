@@ -20,13 +20,14 @@ import (
 var ErrState = errors.New("business notification requires review")
 
 type Event struct {
-	ID         string     `json:"id"`
-	Kind       string     `json:"kind"`
-	Reference  string     `json:"reference"`
-	Title      string     `json:"title"`
-	Text       string     `json:"text"`
-	Created    string     `json:"created"`
-	Deliveries []Delivery `json:"deliveries"`
+	ID         string          `json:"id"`
+	Kind       string          `json:"kind"`
+	Reference  string          `json:"reference"`
+	Title      string          `json:"title"`
+	Text       string          `json:"text"`
+	Created    string          `json:"created"`
+	Data       json.RawMessage `json:"data,omitempty"`
+	Deliveries []Delivery      `json:"deliveries"`
 }
 type Delivery struct {
 	ID           string `json:"id"`
@@ -64,6 +65,7 @@ func schema(ctx context.Context, tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS GO_BUSINESS_EVENTS(ID TEXT PRIMARY KEY,KIND TEXT NOT NULL,REFERENCE TEXT NOT NULL,TITLE TEXT NOT NULL,BODY TEXT NOT NULL,CREATED TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_NOTIFICATION_DELIVERIES(ID TEXT PRIMARY KEY,EVENT_ID TEXT NOT NULL,CHANNEL_ID INTEGER NOT NULL,CHANNEL_NAME TEXT NOT NULL,CHANNEL_TYPE TEXT NOT NULL,CONFIG_DIGEST TEXT NOT NULL,STATE TEXT NOT NULL,REASON TEXT NOT NULL DEFAULT '',ACTOR TEXT NOT NULL DEFAULT '',UPDATED TEXT NOT NULL,UNIQUE(EVENT_ID,CHANNEL_ID))`,
 		`CREATE INDEX IF NOT EXISTS GO_NOTIFICATION_DELIVERY_STATE ON GO_NOTIFICATION_DELIVERIES(STATE,UPDATED,ID)`,
+		`CREATE TABLE IF NOT EXISTS GO_BUSINESS_EVENT_DATA(EVENT_ID TEXT PRIMARY KEY,DATA TEXT NOT NULL)`,
 	} {
 		if _, err := tx.ExecContext(ctx, s); err != nil {
 			return err
@@ -94,7 +96,7 @@ func selected(c notificationconfig.Channel, kind string) bool {
 
 func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string) error {
 	switch kind {
-	case "transfer_finished", "download_start", "rss_added", "rss_finished":
+	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted":
 	default:
 		return ErrState
 	}
@@ -167,6 +169,30 @@ func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body str
 		if n != 1 {
 			return ErrState
 		}
+	}
+	return nil
+}
+
+// Durable typed events are committed with the individual deletion receipt.
+// Recording an event does not run Python plugins or authorize torrent deletion.
+func EmitData(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string, data any) error {
+	raw, err := json.Marshal(data)
+	if err != nil || len(raw) > 64<<10 {
+		return ErrState
+	}
+	if err := Emit(ctx, tx, kind, key, reference, title, body); err != nil {
+		return err
+	}
+	id := Hash([]string{kind, key})
+	if _, err := tx.ExecContext(ctx, `INSERT INTO GO_BUSINESS_EVENT_DATA(EVENT_ID,DATA)VALUES(?,?) ON CONFLICT(EVENT_ID) DO NOTHING`, id, string(raw)); err != nil {
+		return err
+	}
+	var saved string
+	if err := tx.QueryRowContext(ctx, `SELECT DATA FROM GO_BUSINESS_EVENT_DATA WHERE EVENT_ID=?`, id).Scan(&saved); err != nil {
+		return err
+	}
+	if saved != string(raw) {
+		return ErrState
 	}
 	return nil
 }
@@ -305,6 +331,22 @@ func (s *Store) List(ctx context.Context) ([]Event, error) {
 		return nil, err
 	}
 	for i := range events {
+		var hasData bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_BUSINESS_EVENT_DATA')`).Scan(&hasData); err != nil {
+			return nil, err
+		}
+		if hasData {
+			var raw string
+			err := s.db.QueryRowContext(ctx, `SELECT DATA FROM GO_BUSINESS_EVENT_DATA WHERE EVENT_ID=?`, events[i].ID).Scan(&raw)
+			if err == nil {
+				if !json.Valid([]byte(raw)) || len(raw) > 64<<10 {
+					return nil, ErrState
+				}
+				events[i].Data = json.RawMessage(raw)
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+		}
 		rows, err := s.db.QueryContext(ctx, deliverySQL+` WHERE EVENT_ID=? ORDER BY CHANNEL_ID LIMIT 1001`, events[i].ID)
 		if err != nil {
 			return nil, err

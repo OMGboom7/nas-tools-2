@@ -39,14 +39,40 @@ type RecoveryOwner struct {
 	Related     bool   `json:"related"`
 }
 type RecoveryDefinition struct {
-	Scope     RecoveryScope   `json:"scope"`
-	Path      string          `json:"path"`
-	Nodes     []RecoveryNode  `json:"nodes"`
-	Owners    []RecoveryOwner `json:"owners"`
-	Actor     string          `json:"actor"`
-	RequestID string          `json:"requestId"`
-	Decision  string          `json:"decision"`
+	Removal   *MediaRemovalOrigin `json:"removal,omitempty"`
+	Scope     RecoveryScope       `json:"scope"`
+	Path      string              `json:"path"`
+	Nodes     []RecoveryNode      `json:"nodes"`
+	Owners    []RecoveryOwner     `json:"owners"`
+	Actor     string              `json:"actor"`
+	RequestID string              `json:"requestId"`
+	Decision  string              `json:"decision"`
 }
+
+// Only the separately reviewed media-removal coordinator may create these
+// children. Public recovery-object endpoints never grant ordinary-media scope.
+type MediaRemovalOrigin struct {
+	Parent string `json:"parent"`
+	Role   string `json:"role"`
+}
+
+func recoveryDefinitionPath(d RecoveryDefinition) bool {
+	if d.Removal == nil {
+		return RecoveryCandidate(d.Path)
+	}
+	return recoveryHex(d.Removal.Parent, 64) && (d.Removal.Role == "source" || d.Removal.Role == "library" || d.Removal.Role == "file" || d.Removal.Role == "cleanup") && validRelative(d.Path) && d.Path != "."
+}
+
+func MediaRemovalSnapshot(ctx context.Context, s RecoveryScope, selected string, c *remotestore.Client) ([]RecoveryNode, error) {
+	if !validRelative(selected) || selected == "." || recoveryClient(s, c) != nil {
+		return nil, ErrPath
+	}
+	if s.Remote != nil {
+		return recoveryRemoteSnapshot(ctx, s, selected, c)
+	}
+	return recoveryLocalSnapshot(ctx, s, selected)
+}
+
 type RecoveryObjectReview struct {
 	RootID      string             `json:"rootId"`
 	Driver      string             `json:"driver"`

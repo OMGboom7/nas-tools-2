@@ -168,7 +168,7 @@ func (s *Store) ReviewRecoveryDisposal(ctx context.Context, r RecoveryDisposal, 
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
-	owners, ownerErr := recoveryOwners(ctx, s.db, r.Definition.Scope, r.Path)
+	owners, ownerErr := recoveryDefinitionOwners(ctx, s.db, r.Definition)
 	expectedOwners := r.Frozen
 	if r.State == "ready" {
 		expectedOwners = r.Definition.Owners
@@ -299,6 +299,15 @@ func (s *Store) ExecuteRecoveryDisposal(ctx context.Context, r RecoveryDisposal,
 	final, err := recoveryInventoryActual(ctx, r, c)
 	if err != nil || len(final) != 0 {
 		return ErrState
+	}
+	if r.Definition.Removal != nil {
+		present, err := MediaRemovalPresence(ctx, r.Definition.Scope, r.Path, c)
+		if err != nil {
+			return err
+		}
+		if present {
+			return ErrState
+		}
 	}
 	if err := current(); err != nil {
 		return err

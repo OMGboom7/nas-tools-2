@@ -333,6 +333,10 @@ func (api *organizationAPI) serveRecoveryCreate(w http.ResponseWriter, r *http.R
 	defer cancel()
 	id := organization.RecoveryDisposalID(actor, in.RequestID)
 	if saved, err := api.jobs.RecoveryDisposal(ctx, id); err == nil {
+		if saved.Definition.Removal != nil {
+			writeAPIError(w, 404, 404, "use the complete media-removal coordinator")
+			return
+		}
 		if saved.RootID != in.RootID || saved.Driver != in.Driver || saved.Path != in.Path || organization.Digest(saved.Definition) != in.Fingerprint {
 			writeOrganizationError(w, organization.ErrState)
 			return
@@ -377,6 +381,10 @@ func (api *organizationAPI) serveRecoveryRecord(w http.ResponseWriter, r *http.R
 	saved, err := api.jobs.RecoveryDisposal(ctx, r.PathValue("id"))
 	if err != nil {
 		writeOrganizationError(w, err)
+		return
+	}
+	if saved.Definition.Removal != nil {
+		writeAPIError(w, 404, 404, "use the complete reviewed media-removal coordinator")
 		return
 	}
 	var in recoveryInput

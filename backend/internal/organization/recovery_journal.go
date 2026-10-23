@@ -28,7 +28,23 @@ func recoveryTerminal(state string) bool {
 	return state == "completed" || state == "returned" || state == "closed"
 }
 func (s *Store) CreateRecoveryDisposal(ctx context.Context, d RecoveryDefinition, fingerprint string) (string, error) {
-	if fingerprint != Digest(d) || !recoveryScopeValid(d.Scope) || !RecoveryCandidate(d.Path) || len(d.Nodes) < 1 || len(d.Nodes) > RecoveryObjectLimit || d.Actor == "" || !recoveryHex(d.RequestID, 32) {
+	if d.Removal != nil {
+		return "", ErrState
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	id, err := createRecoveryDisposal(ctx, tx, d, fingerprint)
+	if err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
+}
+
+func createRecoveryDisposal(ctx context.Context, tx *sql.Tx, d RecoveryDefinition, fingerprint string) (string, error) {
+	if fingerprint != Digest(d) || !recoveryScopeValid(d.Scope) || !recoveryDefinitionPath(d) || len(d.Nodes) < 1 || len(d.Nodes) > RecoveryObjectLimit || d.Actor == "" || !recoveryHex(d.RequestID, 32) {
 		return "", ErrState
 	}
 	raw, err := json.Marshal(d)
@@ -36,11 +52,6 @@ func (s *Store) CreateRecoveryDisposal(ctx context.Context, d RecoveryDefinition
 		return "", ErrLimit
 	}
 	id := RecoveryDisposalID(d.Actor, d.RequestID)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
 	if err := recoverySchema(ctx, tx); err != nil {
 		return "", err
 	}
@@ -55,7 +66,7 @@ func (s *Store) CreateRecoveryDisposal(ctx context.Context, d RecoveryDefinition
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	owners, err := recoveryOwners(ctx, tx, d.Scope, d.Path)
+	owners, err := recoveryDefinitionOwners(ctx, tx, d)
 	if err != nil || Digest(owners) != Digest(d.Owners) {
 		return "", ErrState
 	}
@@ -82,7 +93,7 @@ func (s *Store) CreateRecoveryDisposal(ctx context.Context, d RecoveryDefinition
 			return "", err
 		}
 	}
-	return id, tx.Commit()
+	return id, nil
 }
 func (s *Store) RecoveryDisposal(ctx context.Context, id string) (RecoveryDisposal, error) {
 	r := RecoveryDisposal{ID: id, Items: []RecoveryDisposalItem{}}
@@ -101,7 +112,7 @@ func (s *Store) RecoveryDisposal(ctx context.Context, id string) (RecoveryDispos
 	if err != nil {
 		return r, err
 	}
-	if json.Unmarshal([]byte(raw), &r.Definition) != nil || json.Unmarshal([]byte(frozen), &r.Frozen) != nil || id != RecoveryDisposalID(r.Definition.Actor, r.Definition.RequestID) || !recoveryScopeValid(r.Definition.Scope) || !RecoveryCandidate(r.Definition.Path) || len(r.Definition.Nodes) < 1 || len(r.Definition.Nodes) > RecoveryObjectLimit {
+	if json.Unmarshal([]byte(raw), &r.Definition) != nil || json.Unmarshal([]byte(frozen), &r.Frozen) != nil || id != RecoveryDisposalID(r.Definition.Actor, r.Definition.RequestID) || !recoveryScopeValid(r.Definition.Scope) || !recoveryDefinitionPath(r.Definition) || len(r.Definition.Nodes) < 1 || len(r.Definition.Nodes) > RecoveryObjectLimit {
 		return r, ErrState
 	}
 	if returned != "" {
@@ -147,7 +158,7 @@ func (s *Store) ListRecoveryDisposals(ctx context.Context) ([]RecoveryDisposal, 
 	if !yes {
 		return []RecoveryDisposal{}, nil
 	}
-	rows, err := recoveryRows(ctx, s.db, `SELECT ID FROM GO_RECOVERY_DISPOSALS ORDER BY STATE NOT IN('completed','returned','closed') DESC,UPDATED DESC,ID LIMIT 50`)
+	rows, err := recoveryRows(ctx, s.db, `SELECT ID FROM GO_RECOVERY_DISPOSALS WHERE json_type(DEFINITION,'$.removal') IS NULL ORDER BY STATE NOT IN('completed','returned','closed') DESC,UPDATED DESC,ID LIMIT 50`)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +167,9 @@ func (s *Store) ListRecoveryDisposals(ctx context.Context) ([]RecoveryDisposal, 
 		r, err := s.RecoveryDisposal(ctx, row[0])
 		if err != nil {
 			return nil, err
+		}
+		if r.Definition.Removal != nil {
+			continue
 		}
 		result = append(result, r)
 	}
@@ -252,7 +266,7 @@ func (s *Store) BeginRecoveryAttempt(ctx context.Context, r RecoveryDisposal, re
 	if json.Unmarshal([]byte(definition), &saved) != nil || Digest(saved) != Digest(r.Definition) || state != r.State {
 		return false, ErrState
 	}
-	owners, err := recoveryOwners(ctx, tx, r.Definition.Scope, r.Path)
+	owners, err := recoveryDefinitionOwners(ctx, tx, r.Definition)
 	if err != nil {
 		return false, err
 	}
@@ -263,7 +277,7 @@ func (s *Store) BeginRecoveryAttempt(ctx context.Context, r RecoveryDisposal, re
 		if err := freezeRecoveryOwners(ctx, tx, owners, r.ID); err != nil {
 			return false, err
 		}
-		owners, err = recoveryOwners(ctx, tx, r.Definition.Scope, r.Path)
+		owners, err = recoveryDefinitionOwners(ctx, tx, r.Definition)
 		if err != nil {
 			return false, err
 		}
@@ -350,7 +364,12 @@ func (s *Store) recoveryItemDone(ctx context.Context, id string, ordinal int) er
 	return nil
 }
 func (s *Store) finishRecovery(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE GO_RECOVERY_DISPOSALS SET STATE='completed',REASON='reviewed recovery objects absent; prior targets, history and claims retained',UPDATED=? WHERE ID=? AND STATE='deleting' AND NOT EXISTS(SELECT 1 FROM GO_RECOVERY_DISPOSAL_ITEMS WHERE DISPOSAL_ID=? AND STATE!='done')`, time.Now().UTC().Format(time.RFC3339Nano), id, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE GO_RECOVERY_DISPOSALS SET STATE='completed',REASON='reviewed objects absent; original claims retained; coordinator owns any separate history disposition',UPDATED=? WHERE ID=? AND STATE='deleting' AND NOT EXISTS(SELECT 1 FROM GO_RECOVERY_DISPOSAL_ITEMS WHERE DISPOSAL_ID=? AND STATE!='done')`, time.Now().UTC().Format(time.RFC3339Nano), id, id)
 	if err != nil {
 		return err
 	}
@@ -358,7 +377,18 @@ func (s *Store) finishRecovery(ctx context.Context, id string) error {
 	if n != 1 {
 		return ErrState
 	}
-	return nil
+	var raw string
+	if err := tx.QueryRowContext(ctx, `SELECT DEFINITION FROM GO_RECOVERY_DISPOSALS WHERE ID=?`, id).Scan(&raw); err != nil {
+		return err
+	}
+	var d RecoveryDefinition
+	if json.Unmarshal([]byte(raw), &d) != nil {
+		return ErrState
+	}
+	if err := finishMediaRemovalChild(ctx, tx, id, d); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) CloseRecoveryDisposal(ctx context.Context, id string) error {
 	return s.recoveryPhase(ctx, id, "closed", "explicitly stopped; all remaining objects, captures, old histories and claims retained")

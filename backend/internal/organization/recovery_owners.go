@@ -194,6 +194,16 @@ func recoveryOwnerRecords(ctx context.Context, r recoveryReader) ([]recoveryOwne
 		}
 		for _, item := range items {
 			rec.rows = append(rec.rows, Digest(item))
+			var media LibraryMedia
+			if json.Unmarshal([]byte(item[3]), &media) != nil {
+				return nil, ErrState
+			}
+			if media.Path != "" {
+				rec.protected = append(rec.protected, path.Join(d.Root.Path, media.Path))
+			}
+			if media.InputRoot != "" && media.InputPath != "" {
+				rec.protected = append(rec.protected, path.Join(media.InputRoot, media.InputPath))
+			}
 		}
 		outputs, err := recoveryRows(ctx, r, `SELECT ID,TARGET,STATE,REASON,PROOF FROM GO_LIBRARY_SCRAPE_OUTPUTS WHERE JOB_ID=? ORDER BY ID`, rec.id)
 		if err != nil {
@@ -222,6 +232,14 @@ func recoveryOwnerRecords(ctx context.Context, r recoveryReader) ([]recoveryOwne
 	return records, nil
 }
 func recoveryOwners(ctx context.Context, r recoveryReader, s RecoveryScope, selected string) ([]RecoveryOwner, error) {
+	return recoveryOwnersAt(ctx, r, s, selected, false)
+}
+
+func recoveryDefinitionOwners(ctx context.Context, r recoveryReader, d RecoveryDefinition) ([]RecoveryOwner, error) {
+	return recoveryOwnersAt(ctx, r, d.Scope, d.Path, d.Removal != nil)
+}
+
+func recoveryOwnersAt(ctx context.Context, r recoveryReader, s RecoveryScope, selected string, media bool) ([]RecoveryOwner, error) {
 	records, err := recoveryOwnerRecords(ctx, r)
 	if err != nil {
 		return nil, err
@@ -229,18 +247,24 @@ func recoveryOwners(ctx context.Context, r recoveryReader, s RecoveryScope, sele
 	location := path.Join(s.Root.Path, selected)
 	for _, rec := range records {
 		for _, p := range rec.protected {
-			if path.IsAbs(p) && p != "/" && recoveryOverlaps(location, p) {
+			if !media && path.IsAbs(p) && p != "/" && recoveryOverlaps(location, p) {
 				return nil, ErrPath
 			}
 		}
 	}
-	if err := recoveryHistoryProtection(ctx, r, location); err != nil {
-		return nil, err
+	if !media {
+		if err := recoveryHistoryProtection(ctx, r, location); err != nil {
+			return nil, err
+		}
 	}
 	matches := map[string]bool{}
 	batches := map[string]bool{}
 	for _, rec := range records {
-		for _, p := range rec.paths {
+		paths := rec.paths
+		if media {
+			paths = append(append([]string{}, paths...), rec.protected...)
+		}
+		for _, p := range paths {
 			if recoveryOverlaps(location, p) {
 				matches[rec.kind+":"+rec.id] = true
 				if rec.batch != "" {
