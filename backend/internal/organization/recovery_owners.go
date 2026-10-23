@@ -198,12 +198,11 @@ func recoveryOwnerRecords(ctx context.Context, r recoveryReader) ([]recoveryOwne
 			if json.Unmarshal([]byte(item[3]), &media) != nil {
 				return nil, ErrState
 			}
-			if media.Path != "" {
-				rec.protected = append(rec.protected, path.Join(d.Root.Path, media.Path))
+			locations, err := libraryProtectedLocations(d, media)
+			if err != nil {
+				return nil, err
 			}
-			if media.InputRoot != "" && media.InputPath != "" {
-				rec.protected = append(rec.protected, path.Join(media.InputRoot, media.InputPath))
-			}
+			rec.protected = append(rec.protected, locations...)
 		}
 		outputs, err := recoveryRows(ctx, r, `SELECT ID,TARGET,STATE,REASON,PROOF FROM GO_LIBRARY_SCRAPE_OUTPUTS WHERE JOB_ID=? ORDER BY ID`, rec.id)
 		if err != nil {

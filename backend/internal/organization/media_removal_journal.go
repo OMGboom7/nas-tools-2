@@ -35,6 +35,13 @@ func mediaRemovalClaimed(ctx context.Context, r recoveryReader, locations []stri
 		if row[0] == except {
 			continue
 		}
+		released, err := reservationReleased(ctx, r, "media-removal", row[0])
+		if err != nil {
+			return err
+		}
+		if released {
+			continue
+		}
 		var d MediaRemovalDefinition
 		if json.Unmarshal([]byte(row[1]), &d) != nil {
 			return ErrState

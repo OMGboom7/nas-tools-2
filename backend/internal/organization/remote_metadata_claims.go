@@ -33,19 +33,28 @@ func checkRemoteMetadataClaims(ctx context.Context, tx *sql.Tx, root, target, li
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_SCRAPE_JOBS') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_ORGANIZATION_JOBS')`).Scan(&exists); err != nil || !exists {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT s.ID,json_extract(j.DEFINITION,'$.targetRoot'),json_extract(o.value,'$.Proof.Target') FROM GO_SCRAPE_JOBS s JOIN GO_ORGANIZATION_JOBS j ON j.ID=s.JOB_ID JOIN json_each(s.OUTPUTS) o WHERE json_type(j.DEFINITION,'$.remote')='object' AND json_extract(o.value,'$.State') IN('writing','uncertain')`)
+	rows, err := recoveryRows(ctx, tx, `SELECT s.ID,json_extract(j.DEFINITION,'$.targetRoot'),json_extract(o.value,'$.Proof.Target') FROM GO_SCRAPE_JOBS s JOIN GO_ORGANIZATION_JOBS j ON j.ID=s.JOB_ID JOIN json_each(s.OUTPUTS) o WHERE json_type(j.DEFINITION,'$.remote')='object' AND json_extract(o.value,'$.State') IN('writing','uncertain')`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, otherRoot, otherTarget string
-		if err := rows.Scan(&id, &otherRoot, &otherTarget); err != nil {
-			return err
-		}
+	checked := map[string]bool{}
+	releasedOwners := map[string]bool{}
+	for _, row := range rows {
+		id, otherRoot, otherTarget := row[0], row[1], row[2]
 		if id != scrapeID && remoteMetadataKey(otherRoot, otherTarget) == key {
+			if !checked[id] {
+				checked[id] = true
+				released, err := reservationReleased(ctx, tx, "intake-scraper", id)
+				if err != nil {
+					return err
+				}
+				releasedOwners[id] = released
+			}
+			if releasedOwners[id] {
+				continue
+			}
 			return ErrClaimed
 		}
 	}
-	return rows.Err()
+	return nil
 }

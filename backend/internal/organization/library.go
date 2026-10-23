@@ -1,6 +1,7 @@
 package organization
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
@@ -68,6 +69,52 @@ type LibraryRemoteMedia struct {
 type LibraryRemoteOutput struct {
 	Driver, Operation, Manifest string
 	Old                         *remotestore.Node `json:",omitempty"`
+}
+
+func libraryRoot(roots []LibraryRoot, id string) (LibraryRoot, bool) {
+	for _, r := range roots {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return LibraryRoot{}, false
+}
+
+// InputRoot is a frozen root ID, not a filesystem path. Resolve it only against
+// the original job document, never current config or an offline filesystem.
+// Disc links retain independent input bindings, all of which are protected.
+func libraryProtectedLocations(d LibraryDefinition, m LibraryMedia) ([]string, error) {
+	locations := []string{}
+	if m.Path != "" {
+		if !filepath.IsAbs(d.Root.Path) || !validRelative(m.Path) {
+			return nil, ErrPath
+		}
+		locations = append(locations, filepath.Join(d.Root.Path, m.Path))
+	}
+	inputs := []LibraryMedia{m}
+	if m.Disc != nil {
+		if len(m.Disc.Files) > libraryDiscNodes {
+			return nil, ErrLimit
+		}
+		inputs = m.Disc.Files
+	}
+	for _, input := range inputs {
+		if input.InputRoot == "" && input.InputPath == "" {
+			continue
+		}
+		if !validRelative(input.InputPath) || input.InputPath == "." {
+			return nil, ErrPath
+		}
+		root, found := d.Root, input.InputRoot == d.Root.ID
+		if !found {
+			root, found = libraryRoot(d.Allowed, input.InputRoot)
+		}
+		if !found || !filepath.IsAbs(root.Path) {
+			return nil, ErrPath
+		}
+		locations = append(locations, filepath.Join(root.Path, input.InputPath))
+	}
+	return locations, nil
 }
 
 func LibraryMode(mode string) bool {

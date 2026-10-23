@@ -415,6 +415,19 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/organization/media-removals", organizer.serveMediaRemovalCreate)
 	mux.HandleFunc("GET /api/v1/organization/media-removals/{id}", organizer.serveMediaRemovalRecord)
 	mux.HandleFunc("POST /api/v1/organization/media-removals/{id}/{action}", organizer.serveMediaRemovalRecord)
+	mux.HandleFunc("GET /api/v1/organization/reservation-releases", organizer.serveReservationReleaseStatus)
+	mux.HandleFunc("POST /api/v1/organization/reservation-releases/preview", organizer.serveReservationReleasePreview)
+	mux.HandleFunc("POST /api/v1/organization/reservation-releases", organizer.serveReservationRelease)
+	mux.HandleFunc("GET /api/v1/organization/reservation-releases/{id}", organizer.serveReservationReleaseRecord)
+	// Unsupported native actions must not fall through to a generic Flask proxy.
+	reservationReleaseFallback := func(w http.ResponseWriter, r *http.Request) {
+		if !organizer.jobsAuthorized(w, r) {
+			return
+		}
+		writeAPIError(w, http.StatusMethodNotAllowed, 405, "unsupported native reservation-release method or action")
+	}
+	mux.HandleFunc("/api/v1/organization/reservation-releases", reservationReleaseFallback)
+	mux.HandleFunc("/api/v1/organization/reservation-releases/", reservationReleaseFallback)
 	mux.HandleFunc("POST /api/v1/organization/plan", organizer.servePlan)
 	mux.HandleFunc("GET /api/v1/organization/jobs", organizer.serveJobs)
 	mux.HandleFunc("POST /api/v1/organization/jobs", organizer.serveCreateJob)

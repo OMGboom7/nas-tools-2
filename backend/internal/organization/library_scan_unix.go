@@ -25,14 +25,6 @@ func libraryNode(parent *os.File, name string) (LibraryNode, uint32, error) {
 	}
 	return LibraryNode{Identity: statIdentity(st), Parent: Identity(pi), Size: st.Size, Modified: st.Mtim.Sec*1e9 + st.Mtim.Nsec, Changed: [2]int64{st.Ctim.Sec, st.Ctim.Nsec}, Links: uint64(st.Nlink)}, uint32(st.Mode) & unix.S_IFMT, nil
 }
-func libraryRoot(roots []LibraryRoot, id string) (LibraryRoot, bool) {
-	for _, r := range roots {
-		if r.ID == id {
-			return r, true
-		}
-	}
-	return LibraryRoot{}, false
-}
 func captureLibraryMedia(d LibraryDefinition, path string) (LibraryMedia, error) {
 	m := LibraryMedia{Path: path}
 	// Whole-disc intake has its own frozen directory proof. Bulk library
