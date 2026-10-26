@@ -89,11 +89,16 @@ func (service subscriptionService) openNativeSubscriptionDatabase(ctx context.Co
 	return database, nil
 }
 
-func readSubscriptionRows(ctx context.Context, database *sql.DB, table string) ([]map[string]any, error) {
+type subscriptionRowReader interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func readSubscriptionRows(ctx context.Context, database subscriptionRowReader, table string) ([]map[string]any, error) {
 	return querySubscriptionRows(ctx, database, table, "")
 }
 
-func readNativeSubscriptionRow(ctx context.Context, database *sql.DB, table string, id int64) (map[string]any, error) {
+func readNativeSubscriptionRow(ctx context.Context, database subscriptionRowReader, table string, id int64) (map[string]any, error) {
 	rows, err := querySubscriptionRows(ctx, database, table, " WHERE ID=?", id)
 	if err != nil || len(rows) == 0 {
 		return nil, err
@@ -102,7 +107,7 @@ func readNativeSubscriptionRow(ctx context.Context, database *sql.DB, table stri
 }
 
 // The table and predicate are fixed by internal callers, never request text.
-func querySubscriptionRows(ctx context.Context, database *sql.DB, table, predicate string, args ...any) ([]map[string]any, error) {
+func querySubscriptionRows(ctx context.Context, database subscriptionRowReader, table, predicate string, args ...any) ([]map[string]any, error) {
 	var exists int
 	if err := database.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)", table).Scan(&exists); err != nil {
 		return nil, err

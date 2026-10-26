@@ -14,13 +14,17 @@ type subscriptionSearchRunner struct {
 	mu      sync.Mutex
 	running map[string]bool
 	feeds   *subscriptionRSSAPI
+	fuzzy   *fuzzySubscriptionAPI
 }
 
 type subscriptionSearchRunResult struct {
-	Submitted int   `json:"submitted"`
-	Remaining []int `json:"remaining"`
-	Completed bool  `json:"completed"`
-	Uncertain bool  `json:"uncertain"`
+	Submitted int    `json:"submitted"`
+	Remaining []int  `json:"remaining"`
+	Completed bool   `json:"completed"`
+	Uncertain bool   `json:"uncertain"`
+	Queued    bool   `json:"queued,omitempty"`
+	Skipped   bool   `json:"skipped,omitempty"`
+	BatchID   string `json:"batchId,omitempty"`
 }
 
 func (api *subscriptionSearchRunner) serveCompatSearch(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +106,24 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 	defer func() { api.mu.Lock(); delete(api.running, key); api.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
 	defer cancel()
+	if provider != nil && api.fuzzy != nil {
+		service := api.planner.runner.recognition.service
+		db, err := service.openNativeSubscriptionDatabase(ctx)
+		if err != nil {
+			return fail(503, "subscription source unavailable")
+		}
+		raw, err := readNativeSubscriptionRow(ctx, db, subscriptionTable(kind), id)
+		db.Close()
+		if err != nil {
+			return fail(503, "subscription source unavailable")
+		}
+		if raw != nil && truthy(normalizeNativeSubscriptionRow(raw)["fuzzy_match"]) {
+			if state != "" && text(raw["STATE"]) != state {
+				return fail(409, "subscription scheduled state changed")
+			}
+			return api.fuzzy.automatic(ctx, kind, id, provider)
+		}
+	}
 	plan, failure := api.planner.planResources(ctx, kind, id, state, true, provider)
 	if failure != nil {
 		return result, failure

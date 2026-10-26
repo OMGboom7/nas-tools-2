@@ -77,6 +77,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitScraper := startIntakeScraper(workerContext, runner.scraper)
 		waitLibrary := startLibraryScraper(workerContext, runner.library)
 		waitMediaRefresh := startMediaRefreshWorker(workerContext, runner.mediaRefresh)
+		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -88,6 +89,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitScraper()
 			waitLibrary()
 			waitMediaRefresh()
+			waitFuzzy()
 		}
 	}
 	return handler, wait, nil
@@ -447,6 +449,15 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	subscriptionRunner := &subscriptionSearchRunner{planner: subscriptionSearchPlanner{runner: rssRunner, search: search.native}}
 	rssRunner.search = subscriptionRunner
 	subscriptionRunner.feeds = &subscriptionRSSAPI{runner: subscriptionRunner}
+	subscriptionRunner.fuzzy = &fuzzySubscriptionAPI{runner: subscriptionRunner, records: organizationRecords}
+	fuzzy := subscriptionRunner.fuzzy
+	mux.HandleFunc("GET /api/v1/fuzzy-subscriptions", fuzzy.statusHTTP)
+	mux.HandleFunc("GET /api/v1/fuzzy-subscriptions/{type}/{id}", fuzzy.sourceHTTP)
+	mux.HandleFunc("POST /api/v1/fuzzy-subscriptions/{type}/{id}/{action}", fuzzy.sourceHTTP)
+	mux.HandleFunc("GET /api/v1/fuzzy-subscriptions/jobs/{batch}", fuzzy.batchHTTP)
+	mux.HandleFunc("POST /api/v1/fuzzy-subscriptions/jobs/{batch}/{action}", fuzzy.batchHTTP)
+	mux.HandleFunc("/api/v1/fuzzy-subscriptions", fuzzy.fallback)
+	mux.HandleFunc("/api/v1/fuzzy-subscriptions/", fuzzy.fallback)
 	mux.HandleFunc("POST /api/v1/subscriptions/rss/run", subscriptionRunner.feeds.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/search/run", subscriptionRunner.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/{type}/{id}/reconcile", subscriptionRunner.serveReconcile)

@@ -16,6 +16,7 @@ import {
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { mediaDetailPath } from "../utils/mediaDetail";
 import { SubscriptionEditor } from "../components/SubscriptionEditor";
+import { FuzzySubscriptionManager } from "../components/FuzzySubscriptionManager";
 
 type SubscriptionsPageProps = {
   session: AuthSession;
@@ -40,6 +41,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   const [notice, setNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [editorItem, setEditorItem] = useState<SubscriptionItem | null | undefined>(undefined);
   const [options, setOptions] = useState<SubscriptionOptions | null>(null);
+  const [fuzzySelected,setFuzzySelected]=useState<{type:"MOV"|"TV";id:string;name:string}|null>(null);
 
   async function load(showLoading = false) {
     if (showLoading) setState({ kind: "loading" });
@@ -56,6 +58,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   }
 
   useEffect(() => { void load(true); }, [session.token]);
+  useEffect(()=>{setFuzzySelected(null)},[session.token]);
 
   const filtered = useMemo(() => {
     if (state.kind !== "ready") return { items: [] as SubscriptionItem[], history: [] as SubscriptionHistory[] };
@@ -144,6 +147,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
         </div>
 
         {notice && <div className={`subscription-notice is-${notice.kind}`} role="status">{notice.message}</div>}
+        <FuzzySubscriptionManager token={session.token} selected={fuzzySelected} onClose={()=>setFuzzySelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
         {state.kind === "loading" && <SubscriptionSkeleton />}
         {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>订阅数据暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load(true)}>重新加载</button></section>}
         {state.kind === "ready" && <>
@@ -152,7 +156,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
             <section className="subscription-section">
               <div className="section-heading"><div><p className="eyebrow">ACTIVE</p><h2>{mediaType === "MOV" ? "电影订阅" : "电视剧订阅"}</h2></div><span>{filtered.items.length} 项</span></div>
               {filtered.items.length === 0 ? <div className="inline-empty">当前筛选条件下没有订阅。</div> : <div className="subscription-grid">{filtered.items.map((item) => (
-                <SubscriptionCard key={`${item.type}-${item.id}`} item={item} busy={busy[`item-${item.type}-${item.id}`]} onNavigate={onNavigate} onEdit={() => void openEditor(item)} onAction={(action) => void handleItemAction(item, action)} />
+                <SubscriptionCard key={`${item.type}-${item.id}`} item={item} busy={busy[`item-${item.type}-${item.id}`]} onNavigate={onNavigate} onEdit={() => void openEditor(item)} onFuzzy={()=>setFuzzySelected({type:item.type,id:item.id,name:item.name})} onAction={(action) => void handleItemAction(item, action)} />
               ))}</div>}
             </section>
           ) : (
@@ -170,8 +174,8 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   );
 }
 
-function SubscriptionCard({ item, busy, onEdit, onAction, onNavigate }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onAction: (action: "refresh" | "remove" | "reconcile") => void; onNavigate: (path: string) => void }) {
-  const tags = [item.overEdition ? "洗版" : "", item.quality, item.resolution, item.releaseGroup, ...item.rssSites, ...item.searchSites].filter(Boolean);
+function SubscriptionCard({ item, busy, onEdit, onFuzzy, onAction, onNavigate }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onFuzzy:()=>void; onAction: (action: "refresh" | "remove" | "reconcile") => void; onNavigate: (path: string) => void }) {
+  const tags = [item.fuzzyMatch?"模糊 RSS":"",item.overEdition ? "洗版" : "", item.quality, item.resolution, item.releaseGroup, ...item.rssSites, ...item.searchSites].filter(Boolean);
   return <article className="subscription-card">
     <div className="subscription-art"><strong>{item.name.slice(0, 1)}</strong>{item.image && <img src={item.image} alt={`${item.name} 海报`} loading="lazy" />}</div>
     <div className="subscription-card__body">
@@ -180,7 +184,7 @@ function SubscriptionCard({ item, busy, onEdit, onAction, onNavigate }: { item: 
       {tags.length > 0 && <div className="subscription-tags">{tags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div>}
       {item.pendingSubmission && <small>上次提交结果待核实，请先核对下载器任务；核实不会重新提交下载。</small>}
       {mediaDetailPath(item.type, item.tmdbId) && <button type="button" className="text-button" onClick={() => onNavigate(mediaDetailPath(item.type, item.tmdbId)!)}>查看媒体详情与季集</button>}
-      <div className="subscription-actions"><button type="button" disabled={busy} onClick={onEdit}>编辑</button>{item.pendingSubmission ? <button type="button" disabled={busy} onClick={() => onAction("reconcile")}>{busy ? "核实中…" : "核实提交"}</button> : <button type="button" disabled={busy} onClick={() => onAction("refresh")}>{busy ? "处理中…" : "立即搜索"}</button>}<button type="button" className="is-danger" disabled={busy} onClick={() => onAction("remove")}>删除</button></div>
+      <div className="subscription-actions"><button type="button" disabled={busy} onClick={onEdit}>编辑</button>{item.fuzzyMatch?<button type="button" disabled={busy} onClick={onFuzzy}>模糊 RSS 授权与回执</button>:item.pendingSubmission ? <button type="button" disabled={busy} onClick={() => onAction("reconcile")}>{busy ? "核实中…" : "核实提交"}</button> : <button type="button" disabled={busy} onClick={() => onAction("refresh")}>{busy ? "处理中…" : "立即搜索"}</button>}<button type="button" className="is-danger" disabled={busy} onClick={() => onAction("remove")}>删除</button></div>
     </div>
   </article>;
 }

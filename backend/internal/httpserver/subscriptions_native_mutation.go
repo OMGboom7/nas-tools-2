@@ -112,6 +112,11 @@ func (service subscriptionService) removeNativeSubscription(ctx context.Context,
 	if exists == 0 {
 		return sql.ErrNoRows
 	}
+	if !history {
+		if err := revokeFuzzyGrantTx(ctx, transaction, kind, id); err != nil {
+			return err
+		}
+	}
 	if table == "RSS_TVS" {
 		if err := removeNativeTVEpisodes(ctx, transaction, id); err != nil {
 			return err
@@ -172,12 +177,18 @@ func (service subscriptionService) removeNativeSubscriptionBySelector(ctx contex
 	defer transaction.Rollback()
 	if kind == "MOV" {
 		if tmdbID != "" {
+			if err := revokeFuzzySelectedTx(ctx, transaction, "MOV", "TMDBID=?", tmdbID); err != nil {
+				return err
+			}
 			if _, err := transaction.ExecContext(ctx, "DELETE FROM RSS_MOVIES WHERE TMDBID=?", tmdbID); err != nil {
 				return err
 			}
 		}
 		if year == "" {
 			year = "None" // Python's str(None) in the old movie selector.
+		}
+		if err := revokeFuzzySelectedTx(ctx, transaction, "MOV", "NAME=? AND YEAR=?", name, year); err != nil {
+			return err
 		}
 		if _, err := transaction.ExecContext(ctx, "DELETE FROM RSS_MOVIES WHERE NAME=? AND YEAR=?", name, year); err != nil {
 			return err
@@ -225,6 +236,9 @@ func (service subscriptionService) removeNativeSubscriptionBySelector(ctx contex
 	}
 	if id == 0 {
 		return transaction.Commit()
+	}
+	if err := revokeFuzzyGrantTx(ctx, transaction, "TV", id); err != nil {
+		return err
 	}
 	if err := removeNativeTVEpisodes(ctx, transaction, id); err != nil {
 		return err

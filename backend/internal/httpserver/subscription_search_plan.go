@@ -28,6 +28,7 @@ type subscriptionSearchPlan struct {
 	season, total   int
 	storedMissing   []int
 	needed          []int
+	fuzzy           bool
 }
 
 func (api subscriptionSearchPlanner) serveHTTP(w http.ResponseWriter, r *http.Request) {

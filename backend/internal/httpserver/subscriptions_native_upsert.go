@@ -205,6 +205,9 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 			return 0, err
 		}
 	}
+	if err := revokeFuzzyGrantTx(ctx, transaction, input.Type, id); err != nil {
+		return 0, err
+	}
 	return id, nil
 }
 

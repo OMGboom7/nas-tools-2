@@ -26,6 +26,8 @@ type subscriptionRSSResult struct {
 	Submitted     int                      `json:"submitted"`
 	Completed     int                      `json:"completed"`
 	Failed        int                      `json:"failed"`
+	Queued        int                      `json:"queued,omitempty"`
+	Skipped       int                      `json:"skipped,omitempty"`
 	Failures      []subscriptionRSSFailure `json:"failures,omitempty"`
 }
 
@@ -124,6 +126,12 @@ func (api *subscriptionRSSAPI) execute(ctx context.Context) (subscriptionRSSResu
 			resultMu.Lock()
 			defer resultMu.Unlock()
 			result.Submitted += item.Submitted
+			if item.Queued {
+				result.Queued++
+			}
+			if item.Skipped {
+				result.Skipped++
+			}
 			if item.Completed {
 				result.Completed++
 			}
@@ -339,6 +347,22 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 		return fail(err)
 	}
 	defer db.Close()
+	fuzzy := mediaID == "" && truthy(normalizeNativeSubscriptionRow(raw)["fuzzy_match"])
+	var fuzzyMatcher *fuzzySubscriptionMatcher
+	if fuzzy {
+		groups, err := service.filters.List(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		code := "MOV"
+		if kind == "tv" {
+			code = "TV"
+		}
+		fuzzyMatcher, err = newFuzzyMatcher(raw, code, "", groups)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	identified := []identifiedSubscriptionResource{}
 	count := 0
 	for _, site := range sites {
@@ -358,19 +382,34 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 			if ctx.Err() != nil {
 				return fail(ctx.Err())
 			}
-			var processed bool
-			if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM RSS_TORRENTS WHERE ENCLOSURE=?) OR EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=?)`, resource.DownloadURL, subscriptionResourceKey(resource.DownloadURL)).Scan(&processed); err != nil {
+			processed, err := subscriptionRSSProcessed(ctx, db, resource.DownloadURL)
+			if err != nil {
 				return fail(err)
 			}
 			if processed {
 				continue
 			}
-			result, failure := batch.api.runner.planner.runner.recognition.recognizeKind(ctx, resource.Title, resource.Description, kind)
+			var result *nativeRecognition
+			var failure *recognitionFailure
+			if fuzzy {
+				result, failure = batch.api.runner.planner.runner.recognition.recognizeFuzzy(ctx, resource.Title, resource.Description)
+			} else {
+				result, failure = batch.api.runner.planner.runner.recognition.recognizeKind(ctx, resource.Title, resource.Description, kind)
+			}
 			if failure != nil {
 				return nil, failure
 			}
-			if result == nil || strconv.FormatInt(result.detail.ID, 10) != mediaID {
+			if result == nil || !fuzzy && strconv.FormatInt(result.detail.ID, 10) != mediaID {
 				continue
+			}
+			if fuzzy {
+				matched, err := fuzzyMatcher.identity(ctx, identifiedSubscriptionResource{meta: result.meta, revised: text(result.data["rev_string"]), subtitle: result.subtitle})
+				if err != nil {
+					return fail(err)
+				}
+				if !matched {
+					continue
+				}
 			}
 			if text(note["parse"]) == "Y" || truthy(note["parse"]) {
 				batch.catalogOnce.Do(func() { batch.catalog, batch.catalogErr = indexercatalog.Load(service.catalogPath) })
@@ -400,4 +439,25 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 		}
 	}
 	return identified, nil
+}
+func subscriptionRSSProcessed(ctx context.Context, r subscriptionRowReader, url string) (bool, error) {
+	for _, entry := range []struct{ table, column, value string }{
+		{"RSS_TORRENTS", "ENCLOSURE", url}, {"GO_RSS_DOWNLOAD_CLAIMS", "RESOURCE_KEY", subscriptionResourceKey(url)},
+	} {
+		yes, err := fuzzyTable(ctx, r, entry.table)
+		if err != nil {
+			return false, err
+		}
+		if !yes {
+			continue
+		}
+		var found bool
+		if err := r.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+entry.table+" WHERE "+entry.column+"=?)", entry.value).Scan(&found); err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
 }

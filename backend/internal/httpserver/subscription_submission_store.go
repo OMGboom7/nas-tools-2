@@ -22,7 +22,7 @@ var errSubscriptionSubmissionConflict = errors.New("subscription submission conf
 
 // Older databases have no native ledger yet. A present ledger with missing
 // shared claims is an error, not proof that an uncertain submission is absent.
-func readPendingSubscriptionSubmission(ctx context.Context, db *sql.DB, kind string, id int64) (bool, error) {
+func readPendingSubscriptionSubmission(ctx context.Context, db subscriptionRowReader, kind string, id int64) (bool, error) {
 	var exists bool
 	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_SUBSCRIPTION_DOWNLOAD_CLAIMS')`).Scan(&exists); err != nil {
 		return false, err
@@ -67,6 +67,9 @@ func ensureSubscriptionSubmissionSchema(ctx context.Context, tx *sql.Tx) error {
 // Compare all columns, including unknown user fields. The snapshot is read
 // before external lookups; edits, deletion and metadata refresh invalidate it.
 func verifySubscriptionSnapshot(ctx context.Context, tx *sql.Tx, kind string, id int64, plan subscriptionSearchPlan) error {
+	if plan.fuzzy {
+		return verifyFuzzySource(ctx, tx, kind, id, plan.raw)
+	}
 	keys := make([]string, 0, len(plan.raw))
 	for key := range plan.raw {
 		keys = append(keys, key)
@@ -84,7 +87,7 @@ func verifySubscriptionSnapshot(ctx context.Context, tx *sql.Tx, kind string, id
 	if !found {
 		return errSubscriptionSubmissionConflict
 	}
-	if kind == "TV" {
+	if kind == "TV" && !plan.fuzzy {
 		total, e1 := strconv.Atoi(text(plan.raw["TOTAL"]))
 		lack, e2 := strconv.Atoi(text(plan.raw["LACK"]))
 		if e1 != nil || e2 != nil {
@@ -118,6 +121,16 @@ func (service subscriptionService) reserveSubscriptionSubmission(ctx context.Con
 		return "", err
 	}
 	defer tx.Rollback()
+	token, err := reserveSubscriptionSubmissionTx(ctx, tx, kind, id, plan, candidate, proofs...)
+	if err != nil {
+		return "", err
+	}
+	return token, tx.Commit()
+}
+
+// Fuzzy batches commit their own item intent and this shared reservation in
+// one transaction. Exact subscriptions retain the original wrapper above.
+func reserveSubscriptionSubmissionTx(ctx context.Context, tx *sql.Tx, kind string, id int64, plan subscriptionSearchPlan, candidate subscriptionCandidate, proofs ...subscriptionSubmissionProof) (string, error) {
 	if err := ensureSubscriptionSubmissionSchema(ctx, tx); err != nil {
 		return "", err
 	}
@@ -174,7 +187,7 @@ func (service subscriptionService) reserveSubscriptionSubmission(ctx context.Con
 			return "", err
 		}
 	}
-	return token, tx.Commit()
+	return token, nil
 }
 
 func (service subscriptionService) releaseSubscriptionSubmission(ctx context.Context, raw, owner string) error {

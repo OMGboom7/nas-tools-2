@@ -988,3 +988,15 @@ a.nav-item:hover { color: #d9e5f2; background: #101e31; }
 .media-refresh-fields { display: grid; gap: 12px; margin: 20px 0; }
 @media (max-width: 720px) { .media-refresh-panel { padding: 16px; } }
 @media (max-width: 720px) { .organization-preview { margin: 12px; padding: 16px; } .organization-preview form { grid-template-columns: 1fr; } }
+.fuzzy-subscription-panel { margin: 1.25rem 0; padding: 1.2rem; border: 1px solid var(--border, #263143); border-radius: 14px; background: var(--panel, #111a26); overflow-wrap: anywhere; }
+.fuzzy-subscription-panel section { margin-top: 1rem; padding: 1rem; border: 1px solid var(--border, #263143); border-radius: 10px; }
+.fuzzy-subscription-panel p { line-height: 1.7; color: var(--muted, #b2bdcd); }
+.fuzzy-subscription-panel fieldset { display: grid; gap: .7rem; margin: .9rem 0; border: 1px solid var(--border, #263143); border-radius: 8px; }
+.fuzzy-subscription-panel label { display: block; margin: .65rem 0; line-height: 1.65; }
+.fuzzy-subscription-panel input:not([type="checkbox"]) { display: block; width: 100%; margin-top: .4rem; padding: .7rem; color: inherit; background: #0b1320; border: 1px solid #334155; border-radius: 6px; }
+.fuzzy-subscription-panel input[type="checkbox"] { margin-right: .5rem; accent-color: #5ed3aa; }
+.fuzzy-subscription-panel button { margin: .35rem .5rem .35rem 0; padding: .6rem .8rem; border: 1px solid #36544d; border-radius: 7px; background: #12342e; color: #c5f4e7; cursor: pointer; }
+.fuzzy-subscription-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.fuzzy-subscription-panel details { margin: .8rem 0; padding: .7rem; border: 1px solid #2a3a4a; border-radius: 8px; }
+.fuzzy-subscription-panel details > ol,.fuzzy-subscription-panel details > ul { max-height: 26rem; overflow: auto; padding-left: 1.5rem; }
+.fuzzy-subscription-panel li { margin: .55rem 0; line-height: 1.65; }

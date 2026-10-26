@@ -35,6 +35,33 @@ func (service subscriptionService) serveNativeSubscriptionHistoryRedo(response h
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
 	defer cancel()
+	request.Body = http.MaxBytesReader(response, request.Body, 8<<10)
+	if request.ParseForm() != nil {
+		writeAPIError(response, 400, 400, "invalid history request")
+		return
+	}
+	batch, lookupErr := service.fuzzyHistoryBatch(ctx, kind, id)
+	if lookupErr != nil {
+		writeAPIError(response, 409, 409, "original fuzzy history linkage could not be established")
+		return
+	}
+	if batch != "" {
+		requestID := request.PostForm.Get("request_id")
+		if requestID == "" {
+			requestID = fuzzyDigest([]any{"legacy-fuzzy-history-restore", batch, id})[:32]
+		}
+		created, err := restoreFuzzyRule(ctx, service, batch, requestID, id)
+		if errors.Is(err, errSubscriptionAlreadyExists) {
+			writeJSON(response, 409, map[string]any{"code": 9, "success": false, "message": "订阅已存在"})
+			return
+		}
+		if err != nil {
+			writeAPIError(response, 409, 409, "original fuzzy rule could not be restored without overwriting current data")
+			return
+		}
+		writeJSON(response, 200, map[string]any{"code": 0, "success": true, "message": "原模糊规则已恢复，执行授权保持关闭", "data": map[string]any{"id": strconv.FormatInt(created, 10)}})
+		return
+	}
 	input, err := service.nativeHistorySubscriptionInput(ctx, kind, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

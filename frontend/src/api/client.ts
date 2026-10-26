@@ -1256,11 +1256,16 @@ export async function controlSubscription(token: string, type: "MOV" | "TV", id:
 }
 
 export async function controlSubscriptionHistory(token: string, type: "MOV" | "TV", id: string, action: "redo" | "remove"): Promise<void> {
-  await subscriptionMutation(token, `/api/v1/subscriptions/history/${type}/${encodeURIComponent(id)}/${action}`);
+  await subscriptionMutation(token, `/api/v1/subscriptions/history/${type}/${encodeURIComponent(id)}/${action}`, action==="redo" ? new URLSearchParams({request_id:createOperationId()}) : undefined);
 }
 
-async function subscriptionMutation<T = Record<string, never>>(token: string, path: string): Promise<T | undefined> {
-  const response = await fetch(path, { method: "POST", headers: { Authorization: token } });
+export function createOperationId():string {
+  const bytes=new Uint8Array(16);globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes,v=>v.toString(16).padStart(2,"0")).join("");
+}
+
+async function subscriptionMutation<T = Record<string, never>>(token: string, path: string, body?:URLSearchParams): Promise<T | undefined> {
+  const response = await fetch(path, { method: "POST", headers: body ? { Authorization: token,"Content-Type":"application/x-www-form-urlencoded" } : { Authorization: token },...(body?{body}: {}) });
   const result = await readResponse<T>(response);
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "订阅操作失败", result.code);
   return result.data;
