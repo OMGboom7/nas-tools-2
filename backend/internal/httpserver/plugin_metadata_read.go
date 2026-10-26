@@ -84,13 +84,28 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeMediaRefresh(id) {
+				actor, ok := service.mediaRefresh.authorize(response, request)
+				if !ok {
+					return
+				}
+				state, err := service.mediaRefresh.read(request.Context())
+				if err != nil {
+					mediaRefreshError(response, err)
+					return
+				}
+				detail := service.mediaRefresh.pluginDetail(state.raw, state.values, actor)
+				running, known := service.mediaRefreshSummary(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeLibrary(id) {
 				if !service.library.authorize(response, request) {
 					return

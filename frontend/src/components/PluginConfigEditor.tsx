@@ -92,6 +92,7 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
       if (saveError instanceof ApiError && saveError.code === 401) return onSessionExpired();
       setError(saveError instanceof Error ? saveError.message : "插件配置保存失败");
       if(plugin.id==="LibraryScraper")setValues(current=>({...current,go_confirm:false,go_old_stopped:false,go_overwrite:false,go_stop:false,onlyonce:false}));
+      if(plugin.id==="LibraryRefresh")setValues(current=>({...current,go_confirm:false,go_old_stopped:false,go_scan:false,...("go_plex_login" in current?{go_plex_login:false,go_plex_http:false}:{})}));
     } finally {
       if(version===generation.current){inFlight.current=false;setSaving(false);}
     }
@@ -104,6 +105,7 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
     {state.kind === "ready" && state.detail.fields.length === 0 && <div className="inline-empty">这个插件不需要配置。</div>}
     {state.kind === "ready" && sections.map(([section, fields]) => <fieldset disabled={saving} className="plugin-config-section" key={section}><legend>{section}</legend><div className="plugin-config-grid">{fields.map((field) => <PluginField key={field.key} field={field} value={values[field.key]} secret={secrets[field.key] || ""} clearing={clearConfig.has(field.key)} onValue={(value) => setValue(field.key, value)} onSecret={(value) => setSecret(field.key, value)} onClear={(checked) => toggleClear(field.key, checked)} onMulti={(option, checked) => toggleMulti(field.key, option, checked)} />)}</div></fieldset>)}
     {state.kind==="ready" && plugin.id==="LibraryScraper" && <p className="editor-note">周期授权会扫描所选媒体库未来新增的文件；强制模式会保留占磁盘的原文件备份，备份不自动删除。保存或停用将停止旧任务后续写入。响应丢失不自动重试，请先只读刷新核查。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新并重置确认</button></p>}
+    {state.kind==="ready"&&plugin.id==="LibraryRefresh"&&<p className="editor-note">启用会授权当前媒体服务器接收未来的新原生入库事件，可能回退整库扫描并改变服务器元数据；不接管历史待办。所有确认每次重新勾选，停用不能撤回已经接收的扫描。响应丢失请先只读刷新，不要重新提交。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新并重置确认</button></p>}
     {state.kind === "ready" && <p className="editor-note">文本、路径、地址和凭据均按只写字段处理：已保存内容不会回显；留空表示保留原值。插件提供的动态脚本和事件处理器不会在此页面执行。</p>}
     {error && <p className="form-error plugin-config-error" role="alert">{error}</p>}
     <footer><button type="button" className="secondary-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={saving || state.kind !== "ready" || state.detail.fields.length === 0}>{saving ? "保存并重载中…" : "保存并重载插件"}</button></footer>

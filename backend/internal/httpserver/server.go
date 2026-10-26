@@ -76,6 +76,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSubtitles := startSubtitleWorker(workerContext, runner.subtitles)
 		waitScraper := startIntakeScraper(workerContext, runner.scraper)
 		waitLibrary := startLibraryScraper(workerContext, runner.library)
+		waitMediaRefresh := startMediaRefreshWorker(workerContext, runner.mediaRefresh)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -86,6 +87,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitSubtitles()
 			waitScraper()
 			waitLibrary()
+			waitMediaRefresh()
 		}
 	}
 	return handler, wait, nil
@@ -546,6 +548,26 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	nativeMediaRefresh := &mediaRefreshAPI{organizer: &organizer, system: nativeSystemConfig, connection: mediaSync}
+	if organizationRecords != nil {
+		nativeMediaRefresh.queue = organizationRecords.MediaRefresh()
+	}
+	if nativeSystemConfig != nil {
+		plugins.mediaRefresh = nativeMediaRefresh
+	}
+	rssRunner.mediaRefresh = nativeMediaRefresh
+	mux.HandleFunc("GET /api/v1/library/refresh", nativeMediaRefresh.status)
+	mux.HandleFunc("POST /api/v1/library/refresh/{action}", nativeMediaRefresh.manual)
+	mux.HandleFunc("GET /api/v1/library/refresh/jobs/{id}", nativeMediaRefresh.record)
+	mux.HandleFunc("POST /api/v1/library/refresh/jobs/{id}/stop", nativeMediaRefresh.stop)
+	mediaRefreshFallback := func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := nativeMediaRefresh.authorize(w, r); !ok {
+			return
+		}
+		writeAPIError(w, 405, 405, "unsupported native media refresh method or action")
+	}
+	mux.HandleFunc("/api/v1/library/refresh", mediaRefreshFallback)
+	mux.HandleFunc("/api/v1/library/refresh/", mediaRefreshFallback)
 	nativeScraper := &intakeScraper{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	rssRunner.scraper = nativeScraper
 	nativeLibrary := &libraryScraper{intake: nativeScraper}
@@ -622,7 +644,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		})
 	}
 
-	var handler http.Handler = mux
+	var handler http.Handler = nativeMediaRefresh.reservePlugin(mux)
 	if nativeAuth != nil {
 		handler = nativeAuth.protectAPI(handler)
 	}

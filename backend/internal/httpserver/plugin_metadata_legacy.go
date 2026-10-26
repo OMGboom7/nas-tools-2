@@ -29,6 +29,15 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			writeAPIError(response, 400, 400, "invalid plugin id")
 			return
 		}
+		if service.nativeMediaRefresh(id) {
+			probe.SetPathValue("id", id)
+			nativeAction := action
+			if action == "config" {
+				nativeAction = "legacy-save"
+			}
+			service.serveMediaRefreshPlugin(response, probe, nativeAction)
+			return
+		}
 		if service.nativeHosts(id) {
 			probe.SetPathValue("id", id)
 			service.serveHostsPlugin(response, probe, action)

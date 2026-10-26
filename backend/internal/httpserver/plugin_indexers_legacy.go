@@ -49,6 +49,11 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeMediaRefresh(id) {
+			probe.SetPathValue("id", id)
+			s.serveMediaRefreshPlugin(w, probe, "page")
+			return
+		}
 		if s.nativeLibrary(id) {
 			probe.SetPathValue("id", id)
 			s.serveLibraryPlugin(w, probe, "page")

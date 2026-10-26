@@ -21,6 +21,7 @@ import (
 
 type rssRunAPI struct {
 	library        *libraryScraper
+	mediaRefresh   *mediaRefreshAPI
 	scraper        *intakeScraper
 	subtitles      *subtitleAPI
 	indexerPlugins *nativeIndexerPlugins

@@ -9,11 +9,73 @@ import (
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
 	"github.com/0xforee/nas-tools/backend/internal/subtitles"
 )
 
-func (s *Store) BusinessEvents() *bus.Store  { return bus.New(s.db) }
-func (s *Store) Subtitles() *subtitles.Store { return subtitles.New(s.db) }
+func (s *Store) BusinessEvents() *bus.Store              { return bus.New(s.db) }
+func (s *Store) Subtitles() *subtitles.Store             { return subtitles.New(s.db) }
+func (s *Store) MediaRefresh() *mediaserver.RefreshStore { return mediaserver.NewRefreshStore(s.db) }
+
+func mediaRefreshItems(d Definition) []mediaserver.RefreshItem {
+	items := []mediaserver.RefreshItem{}
+	for _, e := range d.Entries {
+		if e.Kind != "media" {
+			continue
+		}
+		kind := e.MediaType
+		switch kind {
+		case "电影":
+			kind = "MOV"
+		case "电视剧":
+			kind = "TV"
+		case "动漫":
+			kind = "ANIME"
+		}
+		items = append(items, mediaserver.RefreshItem{Title: e.Title, Year: e.Year, Type: kind, TMDBID: e.TMDBID, Category: e.Category, TargetRoot: d.TargetRoot, TargetPath: filepath.ToSlash(filepath.Join(d.TargetRoot, e.Target)), Directory: IsDisc(e)})
+	}
+	return items
+}
+
+// An explicit old-event refresh is derived from the saved successful native
+// event, never from client-uploaded paths or a rendered notification sentence.
+func (s *Store) MediaRefreshSource(ctx context.Context, id string) ([]mediaserver.RefreshItem, error) {
+	if !recoveryHex(id, 32) {
+		return nil, ErrPath
+	}
+	yes, err := recoveryTable(ctx, s.db, "GO_BUSINESS_EVENTS")
+	if err != nil {
+		return nil, err
+	}
+	if !yes {
+		return nil, ErrNotFound
+	}
+	var exists bool
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_BUSINESS_EVENTS WHERE ID=? AND KIND='transfer_finished' AND REFERENCE=?)`, bus.Hash([]string{"transfer_finished", id}), id).Scan(&exists)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+	job, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(job.Items) != len(job.Definition.Entries) || job.Definition.Sync != nil && job.Definition.Sync.Record.Rename == 0 {
+		return nil, ErrState
+	}
+	for _, item := range job.Items {
+		if item.State != "completed" || item.Reason != "" {
+			return nil, ErrState
+		}
+	}
+	items := mediaRefreshItems(job.Definition)
+	if !mediaserver.ValidRefreshItems(items) {
+		return nil, ErrState
+	}
+	return items, nil
+}
 func SubtitleOriginDigest(job Job, item JobItem) string {
 	return Digest([]any{job.Definition, item.Index, item.Proof.Identity, item.Proof.ParentIdentity, item.Proof.Digest, item.Proof.Kind, item.Proof.LinkTarget})
 }
@@ -84,5 +146,8 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 		title = fmt.Sprintf("整理完成：%d 个媒体文件", len(lines))
 	}
 	body := fmt.Sprintf("来自：%s；方式：%s；媒体大小：%d 字节\n%s\n任务：%s", origin, ModeLabel(d.Mode), size, strings.Join(lines, "\n"), id)
-	return bus.Emit(ctx, tx, "transfer_finished", id, id, title, body)
+	if err := bus.Emit(ctx, tx, "transfer_finished", id, id, title, body); err != nil {
+		return err
+	}
+	return mediaserver.EnqueueTransferRefresh(ctx, tx, id, mediaRefreshItems(d))
 }

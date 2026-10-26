@@ -1519,6 +1519,8 @@ export async function getPluginConfig(token: string, id: string): Promise<Plugin
 }
 
 export async function savePluginConfig(token: string, id: string, input: PluginConfigInput): Promise<void> {
+  if(id==="LibraryRefresh"&&(!/^[a-f0-9]{64}$/.test(input.fingerprint||"")||input.values.enable===true&&(!input.values.go_confirm||!input.values.go_old_stopped||!input.values.go_scan)))throw new ApiError("请只读刷新媒体服务器刷新配置，并分别确认后台授权、旧执行器已停止及扫描影响",400);
+  if(id==="LibraryRefresh"&&input.values.enable===true&&"go_plex_login" in input.values&&input.values.go_plex_login!==true)throw new ApiError("原 Plex 账户模式需要独立确认仅向 plex.tv 登录及发现指定服务器",400);
   if (id === "LibraryScraper" && !/^[a-f0-9]{64}$/.test(input.fingerprint || "")) throw new ApiError("请只读刷新媒体库刮削配置后再明确授权", 400);
   const response = await fetch(`/api/v1/plugins/${encodeURIComponent(id)}`, {
     method: "PUT",
