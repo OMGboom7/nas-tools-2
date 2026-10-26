@@ -19,10 +19,12 @@ type subscriptionSearchPlanner struct {
 type subscriptionResourceProvider func(context.Context, map[string]any, string, string) ([]identifiedSubscriptionResource, *recognitionFailure)
 
 type subscriptionSearchPlan struct {
-	Candidates      []subscriptionCandidate `json:"candidates"`
-	Remaining       []int                   `json:"remaining"`
-	LibraryComplete bool                    `json:"libraryComplete"`
-	Fetched         int                     `json:"fetched"`
+	Candidates      []subscriptionCandidate  `json:"candidates"`
+	Remaining       []int                    `json:"remaining"`
+	LibraryComplete bool                     `json:"libraryComplete"`
+	Fetched         int                      `json:"fetched"`
+	Upgrade         *subscriptionEditionView `json:"upgrade,omitempty"`
+	edition         *subscriptionEditionSnapshot
 	raw             map[string]any
 	mediaID         string
 	season, total   int
@@ -102,6 +104,13 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 		return fail(404, "subscription is unavailable")
 	}
 	item := normalizeNativeSubscriptionRow(raw)
+	if truthy(item["over_edition"]) && !truthy(item["fuzzy_match"]) {
+		raw, err = readFuzzySourceRow(ctx, db, kind, id)
+		if err != nil || raw == nil {
+			return fail(503, "typed edition source is unavailable")
+		}
+		item = normalizeNativeSubscriptionRow(raw)
+	}
 	plan.raw = raw
 	if expectedState != "" && text(raw["STATE"]) != expectedState {
 		return fail(409, "subscription scheduled state changed")
@@ -115,8 +124,8 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 			return fail(409, "subscription submission requires verification before retrying")
 		}
 	}
-	if truthy(item["fuzzy_match"]) || truthy(item["over_edition"]) {
-		return fail(501, "fuzzy/edition-upgrade subscription planning is not migrated")
+	if truthy(item["fuzzy_match"]) {
+		return fail(501, "fuzzy subscriptions use their independently authorized RSS batch flow")
 	}
 	input := subscriptionUpsertRequest{Name: text(item["name"]), Year: text(item["year"]), Type: kind, MediaID: text(item["tmdbid"]), Season: text(item["season"])}
 	if kind == "TV" && input.Season == "" {
@@ -184,29 +193,36 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 		plan.season, plan.total = selection.Season, selection.Total
 		plan.storedMissing = append([]int{}, selection.Missing...)
 	}
-	coverage, err := service.nativeMediaExistence(ctx, meta, detail, mediaKind)
-	if err != nil {
-		return fail(503, "subscription inventory could not be verified")
-	}
-	plan.LibraryComplete = coverage.Complete
-	if coverage.Complete {
-		return plan, nil
-	}
-	if kind == "TV" {
-		libraryMissing := map[int]bool{}
-		for _, n := range coverage.Missing[selection.Season] {
-			libraryMissing[n] = true
+	upgrade := truthy(item["over_edition"])
+	if upgrade {
+		if err := prepareEdition(ctx, db, service, kind, id, &plan, &selection); err != nil {
+			return fail(409, "original edition cycle, rules or configuration changed; inspect the saved cycle before execution")
 		}
-		intersection := []int{}
-		for _, n := range selection.Missing {
-			if libraryMissing[n] {
-				intersection = append(intersection, n)
-			}
+	} else {
+		coverage, err := service.nativeMediaExistence(ctx, meta, detail, mediaKind)
+		if err != nil {
+			return fail(503, "subscription inventory could not be verified")
 		}
-		selection.Missing = intersection
-		plan.needed = append([]int{}, intersection...)
-		if len(selection.Missing) == 0 {
+		plan.LibraryComplete = coverage.Complete
+		if coverage.Complete {
 			return plan, nil
+		}
+		if kind == "TV" {
+			libraryMissing := map[int]bool{}
+			for _, n := range coverage.Missing[selection.Season] {
+				libraryMissing[n] = true
+			}
+			intersection := []int{}
+			for _, n := range selection.Missing {
+				if libraryMissing[n] {
+					intersection = append(intersection, n)
+				}
+			}
+			selection.Missing = intersection
+			plan.needed = append([]int{}, intersection...)
+			if len(selection.Missing) == 0 {
+				return plan, nil
+			}
 		}
 	}
 	groups, err := api.runner.filters.List(ctx)
@@ -225,6 +241,9 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 		plan.Candidates, plan.Remaining, err = planSubscriptionCandidates(ctx, selection, groups, identified)
 		if err != nil {
 			return fail(422, "subscription RSS candidate planning failed")
+		}
+		if finishEditionPlan(&plan) != nil {
+			return fail(422, "edition rule priorities could not be verified")
 		}
 		return plan, nil
 	}
@@ -254,6 +273,15 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 	plan.Fetched = len(resources)
 	identified := []identifiedSubscriptionResource{}
 	for _, resource := range resources {
+		if upgrade {
+			processed, err := subscriptionRSSProcessed(ctx, db, resource.DownloadURL)
+			if err != nil {
+				return fail(503, "edition submission ledger could not be verified")
+			}
+			if processed {
+				continue
+			}
+		}
 		result, failure := api.runner.recognition.recognizeKind(ctx, resource.Title, resource.Description, mediaKind)
 		if failure != nil {
 			return plan, failure
@@ -266,6 +294,9 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 	plan.Candidates, plan.Remaining, err = planSubscriptionCandidates(ctx, selection, groups, identified)
 	if err != nil {
 		return fail(422, "subscription candidate planning failed")
+	}
+	if finishEditionPlan(&plan) != nil {
+		return fail(422, "edition rule priorities could not be verified")
 	}
 	return plan, nil
 }

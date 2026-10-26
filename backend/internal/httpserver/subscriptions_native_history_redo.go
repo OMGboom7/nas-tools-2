@@ -62,6 +62,19 @@ func (service subscriptionService) serveNativeSubscriptionHistoryRedo(response h
 		writeJSON(response, 200, map[string]any{"code": 0, "success": true, "message": "原模糊规则已恢复，执行授权保持关闭", "data": map[string]any{"id": strconv.FormatInt(created, 10)}})
 		return
 	}
+	created, handled, restoreErr := service.restoreEditionHistory(ctx, kind, id, request.PostForm.Get("request_id"))
+	if handled || restoreErr != nil {
+		if errors.Is(restoreErr, errSubscriptionAlreadyExists) {
+			writeJSON(response, 409, map[string]any{"code": 9, "success": false, "message": "订阅已存在"})
+			return
+		}
+		if restoreErr != nil {
+			writeAPIError(response, 409, 409, "original edition rule could not be restored without overwriting current data")
+			return
+		}
+		writeJSON(response, 200, map[string]any{"code": 0, "success": true, "message": "原洗版订阅配置已恢复并排队，未直接提交下载", "data": map[string]any{"id": strconv.FormatInt(created, 10)}})
+		return
+	}
 	input, err := service.nativeHistorySubscriptionInput(ctx, kind, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

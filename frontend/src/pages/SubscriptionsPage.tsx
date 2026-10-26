@@ -17,6 +17,7 @@ import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { mediaDetailPath } from "../utils/mediaDetail";
 import { SubscriptionEditor } from "../components/SubscriptionEditor";
 import { FuzzySubscriptionManager } from "../components/FuzzySubscriptionManager";
+import {SubscriptionEditionManager} from "../components/SubscriptionEditionManager";
 
 type SubscriptionsPageProps = {
   session: AuthSession;
@@ -42,6 +43,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   const [editorItem, setEditorItem] = useState<SubscriptionItem | null | undefined>(undefined);
   const [options, setOptions] = useState<SubscriptionOptions | null>(null);
   const [fuzzySelected,setFuzzySelected]=useState<{type:"MOV"|"TV";id:string;name:string}|null>(null);
+  const [editionSelected,setEditionSelected]=useState<{type:"MOV"|"TV";id:string;name:string}|null>(null),[editionLookup,setEditionLookup]=useState("");
 
   async function load(showLoading = false) {
     if (showLoading) setState({ kind: "loading" });
@@ -58,7 +60,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   }
 
   useEffect(() => { void load(true); }, [session.token]);
-  useEffect(()=>{setFuzzySelected(null)},[session.token]);
+  useEffect(()=>{setFuzzySelected(null);setEditionSelected(null);setEditionLookup("")},[session.token]);
 
   const filtered = useMemo(() => {
     if (state.kind !== "ready") return { items: [] as SubscriptionItem[], history: [] as SubscriptionHistory[] };
@@ -75,10 +77,14 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
     if (action === "remove" && !window.confirm(`确定删除“${item.name}”的订阅吗？删除后将停止后续搜索。`)) return;
     await runAction(`item-${item.type}-${item.id}`, async () => {
       const result = await controlSubscription(session.token, item.type, item.id, action);
+      if(result?.upgrade?.cycleId){setEditionLookup(result.upgrade.cycleId);setEditionSelected(result.completed?null:{type:item.type,id:item.id,name:item.name})}
       const message = action === "remove" ? `已删除“${item.name}”订阅`
         : action === "reconcile" ? `已核实下载器收到资源，已恢复“${item.name}”的订阅进度`
         : typeof result?.submitted !== "number" ? `已触发“${item.name}”搜索`
+        : result.completed&&result.upgrade?`最高优先级 ${result.upgrade.order} 的目标已全部获得接收回执，原洗版订阅已收尾；不代表下载或入库完成`
         : result.completed ? `“${item.name}”订阅已完成，所需资源已存在或已提交下载`
+        : result.upgrade?.cycleComplete?`本轮优先级 ${result.upgrade.order} 已全部获得接收回执，保留规则等待更高质量；不代表下载完成`
+        : result.upgrade&&result.submitted>0?`已提交 ${result.submitted} 个同优先级洗版资源，本轮仍待 ${result.remaining.length} 集接收；不代表下载完成`
         : result.submitted > 0 ? `已提交 ${result.submitted} 个资源，继续等待剩余所需资源`
         : `“${item.name}”未找到符合条件的资源，将保留订阅`;
       setNotice({ kind: "success", message });
@@ -148,6 +154,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
 
         {notice && <div className={`subscription-notice is-${notice.kind}`} role="status">{notice.message}</div>}
         <FuzzySubscriptionManager token={session.token} selected={fuzzySelected} onClose={()=>setFuzzySelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
+        <SubscriptionEditionManager token={session.token} selected={editionSelected} lastCycleId={editionLookup} onClose={()=>setEditionSelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
         {state.kind === "loading" && <SubscriptionSkeleton />}
         {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>订阅数据暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load(true)}>重新加载</button></section>}
         {state.kind === "ready" && <>
@@ -156,7 +163,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
             <section className="subscription-section">
               <div className="section-heading"><div><p className="eyebrow">ACTIVE</p><h2>{mediaType === "MOV" ? "电影订阅" : "电视剧订阅"}</h2></div><span>{filtered.items.length} 项</span></div>
               {filtered.items.length === 0 ? <div className="inline-empty">当前筛选条件下没有订阅。</div> : <div className="subscription-grid">{filtered.items.map((item) => (
-                <SubscriptionCard key={`${item.type}-${item.id}`} item={item} busy={busy[`item-${item.type}-${item.id}`]} onNavigate={onNavigate} onEdit={() => void openEditor(item)} onFuzzy={()=>setFuzzySelected({type:item.type,id:item.id,name:item.name})} onAction={(action) => void handleItemAction(item, action)} />
+                <SubscriptionCard key={`${item.type}-${item.id}`} item={item} busy={busy[`item-${item.type}-${item.id}`]} onNavigate={onNavigate} onEdit={() => void openEditor(item)} onFuzzy={()=>setFuzzySelected({type:item.type,id:item.id,name:item.name})} onEdition={()=>setEditionSelected({type:item.type,id:item.id,name:item.name})} onAction={(action) => void handleItemAction(item, action)} />
               ))}</div>}
             </section>
           ) : (
@@ -174,13 +181,14 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   );
 }
 
-function SubscriptionCard({ item, busy, onEdit, onFuzzy, onAction, onNavigate }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onFuzzy:()=>void; onAction: (action: "refresh" | "remove" | "reconcile") => void; onNavigate: (path: string) => void }) {
+function SubscriptionCard({ item, busy, onEdit, onFuzzy, onEdition, onAction, onNavigate }: { item: SubscriptionItem; busy?: boolean; onEdit: () => void; onFuzzy:()=>void;onEdition:()=>void; onAction: (action: "refresh" | "remove" | "reconcile") => void; onNavigate: (path: string) => void }) {
   const tags = [item.fuzzyMatch?"模糊 RSS":"",item.overEdition ? "洗版" : "", item.quality, item.resolution, item.releaseGroup, ...item.rssSites, ...item.searchSites].filter(Boolean);
   return <article className="subscription-card">
     <div className="subscription-art"><strong>{item.name.slice(0, 1)}</strong>{item.image && <img src={item.image} alt={`${item.name} 海报`} loading="lazy" />}</div>
     <div className="subscription-card__body">
       <div className="subscription-title"><div><h3>{item.name}</h3><p>{[item.year, item.season !== "S00" ? item.season : ""].filter(Boolean).join(" · ")}</p></div><span className={`subscription-state state-${item.state.toLowerCase()}`}>{item.stateLabel}</span></div>
-      {item.type === "TV" && item.total > 0 && <><div className="subscription-progress"><span style={{ width: `${item.progress}%` }} /></div><small>已获取 {item.total - item.remaining}/{item.total} 集</small></>}
+      {item.type === "TV" && item.total > 0 && <><div className="subscription-progress"><span style={{ width: `${item.progress}%` }} /></div><small>{item.overEdition?"原普通记录（非本轮洗版完成）：":"已获取 "}{item.total - item.remaining}/{item.total} 集</small></>}
+      {item.overEdition&&!item.fuzzyMatch&&<button type="button" disabled={busy} onClick={onEdition}>洗版轮次与回执</button>}
       {tags.length > 0 && <div className="subscription-tags">{tags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div>}
       {item.pendingSubmission && <small>上次提交结果待核实，请先核对下载器任务；核实不会重新提交下载。</small>}
       {mediaDetailPath(item.type, item.tmdbId) && <button type="button" className="text-button" onClick={() => onNavigate(mediaDetailPath(item.type, item.tmdbId)!)}>查看媒体详情与季集</button>}

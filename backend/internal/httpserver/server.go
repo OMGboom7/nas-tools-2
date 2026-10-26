@@ -461,6 +461,20 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/subscriptions/rss/run", subscriptionRunner.feeds.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/search/run", subscriptionRunner.serveHTTP)
 	mux.HandleFunc("POST /api/v1/subscriptions/{type}/{id}/reconcile", subscriptionRunner.serveReconcile)
+	mux.HandleFunc("/api/v1/subscriptions/", subscriptionRunner.editionFallback)
+	for _, kind := range []string{"MOV", "TV"} {
+		handler := func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("type", kind)
+			subscriptionRunner.serveEditionStatus(w, r)
+		}
+		mux.HandleFunc("GET /api/v1/subscriptions/"+kind+"/{id}/upgrade", handler)
+		mux.HandleFunc("POST /api/v1/subscriptions/"+kind+"/{id}/upgrade/reset", handler)
+		mux.HandleFunc("POST /api/v1/subscriptions/"+kind+"/{id}/upgrade", subscriptionRunner.editionFallback)
+	}
+	mux.HandleFunc("GET /api/v1/subscription-editions", subscriptionRunner.serveEditionReceipts)
+	mux.HandleFunc("GET /api/v1/subscription-editions/{cycle}", subscriptionRunner.serveEditionReceipts)
+	mux.HandleFunc("/api/v1/subscription-editions", subscriptionRunner.editionFallback)
+	mux.HandleFunc("/api/v1/subscription-editions/", subscriptionRunner.editionFallback)
 	rssRunner.refresh = &subscriptionRefreshAPI{service: subscriptions, auth: nativeAuth, pureGo: cfg.DisableLegacy}
 	mux.HandleFunc("POST /api/v1/subscriptions/refresh", rssRunner.refresh.serveHTTP)
 	mux.HandleFunc("POST /api/v1/rss/name/test", (rssNameAPI{tasks: nativeRSSTasks, filters: nativeFilters, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}).serveHTTP)

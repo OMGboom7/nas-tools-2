@@ -18,13 +18,14 @@ type subscriptionSearchRunner struct {
 }
 
 type subscriptionSearchRunResult struct {
-	Submitted int    `json:"submitted"`
-	Remaining []int  `json:"remaining"`
-	Completed bool   `json:"completed"`
-	Uncertain bool   `json:"uncertain"`
-	Queued    bool   `json:"queued,omitempty"`
-	Skipped   bool   `json:"skipped,omitempty"`
-	BatchID   string `json:"batchId,omitempty"`
+	Submitted int                      `json:"submitted"`
+	Remaining []int                    `json:"remaining"`
+	Completed bool                     `json:"completed"`
+	Uncertain bool                     `json:"uncertain"`
+	Queued    bool                     `json:"queued,omitempty"`
+	Skipped   bool                     `json:"skipped,omitempty"`
+	BatchID   string                   `json:"batchId,omitempty"`
+	Upgrade   *subscriptionEditionView `json:"upgrade,omitempty"`
 }
 
 func (api *subscriptionSearchRunner) serveCompatSearch(w http.ResponseWriter, r *http.Request) {
@@ -129,12 +130,14 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		return result, failure
 	}
 	result.Remaining = append([]int{}, plan.needed...)
+	result.Upgrade = editionView(plan.edition)
 	service := api.planner.runner.recognition.service
 	if plan.LibraryComplete || kind == "TV" && len(plan.needed) == 0 || len(plan.Candidates) == 0 {
 		if err := service.persistSubscriptionSubmission(ctx, kind, id, &plan, nil, ""); err != nil {
 			return fail(409, "subscription search progress could not be saved; verify current subscription state")
 		}
-		result.Completed = plan.LibraryComplete || kind == "TV" && len(plan.needed) == 0
+		result.Completed = subscriptionPlanCompleted(kind, plan, false)
+		result.Upgrade = editionView(plan.edition)
 		return result, nil
 	}
 	for _, candidate := range plan.Candidates {
@@ -167,6 +170,10 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		if err != nil {
 			return fail(409, "subscription changed or resource is reserved; verify pending downloads before retrying")
 		}
+		if plan.edition != nil {
+			plan.edition.Started = true
+			result.Upgrade = editionView(plan.edition)
+		}
 		_, handled, err := download.nativeAddConfiguredDownload(ctx, downloader, magnet, torrent, options)
 		if err != nil || !handled {
 			if downloadDefinitelyNotSubmitted(handled, err) {
@@ -188,8 +195,9 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		}
 		result.Submitted++
 		result.Remaining = append([]int{}, plan.needed...)
-		result.Completed = kind == "MOV" || len(plan.needed) == 0
-		if result.Completed {
+		result.Completed = subscriptionPlanCompleted(kind, plan, true)
+		result.Upgrade = editionView(plan.edition)
+		if result.Completed || plan.edition != nil && plan.edition.Cycle.State == "completed" {
 			break
 		}
 	}

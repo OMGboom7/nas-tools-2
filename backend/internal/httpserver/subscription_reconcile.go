@@ -31,6 +31,9 @@ type subscriptionSubmissionProof struct {
 	Season, Total                        int
 	StoredMissing, Needed, Episodes      []int
 	Title, DownloadURL                   string
+	Edition                              *subscriptionEditionSnapshot `json:"edition,omitempty"`
+	Priority, TopOrder                   int
+	GroupID                              int64
 }
 
 type subscriptionReconcileGuard struct {
@@ -59,6 +62,15 @@ func encodeSubscriptionSubmissionProof(proof subscriptionSubmissionProof, plan s
 	proof.Raw, proof.MediaID, proof.Season, proof.Total = raw, plan.mediaID, plan.season, plan.total
 	proof.StoredMissing, proof.Needed, proof.Episodes = plan.storedMissing, plan.needed, candidate.Episodes
 	proof.Title, proof.DownloadURL = candidate.Title, candidate.resource.DownloadURL
+	if plan.edition != nil {
+		proof.Version = 3
+		proof.Edition = copyEditionSnapshot(plan.edition)
+		if proof.Edition == nil {
+			return "", errSubscriptionSubmissionConflict
+		}
+		proof.Edition.Started = true
+		proof.Priority, proof.TopOrder, proof.GroupID = candidate.Priority, candidate.topOrder, candidate.groupID
+	}
 	body, err := json.Marshal(proof)
 	if err != nil || len(body) > 2<<20 {
 		return "", errors.New("subscription proof exceeded limits")
@@ -73,7 +85,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(body))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&p) != nil || p.Version != 1 || p.DownloaderID <= 0 || len(p.ConfigHash) != 64 || p.MediaID == "" || !rssDownloadURLAllowed(p.DownloadURL) || p.Title == "" || p.Total < 0 || p.Total > 10000 || p.Season < 0 || p.Season > 1000 {
+	if decoder.Decode(&p) != nil || p.Version != 1 && p.Version != 3 || p.DownloaderID <= 0 || len(p.ConfigHash) != 64 || p.MediaID == "" || !rssDownloadURLAllowed(p.DownloadURL) || p.Title == "" || p.Total < 0 || p.Total > 10000 || p.Season < 0 || p.Season > 1000 {
 		return p, plan, errors.New("invalid subscription proof")
 	}
 	if decoder.Decode(new(any)) != io.EOF {
@@ -85,6 +97,12 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 		return p, plan, errors.New("invalid source snapshot")
 	}
 	for key, value := range plan.raw {
+		if p.Version == 3 {
+			if _, err := fuzzySQLValue(value); err != nil {
+				return p, plan, err
+			}
+			continue
+		}
 		if number, ok := value.(json.Number); ok {
 			if n, err := number.Int64(); err == nil {
 				plan.raw[key] = n
@@ -103,6 +121,15 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	}
 	plan.mediaID, plan.season, plan.total = p.MediaID, p.Season, p.Total
 	plan.storedMissing, plan.needed = p.StoredMissing, p.Needed
+	if p.Version == 3 {
+		if p.Edition == nil || !p.Edition.Started || !validEditionCycle(p.Edition.Cycle) || p.Edition.Cycle.State != "active" || !truthy(text(normalizeNativeSubscriptionRow(plan.raw)["over_edition"])) || p.Edition.Cycle.Rule != editionRule(plan.raw) || p.Edition.Cycle.Order != p.Priority || p.Edition.Cycle.TopOrder != p.TopOrder || p.Edition.Cycle.GroupID != p.GroupID || p.Edition.Cycle.Season != p.Season || p.Edition.Cycle.Total != p.Total || !slices.Equal(p.Edition.Cycle.Remaining, p.Needed) {
+			return p, plan, errSubscriptionSubmissionConflict
+		}
+		plan.edition = p.Edition
+		plan.Upgrade = editionView(p.Edition)
+	} else if p.Edition != nil || p.Priority != 0 || p.TopOrder != 0 || p.GroupID != 0 {
+		return p, plan, errSubscriptionSubmissionConflict
+	}
 	return p, plan, nil
 }
 
@@ -217,7 +244,7 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 			}
 		}
 		for _, n := range proof.Needed {
-			if !slices.Contains(proof.StoredMissing, n) {
+			if plan.edition == nil && !slices.Contains(proof.StoredMissing, n) {
 				return fail(501, "pending episode evidence is invalid")
 			}
 		}
@@ -229,6 +256,9 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 		return fail(503, "subscription state is unavailable")
 	}
 	err = verifySubscriptionSnapshot(ctx, tx, kind, id, plan)
+	if err == nil {
+		err = service.checkEditionSnapshot(ctx, tx, kind, id, plan)
+	}
 	tx.Rollback()
 	if err != nil {
 		return fail(409, "subscription changed after submission; pending evidence is retained")
@@ -285,11 +315,12 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	if err != nil || current.Enabled == 0 || current.Type != proof.DownloaderType || subscriptionResourceKey(current.Config) != proof.ConfigHash {
 		return fail(409, "submission downloader changed during verification")
 	}
-	candidate := subscriptionCandidate{Title: proof.Title, Episodes: proof.Episodes, resource: externalindexer.Resource{DownloadURL: proof.DownloadURL}}
+	candidate := subscriptionCandidate{Title: proof.Title, Episodes: proof.Episodes, Priority: proof.Priority, topOrder: proof.TopOrder, groupID: proof.GroupID, resource: externalindexer.Resource{DownloadURL: proof.DownloadURL}}
 	if err := service.persistSubscriptionSubmission(ctx, kind, id, &plan, &candidate, owner, subscriptionReconcileGuard{proof, payload.String}); err != nil {
 		return fail(409, "confirmed submission progress conflicts with current state; evidence is retained")
 	}
-	result.Submitted, result.Completed, result.Uncertain = 1, kind == "MOV" || len(plan.needed) == 0, false
+	result.Submitted, result.Completed, result.Uncertain = 1, subscriptionPlanCompleted(kind, plan, true), false
+	result.Upgrade = editionView(plan.edition)
 	result.Remaining = append([]int{}, plan.needed...)
 	return result, nil
 }

@@ -181,6 +181,9 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 		for _, column := range strings.Split(columns, ",") {
 			assignments = append(assignments, column+"=?")
 		}
+		if input.OverEdition && !input.FuzzyMatch {
+			assignments = append(assignments, "FILTER_ORDER=NULL")
+		}
 		values = append(values, id)
 		if input.Type == "TV" {
 			if err := removeNativeTVEpisodes(ctx, transaction, id); err != nil {
@@ -206,6 +209,9 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 		}
 	}
 	if err := revokeFuzzyGrantTx(ctx, transaction, input.Type, id); err != nil {
+		return 0, err
+	}
+	if err := closeEditionCycleTx(ctx, transaction, input.Type, id, "rule-upsert"); err != nil {
 		return 0, err
 	}
 	return id, nil

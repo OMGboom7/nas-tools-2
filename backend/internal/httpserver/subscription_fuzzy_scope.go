@@ -171,7 +171,10 @@ func (api *fuzzySubscriptionAPI) authority(actor string) (string, error) {
 	return fuzzyDigest([]any{actor, app["login_password"], objectValue(snapshot["security"])["api_key"]}), nil
 }
 func (api *fuzzySubscriptionAPI) configuration(ctx context.Context, r fuzzyReader) (string, error) {
-	configuration, err := api.service().configStore.Snapshot()
+	return nativeSubscriptionConfiguration(ctx, r, api.service())
+}
+func nativeSubscriptionConfiguration(ctx context.Context, r fuzzyReader, service subscriptionService) (string, error) {
+	configuration, err := service.configStore.Snapshot()
 	if err != nil {
 		return "", err
 	}
@@ -209,7 +212,7 @@ func (api *fuzzySubscriptionAPI) configuration(ctx context.Context, r fuzzyReade
 	parts["settings"] = settings
 	// Detail parsing reads the bundled catalog. Freeze its bytes as well as
 	// its path, rather than silently adopting a replacement after review.
-	path := api.service().catalogPath
+	path := service.catalogPath
 	if path != "" {
 		file, err := os.Open(path)
 		if err != nil {

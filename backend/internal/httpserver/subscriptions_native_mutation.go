@@ -99,6 +99,9 @@ func (service subscriptionService) removeNativeSubscription(ctx context.Context,
 	defer transaction.Rollback()
 	table := "RSS_HISTORY"
 	if !history {
+		if err := closeEditionCycleTx(ctx, transaction, kind, id, "rule-delete"); err != nil {
+			return err
+		}
 		if kind == "MOV" {
 			table = "RSS_MOVIES"
 		} else {
@@ -122,7 +125,7 @@ func (service subscriptionService) removeNativeSubscription(ctx context.Context,
 			return err
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "DELETE FROM "+table+" WHERE ID=?", id); err != nil {
+	if err := fuzzyOne(transaction.ExecContext(ctx, "DELETE FROM "+table+" WHERE ID=?", id)); err != nil {
 		return err
 	}
 	return transaction.Commit()
@@ -177,6 +180,9 @@ func (service subscriptionService) removeNativeSubscriptionBySelector(ctx contex
 	defer transaction.Rollback()
 	if kind == "MOV" {
 		if tmdbID != "" {
+			if err := closeSelectedEditionCyclesTx(ctx, transaction, "MOV", "TMDBID=?", tmdbID); err != nil {
+				return err
+			}
 			if err := revokeFuzzySelectedTx(ctx, transaction, "MOV", "TMDBID=?", tmdbID); err != nil {
 				return err
 			}
@@ -186,6 +192,9 @@ func (service subscriptionService) removeNativeSubscriptionBySelector(ctx contex
 		}
 		if year == "" {
 			year = "None" // Python's str(None) in the old movie selector.
+		}
+		if err := closeSelectedEditionCyclesTx(ctx, transaction, "MOV", "NAME=? AND YEAR=?", name, year); err != nil {
+			return err
 		}
 		if err := revokeFuzzySelectedTx(ctx, transaction, "MOV", "NAME=? AND YEAR=?", name, year); err != nil {
 			return err
@@ -236,6 +245,9 @@ func (service subscriptionService) removeNativeSubscriptionBySelector(ctx contex
 	}
 	if id == 0 {
 		return transaction.Commit()
+	}
+	if err := closeEditionCycleTx(ctx, transaction, "TV", id, "legacy-rule-delete"); err != nil {
+		return err
 	}
 	if err := revokeFuzzyGrantTx(ctx, transaction, "TV", id); err != nil {
 		return err

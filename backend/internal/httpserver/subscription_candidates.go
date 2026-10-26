@@ -24,6 +24,8 @@ type subscriptionCandidate struct {
 	resource  externalindexer.Resource
 	site      *siteconfig.Site
 	siteOrder int
+	groupID   int64
+	topOrder  int
 }
 
 type subscriptionCandidateInput struct {
@@ -32,6 +34,9 @@ type subscriptionCandidateInput struct {
 	Missing                                     []int
 	Group                                       int64
 	Quality, Resolution, Team, Include, Exclude string
+	Upgrade                                     bool
+	PreviousOrder, Order                        int
+	UpgradeGroup                                int64
 }
 
 type identifiedSubscriptionResource struct {
@@ -113,6 +118,7 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 			continue
 		}
 		episodes := []int{}
+		declared := []int{}
 		episodeCount := item.meta.Episodes.Count
 		if input.TV {
 			info := item.meta.Episodes
@@ -152,6 +158,7 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 						return nil, nil, errors.New("invalid explicit episode chain")
 					}
 					seen[n] = true
+					declared = append(declared, n)
 					if remaining[n] {
 						episodes = append(episodes, n)
 					}
@@ -159,12 +166,19 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 				episodeCount = len(seen)
 			} else {
 				for n := begin; n <= end; n++ {
+					declared = append(declared, n)
 					if remaining[n] {
 						episodes = append(episodes, n)
 					}
 				}
 			}
 			if len(episodes) == 0 {
+				continue
+			}
+			sort.Ints(episodes)
+			// Whole-resource washing cannot silently download previously
+			// accepted/out-of-scope episodes; file selection is a separate step.
+			if input.Upgrade && len(declared) != len(episodes) {
 				continue
 			}
 		}
@@ -179,7 +193,14 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 		if !result.Matched {
 			continue
 		}
-		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, resource: item.resource, site: item.site, siteOrder: item.siteOrder})
+		groupID, top, err := subscriptionGroupPriority(groups, group)
+		if err != nil {
+			return nil, nil, err
+		}
+		if input.Upgrade && (groupID < 1 || result.Order < 1 || result.Order <= input.PreviousOrder && input.PreviousOrder != 0 || input.Order != 0 && (result.Order != input.Order || groupID != input.UpgradeGroup)) {
+			continue
+		}
+		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, resource: item.resource, site: item.site, siteOrder: item.siteOrder, groupID: groupID, topOrder: top})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
@@ -202,7 +223,16 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 	})
 	selected := []subscriptionCandidate{}
 	seen := map[string]bool{}
+	order, group := input.Order, input.UpgradeGroup
 	for _, candidate := range candidates {
+		if input.Upgrade {
+			if order == 0 {
+				order, group = candidate.Priority, candidate.groupID
+			}
+			if candidate.Priority != order || candidate.groupID != group {
+				continue
+			}
+		}
 		if seen[candidate.resource.DownloadURL] {
 			continue
 		}
@@ -220,6 +250,9 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 		if len(needed) == 0 {
 			continue
 		}
+		if input.Upgrade && len(needed) != len(candidate.Episodes) {
+			continue
+		}
 		candidate.Episodes = needed
 		selected = append(selected, candidate)
 		for _, n := range needed {
@@ -232,4 +265,23 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 	}
 	sort.Ints(missing)
 	return selected, missing, nil
+}
+
+func subscriptionGroupPriority(groups []filterconfig.GroupInfo, group int64) (int64, int, error) {
+	for _, entry := range groups {
+		if group == entry.Group.ID || group == 0 && entry.Group.Default {
+			if len(entry.Rules) == 0 {
+				return entry.Group.ID, 0, nil
+			}
+			priority, err := strconv.Atoi(entry.Rules[0].Priority)
+			if entry.Rules[0].Priority == "" {
+				priority, err = 0, nil
+			}
+			if err != nil {
+				return 0, 0, err
+			}
+			return entry.Group.ID, 100 - priority, nil
+		}
+	}
+	return 0, 0, nil
 }

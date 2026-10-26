@@ -1249,6 +1249,7 @@ export type SubscriptionSearchRunResult = {
   remaining: number[];
   completed: boolean;
   uncertain: boolean;
+  upgrade?: import("./subscriptionEditions").EditionProgress;
 };
 
 export async function controlSubscription(token: string, type: "MOV" | "TV", id: string, action: "refresh" | "remove" | "reconcile"): Promise<SubscriptionSearchRunResult | undefined> {
