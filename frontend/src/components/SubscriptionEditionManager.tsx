@@ -17,7 +17,7 @@ export function SubscriptionEditionManager({token,selected,lastCycleId,onClose,o
   async function abandon(){if(!scope)return;const version=epoch.current;setLookup(scope.upgrade.cycleId);const saved=scope;setScope(null);setConfirm(false);await abandonEditionCycle(token,saved,reason,confirm);if(version===epoch.current){setNotice("本轮已封存，原接收事实保留；没有提交、撤回或删除下载。后续现有订阅周期可重新规划新的完整质量轮次。");await find(saved.upgrade.cycleId);onChanged()}}
   return <section className="fuzzy-subscription-panel" aria-label="精确订阅洗版轮次与回执"><h2>精确订阅洗版轮次与回执</h2>
     <p>洗版不把已有库存当作完成，只接收比已记录优先级更高的资源。电视剧同一轮固定过滤组和优先级，全部目标集获得接收回执后才推进；不混用不同质量的部分集冒充完成，不修改原普通缺集记录。</p>
-    <p>跨季包仍待订阅协调模块。整季包和需拆选的资源由文件选择模块核验完整清单、暂停添加并实际选择，只登记实际覆盖的目标集；不能因规划交集就下载整个包。接收不等于下载或入库完成。</p>
+    <p>跨季包只协调同媒体、原站点和规则匹配的已订阅季，各季独立遵守原质量轮次，目录和下载设置须一致。整季包和需拆选的资源由文件选择模块核验完整清单、暂停添加并实际选择，只登记实际覆盖的目标集；不能因规划交集就下载整个包。接收不等于下载或入库完成。</p>
     <button type="button" disabled={busy} onClick={()=>void run(list)}>只读刷新最近 30 条洗版轮次</button>
     <label>稳定轮次编号（来源已收尾也可只读找回）<input disabled={busy} value={lookup} onChange={e=>{setLookup(e.target.value);setReceipt(null);setConfirm(false)}}/></label><button type="button" disabled={busy||!/^[a-f0-9]{64}$/.test(lookup)} onClick={()=>void run(()=>find())}>按轮次编号只读查回</button>
     {selected&&<section aria-label="当前精确洗版规则"><h3>{selected.name} · {selected.type}/{selected.id}</h3><button type="button" disabled={busy} onClick={onClose}>关闭当前规则（保留轮次编号）</button><button type="button" disabled={busy} onClick={()=>void run(inspect)}>只读审核当前洗版轮次</button>

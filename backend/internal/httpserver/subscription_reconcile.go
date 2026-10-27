@@ -23,8 +23,10 @@ import (
 // Private durable evidence, never an HTTP response. No downloader credentials
 // are copied: a digest binds verification to the configuration used to submit.
 type subscriptionSubmissionProof struct {
-	FileSelectionID                      string `json:"fileSelectionId,omitempty"`
-	ProfileDigest                        string `json:"profileDigest,omitempty"`
+	Cohort                               []subscriptionSeasonProof `json:"seasons,omitempty"`
+	CohortRange                          []int                     `json:"seasonRange,omitempty"`
+	FileSelectionID                      string                    `json:"fileSelectionId,omitempty"`
+	ProfileDigest                        string                    `json:"profileDigest,omitempty"`
 	Version                              int
 	DownloaderID                         int64
 	DownloaderType, ConfigHash, InfoHash string
@@ -77,6 +79,19 @@ func encodeSubscriptionSubmissionProof(proof subscriptionSubmissionProof, plan s
 		proof.Version = 4
 		proof.FileSelectionID = plan.fileSelectionID
 	}
+	if len(plan.cohort) > 0 {
+		proof.Version = 5
+		proof.CohortRange = append([]int{}, candidate.SeasonRange...)
+		proof.Cohort = []subscriptionSeasonProof{}
+		for _, m := range plan.cohort {
+			leaf := subscriptionSubmissionProof{Version: 1, DownloaderID: proof.DownloaderID, DownloaderType: proof.DownloaderType, ConfigHash: proof.ConfigHash, InfoHash: proof.InfoHash, ProfileDigest: proof.ProfileDigest}
+			payload, err := encodeSubscriptionSubmissionProof(leaf, m.Plan, m.Candidate)
+			if err != nil {
+				return "", err
+			}
+			proof.Cohort = append(proof.Cohort, subscriptionSeasonProof{m.ID, payload})
+		}
+	}
 	body, err := json.Marshal(proof)
 	if err != nil || len(body) > 2<<20 {
 		return "", errors.New("subscription proof exceeded limits")
@@ -91,7 +106,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(body))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&p) != nil || p.Version != 1 && p.Version != 3 && p.Version != 4 || p.DownloaderID <= 0 || len(p.ConfigHash) != 64 || p.MediaID == "" || !rssDownloadURLAllowed(p.DownloadURL) || p.Title == "" || p.Total < 0 || p.Total > 10000 || p.Season < 0 || p.Season > 1000 {
+	if decoder.Decode(&p) != nil || p.Version != 1 && p.Version != 3 && p.Version != 4 && p.Version != 5 || p.DownloaderID <= 0 || len(p.ConfigHash) != 64 || p.MediaID == "" || !rssDownloadURLAllowed(p.DownloadURL) || p.Title == "" || p.Total < 0 || p.Total > 10000 || p.Season < 0 || p.Season > 1000 {
 		return p, plan, errors.New("invalid subscription proof")
 	}
 	if decoder.Decode(new(any)) != io.EOF {
@@ -103,7 +118,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 		return p, plan, errors.New("invalid source snapshot")
 	}
 	for key, value := range plan.raw {
-		if p.Version == 3 || p.Version == 4 {
+		if p.Version == 3 || p.Version == 4 || p.Version == 5 {
 			if _, err := fuzzySQLValue(value); err != nil {
 				return p, plan, err
 			}
@@ -127,7 +142,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	}
 	plan.mediaID, plan.season, plan.total = p.MediaID, p.Season, p.Total
 	plan.storedMissing, plan.needed = p.StoredMissing, p.Needed
-	if p.Version == 3 || p.Version == 4 && p.Edition != nil {
+	if p.Version == 3 || (p.Version == 4 || p.Version == 5) && p.Edition != nil {
 		if p.Edition == nil || !p.Edition.Started || !validEditionCycle(p.Edition.Cycle) || p.Edition.Cycle.State != "active" || !truthy(text(normalizeNativeSubscriptionRow(plan.raw)["over_edition"])) || p.Edition.Cycle.Rule != editionRule(plan.raw) || p.Edition.Cycle.Order != p.Priority || p.Edition.Cycle.TopOrder != p.TopOrder || p.Edition.Cycle.GroupID != p.GroupID || p.Edition.Cycle.Season != p.Season || p.Edition.Cycle.Total != p.Total || !slices.Equal(p.Edition.Cycle.Remaining, p.Needed) {
 			return p, plan, errSubscriptionSubmissionConflict
 		}
@@ -136,7 +151,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	} else if p.Edition != nil || p.Priority != 0 || p.TopOrder != 0 || p.GroupID != 0 {
 		return p, plan, errSubscriptionSubmissionConflict
 	}
-	if p.Version == 4 {
+	if p.Version == 4 || p.Version == 5 {
 		plan.typedSource = true
 		plan.fileSelectionID = p.FileSelectionID
 		if p.FileSelectionID == "" && strings.HasPrefix(p.ProfileDigest, "files:") {
@@ -147,6 +162,9 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 		}
 	} else if p.FileSelectionID != "" || strings.HasPrefix(p.ProfileDigest, "files:") {
 		return p, plan, errSubscriptionSubmissionConflict
+	}
+	if err := decodeSeasonCohort(p, &plan); err != nil {
+		return p, plan, err
 	}
 	return p, plan, nil
 }
@@ -186,6 +204,7 @@ func (api *subscriptionSearchRunner) serveReconcile(w http.ResponseWriter, r *ht
 }
 
 func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind string, id int64) (subscriptionSearchRunResult, *recognitionFailure) {
+	requestedID := id
 	result := subscriptionSearchRunResult{Remaining: []int{}, Uncertain: true}
 	fail := func(status int, message string) (subscriptionSearchRunResult, *recognitionFailure) {
 		return result, &recognitionFailure{status, message}
@@ -213,6 +232,15 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 		return fail(503, "submission ledger is unavailable")
 	}
 	defer db.Close()
+	if kind == "TV" {
+		leader, found, err := pendingSeasonLeader(ctx, db, id)
+		if err != nil {
+			return fail(503, "original joint season receipt is unavailable")
+		}
+		if found {
+			id = leader
+		}
+	}
 	for _, table := range []string{"GO_SUBSCRIPTION_DOWNLOAD_CLAIMS", "GO_SUBSCRIPTION_SUBMISSION_PROOFS", "GO_RSS_DOWNLOAD_CLAIMS"} {
 		var exists bool
 		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, table).Scan(&exists); err != nil {
@@ -251,6 +279,15 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	if err != nil || !payload.Valid || proof.MediaID != mediaID || proof.Season != season || subscriptionEpisodeString(proof.Episodes) != episodes || subscriptionResourceKey(proof.DownloadURL) != resourceKey || text(plan.raw["ID"]) != strconv.FormatInt(id, 10) {
 		return fail(501, "pending submission verification evidence is missing or invalid")
 	}
+	if requestedID != id {
+		found := false
+		for _, member := range plan.cohort {
+			found = found || member.ID == requestedID
+		}
+		if !found {
+			return fail(409, "original joint season membership changed")
+		}
+	}
 	result.Remaining = append([]int{}, plan.needed...)
 	if kind == "TV" {
 		if proof.Total <= 0 || len(proof.Episodes) == 0 || !validReconcileEpisodes(proof.StoredMissing, proof.Total) || !validReconcileEpisodes(proof.Needed, proof.Total) || !validReconcileEpisodes(proof.Episodes, proof.Total) {
@@ -276,6 +313,13 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	err = verifySubscriptionSnapshot(ctx, tx, kind, id, plan)
 	if err == nil {
 		err = service.checkEditionSnapshot(ctx, tx, kind, id, plan)
+	}
+	if err == nil && len(plan.cohort) > 0 {
+		var selection downloaderconfig.FileSelection
+		selection, err = downloaderconfig.FileSelectionTx(ctx, tx, proof.FileSelectionID)
+		if err == nil {
+			err = service.checkSeasonSelectionTx(ctx, tx, selection, proof, plan, owner)
+		}
 	}
 	tx.Rollback()
 	if err != nil {
@@ -337,10 +381,19 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	if err := service.persistSubscriptionSubmission(ctx, kind, id, &plan, &candidate, owner, subscriptionReconcileGuard{proof, payload.String}); err != nil {
 		return fail(409, "confirmed submission progress conflicts with current state; evidence is retained")
 	}
-	result.Submitted, result.Completed, result.Uncertain = 1, subscriptionPlanCompleted(kind, plan, true), false
-	result.Upgrade = editionView(plan.edition)
+	resultPlan := plan
+	if requestedID != id {
+		for _, member := range plan.cohort {
+			if member.ID == requestedID {
+				resultPlan = member.Plan
+			}
+		}
+	}
+	result.Submitted, result.Completed, result.Uncertain = 1, subscriptionPlanCompleted(kind, resultPlan, true), false
+	result.recordSeasons(plan.cohort)
+	result.Upgrade = editionView(resultPlan.edition)
 	result.FileSelectionID = proof.FileSelectionID
-	result.Remaining = append([]int{}, plan.needed...)
+	result.Remaining = append([]int{}, resultPlan.needed...)
 	return result, nil
 }
 

@@ -520,12 +520,13 @@ func TestEditionInspectionsAreRootOnlyAndMixedNamespacesNeverReachPython(t *test
 		}
 	}
 }
-func TestEditionWholeResourcePlanningKeepsCrossSeasonAndOutOfScopeEpisodesBlocked(t *testing.T) {
+func TestEditionUnverifiedCrossSeasonAndOverlapCannotAuthorizeWholeResources(t *testing.T) {
 	f := newEditionFixture(t, true, false)
+	t.Setenv("NASTOOL_ARIA2_BINARY", filepath.Join(t.TempDir(), "missing"))
 	f.titles = []string{"Show.S01-S02.1080p.WEB-DL", "Show.S02E01.1080p.WEB-DL"}
 	f.hashes = []int{111, 112}
-	if v := editionRunForTest(t, f); v.Submitted != 0 || v.Completed || f.adds != 0 {
-		t.Fatal(v, f.adds)
+	if response := f.execute(); response.Code != 422 || f.adds != 0 {
+		t.Fatal("unverified cross-season magnet authorized a whole download", response.Code, response.Body.String(), f.adds)
 	}
 	f.titles = []string{"Show.S01E01.1080p.WEB-DL"}
 	f.hashes = []int{113}

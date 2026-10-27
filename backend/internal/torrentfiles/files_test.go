@@ -66,3 +66,28 @@ func TestMatchingUsesAllPathsAndSizesNotClientArrayOrderOrDisplayTitle(t *testin
 		t.Fatal("changed file size")
 	}
 }
+
+func TestExactSeasonNeverAssignsUnqualifiedFilesToSeveralSeasons(t *testing.T) {
+	files := []File{
+		{Index: 1, Path: "Show.S01-S02/E01.mkv", Size: 12},
+		{Index: 2, Path: "Show.S01-S02/S01/E01.mkv", Size: 12},
+		{Index: 3, Path: "Show.S01-S02/S02/E01.mkv", Size: 12},
+		{Index: 4, Path: "Show.S01-S02/Show.S02E02.mkv", Size: 12},
+		{Index: 5, Path: "Show.S01-S02/Show.S02E02.zh.srt", Size: 1},
+	}
+	one, eps, err := PlanExactSeason(files, 1, 2, []int{1, 2})
+	if err != nil || !slices.Equal(eps, []int{1}) || !slices.Equal(IDs(one, true), []int{2}) {
+		t.Fatal(one, eps, err)
+	}
+	two, eps, err := PlanExactSeason(files, 2, 2, []int{1, 2})
+	if err != nil || !slices.Equal(eps, []int{1, 2}) || !slices.Equal(IDs(two, true), []int{3, 4, 5}) {
+		t.Fatal(two, eps, err)
+	}
+	if _, _, err := PlanExactSeason([]File{{Index: 1, Path: "Show/E01.mkv", Size: 12}}, 1, 2, []int{1}); err == nil {
+		t.Fatal("guessed unknown season")
+	}
+	// A fixed single-season workflow keeps its existing implicit scope.
+	if _, eps, err := Plan([]File{{Index: 1, Path: "Show/E01.mkv", Size: 12}}, 1, 2, []int{1}); err != nil || !slices.Equal(eps, []int{1}) {
+		t.Fatal(eps, err)
+	}
+}

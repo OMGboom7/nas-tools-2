@@ -35,6 +35,8 @@ type subscriptionSearchPlan struct {
 	typedSource     bool
 	files           *downloaderconfig.FileSelectionDefinition
 	fileSelectionID string
+	cohort          []subscriptionSeasonMember
+	crossMember     bool
 }
 
 func (api subscriptionSearchPlanner) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -108,12 +110,13 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 		return fail(404, "subscription is unavailable")
 	}
 	item := normalizeNativeSubscriptionRow(raw)
-	if truthy(item["over_edition"]) && !truthy(item["fuzzy_match"]) {
+	if (kind == "TV" || truthy(item["over_edition"])) && !truthy(item["fuzzy_match"]) {
 		raw, err = readFuzzySourceRow(ctx, db, kind, id)
 		if err != nil || raw == nil {
 			return fail(503, "typed edition source is unavailable")
 		}
 		item = normalizeNativeSubscriptionRow(raw)
+		plan.typedSource = kind == "TV"
 	}
 	plan.raw = raw
 	if expectedState != "" && text(raw["STATE"]) != expectedState {

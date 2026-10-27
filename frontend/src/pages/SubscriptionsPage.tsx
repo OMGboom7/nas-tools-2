@@ -158,7 +158,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
         {notice && <div className={`subscription-notice is-${notice.kind}`} role="status">{notice.message}</div>}
         <FuzzySubscriptionManager token={session.token} selected={fuzzySelected} onClose={()=>setFuzzySelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
         <SubscriptionEditionManager token={session.token} selected={editionSelected} lastCycleId={editionLookup} onClose={()=>setEditionSelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
-        <SubscriptionFileSelectionManager token={session.token} lastId={fileSelectionLookup} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
+        <SubscriptionFileSelectionManager token={session.token} lastId={fileSelectionLookup} onSessionExpired={onSessionExpired} onChanged={()=>{setNotice(null);void load()}}/>
         {state.kind === "loading" && <SubscriptionSkeleton />}
         {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>订阅数据暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load(true)}>重新加载</button></section>}
         {state.kind === "ready" && <>

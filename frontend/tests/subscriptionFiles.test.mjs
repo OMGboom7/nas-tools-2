@@ -52,8 +52,29 @@ test("file selection UI separates receipt reads, file choice, settings, startup 
  const require=createRequire(import.meta.url),raw=readFileSync(new URL("../src/components/SubscriptionFileSelectionManager.tsx",import.meta.url),"utf8");
  const source=compile(raw).replace('"react/jsx-runtime"',JSON.stringify(pathToFileURL(require.resolve("react/jsx-runtime")).href)).replace('"react"',JSON.stringify(pathToFileURL(require.resolve("react")).href)).replace('"../api/client"',JSON.stringify(clientURL)).replace('"../api/subscriptionFiles"',JSON.stringify(apiURL));
  const {SubscriptionFileSelectionManager}=await import(url(source));const html=renderToStaticMarkup(createElement(SubscriptionFileSelectionManager,{token:"token",lastId:"",onChanged(){},onSessionExpired(){}}));
- for(const phrase of ["缺集交集不是整包下载授权","完整种子文件清单","跨季订阅协调仍待迁移","不自动重发","按编号只读查回","只读核对原任务与下一阶段"])assert.ok(html.includes(phrase),phrase);
+ for(const phrase of ["缺集交集不是整包下载授权","完整种子文件清单","跨季只协调","不下载其他季","不自动重发","按编号只读查回","只读核对原任务与下一阶段"])assert.ok(html.includes(phrase),phrase);
  assert.ok(!raw.includes("useState(true)"));assert.ok(raw.includes('setLookup(saved.receipt.id);clearConsent();const out=await recoverFileSelection'));assert.ok(raw.includes("epoch.current++"));assert.ok(!raw.includes("setInterval"));
  assert.ok(raw.includes("entry.id===value.id?value:entry"));assert.ok(raw.includes("setReview(out);showReceipt(out.receipt)"));assert.ok(raw.includes("showReceipt(out);setNotice"));
  const page=readFileSync(new URL("../src/pages/SubscriptionsPage.tsx",import.meta.url),"utf8");assert.ok(page.includes("<SubscriptionFileSelectionManager"));assert.ok(page.includes("setFileSelectionLookup(result.fileSelectionId)"));
+});
+
+test("joint file selection validates every frozen source without losing integer precision",()=>{
+ const seasons=[{subscriptionId:"2",season:1,total:3,episodes:[2]},{subscriptionId:"9007199254740993",season:2,total:2,episodes:[1,2]}];
+ assert.equal(api.validFileSelection({...receipt,seasons}),true);
+ for(const bad of [[],[seasons[1]],[seasons[1],seasons[0]],[seasons[0],seasons[0]],[{...seasons[0],total:1}],[{...seasons[0],season:2}],[seasons[0],{...seasons[1],episodes:[2,1]}],[seasons[0],{...seasons[1],subscriptionId:9007199254740992}]]){
+  assert.equal(api.validFileSelection({...receipt,seasons:bad}),false);
+ }
+});
+test("joint recovery always requires separate all-season consent and never adopts a changed source set",async t=>{
+ const joint={...receipt,seasons:[{subscriptionId:"2",season:1,total:3,episodes:[2]},{subscriptionId:"3",season:2,total:2,episodes:[1,2]}]};
+ const r={...review,receipt:joint};let calls=0;
+ t.mock.method(globalThis,"fetch",async(path,o)=>{calls++;assert.equal(JSON.parse(o.body).confirmSeasons,true);return response({...joint,state:"selected"})});
+ await assert.rejects(api.recoverFileSelection("token",r,true,{files:true}));assert.equal(calls,0);
+ await api.recoverFileSelection("token",r,true,{files:true,seasons:true});assert.equal(calls,1);
+ t.mock.method(globalThis,"fetch",async()=>{calls++;return response({...joint,state:"selected",seasons:[joint.seasons[0]]})});
+ await assert.rejects(api.recoverFileSelection("token",r,true,{files:true,seasons:true}));assert.equal(calls,2);
+});
+test("joint UI shows the complete immutable membership and clears independent consent on every review",()=>{
+ const raw=readFileSync(new URL("../src/components/SubscriptionFileSelectionManager.tsx",import.meta.url),"utf8");
+ for(const phrase of ["冻结的全部原季订阅","跨季资源冻结的原订阅范围","实际选择集","独立确认以下全部原季订阅","不扩大原联合范围","setSeasons(false)","record,seasons","&&!seasons"])assert.ok(raw.includes(phrase),phrase);
 });

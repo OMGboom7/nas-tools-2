@@ -18,21 +18,28 @@ import (
 var ErrFileSelectionPending = errors.New("original torrent file selection requires explicit review")
 
 type FileSelectionDefinition struct {
-	Version           int                 `json:"version"`
-	ID                string              `json:"id"`
-	DownloaderID      int64               `json:"downloaderId"`
-	DownloaderType    string              `json:"downloaderType"`
-	ConfigDigest      string              `json:"configDigest"`
-	InfoHash          string              `json:"infoHash"`
-	Title             string              `json:"title"`
-	SubscriptionID    int64               `json:"subscriptionId"`
-	Season            int                 `json:"season"`
-	Episodes          []int               `json:"episodes"`
-	Scope             string              `json:"scope"`
-	Options           json.RawMessage     `json:"options"`
-	PresetFingerprint string              `json:"presetFingerprint"`
-	Proof             string              `json:"proof"`
-	Files             []torrentfiles.File `json:"files"`
+	Sources           []FileSelectionSource `json:"sources,omitempty"`
+	Version           int                   `json:"version"`
+	ID                string                `json:"id"`
+	DownloaderID      int64                 `json:"downloaderId"`
+	DownloaderType    string                `json:"downloaderType"`
+	ConfigDigest      string                `json:"configDigest"`
+	InfoHash          string                `json:"infoHash"`
+	Title             string                `json:"title"`
+	SubscriptionID    int64                 `json:"subscriptionId"`
+	Season            int                   `json:"season"`
+	Episodes          []int                 `json:"episodes"`
+	Scope             string                `json:"scope"`
+	Options           json.RawMessage       `json:"options"`
+	PresetFingerprint string                `json:"presetFingerprint"`
+	Proof             string                `json:"proof"`
+	Files             []torrentfiles.File   `json:"files"`
+}
+type FileSelectionSource struct {
+	SubscriptionID int64 `json:"subscriptionId,string"`
+	Season         int   `json:"season"`
+	Total          int   `json:"total"`
+	Episodes       []int `json:"episodes"`
 }
 type FileSelection struct {
 	Definition  FileSelectionDefinition `json:"-"`
@@ -59,7 +66,7 @@ func validSelectionID(id string) bool {
 	return true
 }
 func validSelection(d FileSelectionDefinition) bool {
-	if d.Version != 1 || !validSelectionID(d.ID) || d.DownloaderID < 1 || d.SubscriptionID < 1 || d.DownloaderType != "qbittorrent" && d.DownloaderType != "transmission" || !validSeedingDigest(d.ConfigDigest) || !validSeedingDigest(d.Scope) || !validSeedingDigest(d.InfoHash) && len(d.InfoHash) != 40 || len(d.InfoHash) == 64 && d.DownloaderType != "qbittorrent" || len(d.Title) == 0 || len(d.Title) > 4096 || d.Season < 0 || d.Season > 1000 || len(d.Episodes) == 0 || len(d.Episodes) > 10000 || !slices.IsSorted(d.Episodes) || len(d.Options) > 32<<10 || !json.Valid(d.Options) || len(d.Proof) > 2<<20 || !json.Valid([]byte(d.Proof)) {
+	if d.Version != 1 && d.Version != 2 || !validSelectionID(d.ID) || d.DownloaderID < 1 || d.SubscriptionID < 1 || d.DownloaderType != "qbittorrent" && d.DownloaderType != "transmission" || !validSeedingDigest(d.ConfigDigest) || !validSeedingDigest(d.Scope) || !validSeedingDigest(d.InfoHash) && len(d.InfoHash) != 40 || len(d.InfoHash) == 64 && d.DownloaderType != "qbittorrent" || len(d.Title) == 0 || len(d.Title) > 4096 || d.Season < 0 || d.Season > 1000 || len(d.Episodes) == 0 || len(d.Episodes) > 10000 || !slices.IsSorted(d.Episodes) || len(d.Options) > 32<<10 || !json.Valid(d.Options) || len(d.Proof) > 2<<20 || !json.Valid([]byte(d.Proof)) {
 		return false
 	}
 	for i, n := range d.Episodes {
@@ -73,6 +80,26 @@ func validSelection(d FileSelectionDefinition) bool {
 				return false
 			}
 		}
+	}
+	if d.Version == 1 && len(d.Sources) != 0 || d.Version == 2 && (len(d.Sources) == 0 || len(d.Sources) > 100) {
+		return false
+	}
+	lead := d.Version == 1
+	for i, source := range d.Sources {
+		if source.SubscriptionID < 1 || i > 0 && d.Sources[i-1].SubscriptionID >= source.SubscriptionID || source.Season < 0 || source.Season > 1000 || source.Total < 1 || source.Total > 10000 || len(source.Episodes) == 0 || !slices.IsSorted(source.Episodes) {
+			return false
+		}
+		for j, n := range source.Episodes {
+			if n < 1 || n > source.Total || j > 0 && source.Episodes[j-1] == n {
+				return false
+			}
+		}
+		if source.SubscriptionID == d.SubscriptionID {
+			lead = source.Season == d.Season && slices.Equal(source.Episodes, d.Episodes)
+		}
+	}
+	if !lead {
+		return false
 	}
 	files, err := torrentfiles.Normalize(d.Files)
 	return err == nil && slices.Equal(files, d.Files) && len(torrentfiles.IDs(files, true)) > 0

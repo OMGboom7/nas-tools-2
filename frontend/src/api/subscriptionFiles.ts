@@ -1,6 +1,7 @@
 import {ApiError} from "./client";
 export type TorrentFile={index:number;path:string;size:string;selected:boolean;padding?:boolean};
-export type FileSelection={id:string;downloaderId:string;downloaderType:"qbittorrent"|"transmission";title:string;subscriptionId:string;season:number;episodes:number[];infoHash:string;state:"adding"|"added"|"unwanting"|"unwanted"|"wanting"|"selected"|"starting"|"ready"|"rejected";sourceRecorded:boolean;files:TorrentFile[]};
+export type FileSeason={subscriptionId:string;season:number;total:number;episodes:number[]};
+export type FileSelection={id:string;downloaderId:string;downloaderType:"qbittorrent"|"transmission";title:string;subscriptionId:string;season:number;episodes:number[];infoHash:string;state:"adding"|"added"|"unwanting"|"unwanted"|"wanting"|"selected"|"starting"|"ready"|"rejected";sourceRecorded:boolean;files:TorrentFile[];seasons?:FileSeason[]};
 export type FileReview={receipt:FileSelection;current:{hash:string;directory:string;labels:string[];state:string;paused:boolean;files:TorrentFile[]}|null;next:"none"|"adopt-add"|"settings"|"adopt-settings"|"select"|"adopt-unwanted"|"adopt-selected"|"start"|"acknowledge"|"record";actor:string;presetEvidence:string;fingerprint:string};
 const hex=(v:unknown,n:number):v is string=>typeof v==="string"&&new RegExp("^[a-f0-9]{"+n+"}$").test(v);
 const bounded=(v:unknown,n=4096):v is string=>typeof v==="string"&&v.length<=n&&!/[\x00-\x1f\x7f]/.test(v);
@@ -11,6 +12,10 @@ export function validTorrentFiles(v:TorrentFile[]):boolean{
  return v.every(f=>{if(!f||!Number.isSafeInteger(f.index)||f.index<0||f.index>1000000||indexes.has(f.index)||!bounded(f.path)||!f.path||f.path.includes("\\")||f.path.includes(":")||f.path.split("/").some(p=>!p||p==="."||p==="..")||paths.has(f.path.toLowerCase())||!integer(f.size,true)||typeof f.selected!=="boolean"||f.padding!==undefined&&typeof f.padding!=="boolean"||f.padding&&f.selected)return false;indexes.add(f.index);paths.add(f.path.toLowerCase());return true});
 }
 export function validFileSelection(v:FileSelection):boolean{
+ if(v?.seasons!==undefined){
+  const sources=v.seasons;
+  if(!Array.isArray(sources)||sources.length<1||sources.length>100||!sources.every((s,i)=>!!s&&integer(s.subscriptionId)&&(!i||BigInt(s.subscriptionId)>BigInt(sources[i-1].subscriptionId))&&Number.isSafeInteger(s.season)&&s.season>=0&&s.season<=1000&&Number.isSafeInteger(s.total)&&s.total>0&&s.total<=10000&&eps(s.episodes)&&s.episodes.every(n=>n<=s.total))||!sources.some(s=>s.subscriptionId===v.subscriptionId&&s.season===v.season&&JSON.stringify(s.episodes)===JSON.stringify(v.episodes)))return false;
+ }
  return !!v&&hex(v.id,32)&&integer(v.downloaderId)&&integer(v.subscriptionId)&&["qbittorrent","transmission"].includes(v.downloaderType)&&bounded(v.title)&&!!v.title&&Number.isSafeInteger(v.season)&&v.season>=0&&v.season<=1000&&eps(v.episodes)&&(hex(v.infoHash,40)||v.downloaderType==="qbittorrent"&&hex(v.infoHash,64))&&["adding","added","unwanting","unwanted","wanting","selected","starting","ready","rejected"].includes(v.state)&&typeof v.sourceRecorded==="boolean"&&(!v.sourceRecorded||v.state==="ready")&&validTorrentFiles(v.files)&&v.files.some(f=>f.selected);
 }
 export function validFileReview(v:FileReview):boolean{
@@ -42,9 +47,9 @@ function endpoint(id:string){if(!hex(id,32))throw new ApiError("需要完整文�
 export async function getFileSelection(token:string,id:string):Promise<FileSelection>{const v=await request<FileSelection>(token,endpoint(id));if(!validFileSelection(v)||v.id!==id)throw new ApiError("原文件选择回执未核实",503);return v}
 export async function getFileSelections(token:string,page=1):Promise<FileSelection[]>{if(!Number.isSafeInteger(page)||page<1||page>10000)throw new ApiError("无效回执页码",400);const v=await request<FileSelection[]>(token,"/api/v1/subscription-file-selections?page="+page);if(!Array.isArray(v)||v.length>30||!v.every(validFileSelection))throw new ApiError("文件选择清单未核实",503);return v}
 export async function reviewFileSelection(token:string,id:string):Promise<FileReview>{const v=await request<FileReview>(token,endpoint(id)+"/review",{});if(!validFileReview(v)||v.receipt.id!==id)throw new ApiError("原文件选择审核未核实",503);return v}
-export async function recoverFileSelection(token:string,v:FileReview,confirm=false,flags:{files?:boolean;settings?:boolean;start?:boolean;record?:boolean}={}):Promise<FileSelection>{
- if(!validFileReview(v)||v.next==="none"||!confirm||v.next==="select"&&!flags.files||v.next==="settings"&&!flags.settings||v.next==="start"&&!flags.start||v.next==="record"&&!flags.record)throw new ApiError("先重新审核原范围并独立确认下一阶段",400);
- const out=await request<FileSelection>(token,endpoint(v.receipt.id)+"/recover",{fingerprint:v.fingerprint,confirm:true,confirmFiles:flags.files===true,confirmSettings:flags.settings===true,confirmStart:flags.start===true,confirmRecord:flags.record===true});
+export async function recoverFileSelection(token:string,v:FileReview,confirm=false,flags:{files?:boolean;settings?:boolean;start?:boolean;record?:boolean;seasons?:boolean}={}):Promise<FileSelection>{
+ if(!validFileReview(v)||!!v.receipt.seasons?.length&&!flags.seasons||v.next==="none"||!confirm||v.next==="select"&&!flags.files||v.next==="settings"&&!flags.settings||v.next==="start"&&!flags.start||v.next==="record"&&!flags.record)throw new ApiError("先重新审核原范围并独立确认下一阶段",400);
+ const out=await request<FileSelection>(token,endpoint(v.receipt.id)+"/recover",{fingerprint:v.fingerprint,confirm:true,confirmFiles:flags.files===true,confirmSettings:flags.settings===true,confirmStart:flags.start===true,confirmRecord:flags.record===true,confirmSeasons:flags.seasons===true});
  const states:Record<string,FileSelection["state"]>={"adopt-add":"added","adopt-unwanted":"unwanted","adopt-selected":"selected","adopt-settings":"added",settings:"added",select:"selected",start:"ready",acknowledge:"ready",record:"ready"};
- if(!validFileSelection(out)||out.state!==states[v.next]||v.next==="record"&&!out.sourceRecorded||out.id!==v.receipt.id||out.infoHash!==v.receipt.infoHash||out.subscriptionId!==v.receipt.subscriptionId||out.downloaderId!==v.receipt.downloaderId||JSON.stringify(out.files)!==JSON.stringify(v.receipt.files))throw new ApiError("恢复回执未核实，只读查回原编号，不要重发",503);return out;
+ if(!validFileSelection(out)||out.state!==states[v.next]||v.next==="record"&&!out.sourceRecorded||JSON.stringify(out.seasons)!==JSON.stringify(v.receipt.seasons)||out.id!==v.receipt.id||out.infoHash!==v.receipt.infoHash||out.subscriptionId!==v.receipt.subscriptionId||out.downloaderId!==v.receipt.downloaderId||JSON.stringify(out.files)!==JSON.stringify(v.receipt.files))throw new ApiError("恢复回执未核实，只读查回原编号，不要重发",503);return out;
 }

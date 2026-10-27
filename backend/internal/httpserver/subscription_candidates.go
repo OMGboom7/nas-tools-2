@@ -17,6 +17,7 @@ import (
 )
 
 type subscriptionCandidate struct {
+	SeasonRange []int  `json:"seasonRange,omitempty"`
 	SelectFiles bool   `json:"fileSelectionRequired,omitempty"`
 	Title       string `json:"title"`
 	Site        string `json:"site"`
@@ -127,7 +128,11 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 			if info.Season != nil {
 				season = *info.Season
 			}
-			if season != input.Season || info.EndSeason != nil && *info.EndSeason != season {
+			endSeason := season
+			if info.EndSeason != nil {
+				endSeason = *info.EndSeason
+			}
+			if endSeason < season || endSeason-season >= 100 || input.Season < season || input.Season > endSeason {
 				continue
 			}
 			begin, end := 1, input.Total
@@ -198,7 +203,11 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 		if input.Upgrade && (groupID < 1 || result.Order < 1 || result.Order <= input.PreviousOrder && input.PreviousOrder != 0 || input.Order != 0 && (result.Order != input.Order || groupID != input.UpgradeGroup)) {
 			continue
 		}
-		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, SelectFiles: input.TV && (item.meta.Episodes.Episode == nil || len(declared) != len(episodes)), resource: item.resource, site: item.site, siteOrder: item.siteOrder, groupID: groupID, topOrder: top})
+		candidate := subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, SelectFiles: input.TV && (item.meta.Episodes.Episode == nil || item.meta.Episodes.EndSeason != nil || len(declared) != len(episodes)), resource: item.resource, site: item.site, siteOrder: item.siteOrder, groupID: groupID, topOrder: top}
+		if input.TV && item.meta.Episodes.Season != nil && item.meta.Episodes.EndSeason != nil && *item.meta.Episodes.EndSeason > *item.meta.Episodes.Season {
+			candidate.SeasonRange = []int{*item.meta.Episodes.Season, *item.meta.Episodes.EndSeason}
+		}
+		candidates = append(candidates, candidate)
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]

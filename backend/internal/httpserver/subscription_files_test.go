@@ -436,7 +436,7 @@ func (w *subscriptionFilesFixture) review(t *testing.T) subscriptionFilesReview 
 }
 func (w *subscriptionFilesFixture) recover(t *testing.T, r subscriptionFilesReview, all bool) int {
 	t.Helper()
-	raw, _ := json.Marshal(map[string]any{"confirm": true, "fingerprint": r.Fingerprint, "confirmFiles": all, "confirmSettings": all, "confirmStart": all, "confirmRecord": all})
+	raw, _ := json.Marshal(map[string]any{"confirm": true, "fingerprint": r.Fingerprint, "confirmFiles": all, "confirmSettings": all, "confirmStart": all, "confirmRecord": all, "confirmSeasons": all})
 	res := nativeJSONRequest(w.handler, "POST", "/api/v1/subscription-file-selections/"+r.Receipt.ID+"/recover", w.token, string(raw))
 	if res.Code != 200 && all {
 		t.Fatal("recovery", res.Code, res.Body.String(), r.Next)

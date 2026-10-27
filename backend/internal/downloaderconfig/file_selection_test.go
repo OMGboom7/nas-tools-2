@@ -53,6 +53,31 @@ func TestFileSelectionReadOnlyNoDDLAndHashScopeReservedAtomically(t *testing.T) 
 		t.Fatal(rows, err)
 	}
 }
+
+func TestFileSelectionCohortSourceIdentityIsBoundedAndCanonical(t *testing.T) {
+	_, d := storeSelectionFixture(t)
+	d.Version = 2
+	d.Sources = []FileSelectionSource{{SubscriptionID: 2, Season: 1, Total: 3, Episodes: []int{2}}, {SubscriptionID: 9007199254740993, Season: 2, Total: 2, Episodes: []int{1, 2}}}
+	if !validSelection(d) {
+		t.Fatal("valid joint definition rejected")
+	}
+	for _, sources := range [][]FileSelectionSource{
+		nil, {d.Sources[1]}, {d.Sources[1], d.Sources[0]}, {d.Sources[0], d.Sources[0]},
+		{{SubscriptionID: 2, Season: 1, Total: 3, Episodes: []int{1}}},
+		{{SubscriptionID: 2, Season: 1, Total: 0, Episodes: []int{2}}},
+		{{SubscriptionID: 2, Season: 1, Total: 3, Episodes: []int{2}}, {SubscriptionID: 3, Season: 2, Total: 1, Episodes: []int{2}}},
+	} {
+		bad := d
+		bad.Sources = sources
+		if validSelection(bad) {
+			t.Fatal("invalid joint definition accepted", sources)
+		}
+	}
+	d.Version = 1
+	if validSelection(d) {
+		t.Fatal("legacy definition adopted new joint sources")
+	}
+}
 func TestFileSelectionIgnoredIntentOrActionCannotFakeSuccess(t *testing.T) {
 	for _, table := range []string{"GO_TORRENT_FILE_SELECTIONS", "GO_TORRENT_FILE_SELECTION_SCOPES", "GO_TORRENT_FILE_SELECTION_ACTIONS"} {
 		t.Run(table, func(t *testing.T) {

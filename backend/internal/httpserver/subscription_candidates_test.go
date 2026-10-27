@@ -81,6 +81,26 @@ func TestSubscriptionSeasonPackRequiresManifestEvenWhenEntireSeasonIsMissing(t *
 	}
 }
 
+func TestSubscriptionCrossSeasonCandidateCarriesRangeButOnlyTheRequestedSeasonEpisodes(t *testing.T) {
+	resource := candidateFixture(t, "Show.S01-S02.1080p.WEB-DL", 1, nil)
+	for _, season := range []int{1, 2, 3} {
+		input := subscriptionCandidateInput{TV: true, Season: season, Total: 3, Missing: []int{2, 3}, Group: -1}
+		selected, _, err := planSubscriptionCandidates(t.Context(), input, nil, []identifiedSubscriptionResource{resource})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if season == 3 {
+			if len(selected) != 0 {
+				t.Fatal("out-of-range season", selected)
+			}
+			continue
+		}
+		if len(selected) != 1 || !selected[0].SelectFiles || len(selected[0].SeasonRange) != 2 || selected[0].SeasonRange[0] != 1 || selected[0].SeasonRange[1] != 2 || len(selected[0].Episodes) != 2 {
+			t.Fatal(selected)
+		}
+	}
+}
+
 func TestSubscriptionCandidatesKeepUnknownPromotionAndMovieRanking(t *testing.T) {
 	low, high := int64(1), int64(9)
 	resources := []identifiedSubscriptionResource{candidateFixture(t, "Movie.2026.1080p.WEB-DL", 1, nil), candidateFixture(t, "Movie.2026.1080p.WEB-DL", 2, &low), candidateFixture(t, "Movie.2026.1080p.WEB-DL", 3, &high)}

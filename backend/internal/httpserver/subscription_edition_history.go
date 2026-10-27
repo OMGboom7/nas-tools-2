@@ -12,10 +12,11 @@ import (
 )
 
 type editionSourceArchive struct {
-	Version  int
-	Kind     string
-	Raw      map[string]any
-	Episodes []map[string]any
+	Version         int
+	Kind            string
+	Raw             map[string]any
+	Episodes        []map[string]any
+	FileSelectionID string `json:"fileSelectionId,omitempty"`
 }
 
 func editionEpisodeRows(ctx context.Context, r fuzzyReader, id int64) ([]map[string]any, error) {
@@ -54,7 +55,7 @@ func editionEpisodeRows(ctx context.Context, r fuzzyReader, id int64) ([]map[str
 	}
 	return out, rows.Err()
 }
-func archiveEditionSource(ctx context.Context, tx *sql.Tx, kind string, historyID int64, raw map[string]any) error {
+func archiveEditionSource(ctx context.Context, tx *sql.Tx, kind string, historyID int64, raw map[string]any, selectionIDs ...string) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS GO_SUBSCRIPTION_EDITION_ARCHIVES(HISTORY_ID INTEGER PRIMARY KEY,DOCUMENT TEXT NOT NULL,HISTORY_FP TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_SUBSCRIPTION_EDITION_RESTORES(REQUEST_ID TEXT PRIMARY KEY,HISTORY_ID INTEGER NOT NULL,ARCHIVE_FP TEXT NOT NULL,NEW_ID INTEGER NOT NULL,CREATED TEXT NOT NULL)`,
@@ -64,6 +65,15 @@ func archiveEditionSource(ctx context.Context, tx *sql.Tx, kind string, historyI
 		}
 	}
 	d := editionSourceArchive{Version: 1, Kind: kind, Raw: raw, Episodes: []map[string]any{}}
+	if len(selectionIDs) > 1 {
+		return errFuzzyScope
+	}
+	if !truthy(text(normalizeNativeSubscriptionRow(raw)["over_edition"])) {
+		if len(selectionIDs) != 1 || !fuzzyHex(selectionIDs[0], 32) || truthy(text(normalizeNativeSubscriptionRow(raw)["fuzzy_match"])) {
+			return errFuzzyScope
+		}
+		d.Version, d.FileSelectionID = 2, selectionIDs[0]
+	}
 	if kind == "TV" {
 		var err error
 		id, _ := strconv.ParseInt(text(raw["ID"]), 10, 64)
@@ -99,7 +109,11 @@ func readEditionArchive(ctx context.Context, r fuzzyReader, kind string, id int6
 		return nil, nil
 	}
 	var d editionSourceArchive
-	if decodeFuzzyDocument(raw, &d, 10<<20) != nil || d.Version != 1 || d.Kind != kind || d.Raw == nil || len(d.Raw) > 256 || len(d.Episodes) > 10000 || !truthy(text(normalizeNativeSubscriptionRow(d.Raw)["over_edition"])) {
+	if decodeFuzzyDocument(raw, &d, 10<<20) != nil || d.Version != 1 && d.Version != 2 || d.Kind != kind || d.Raw == nil || len(d.Raw) > 256 || len(d.Episodes) > 10000 {
+		return nil, errFuzzyScope
+	}
+	source := normalizeNativeSubscriptionRow(d.Raw)
+	if d.Version == 1 && (!truthy(text(source["over_edition"])) || d.FileSelectionID != "") || d.Version == 2 && (truthy(text(source["over_edition"])) || truthy(text(source["fuzzy_match"])) || !fuzzyHex(d.FileSelectionID, 32)) {
 		return nil, errFuzzyScope
 	}
 	for _, v := range d.Raw {

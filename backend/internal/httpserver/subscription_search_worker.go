@@ -287,7 +287,14 @@ func (api *subscriptionSearchRunner) executeSearchBatch(ctx context.Context, sta
 	var executions sync.WaitGroup
 	defer executions.Wait()
 	capacity := make(chan struct{}, 4)
-	for _, job := range jobs {
+	groups, err := api.groupSeasonJobs(ctx, jobs)
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("native subscription season groups could not be read")
+		}
+		return
+	}
+	for _, group := range groups {
 		select {
 		case <-ctx.Done():
 			return
@@ -298,22 +305,31 @@ func (api *subscriptionSearchRunner) executeSearchBatch(ctx context.Context, sta
 			return
 		}
 		executions.Add(1)
-		go func(job scheduledSubscription) {
+		go func(group []scheduledSubscription) {
 			defer executions.Done()
 			defer func() { <-capacity }()
-			api.executeScheduledSearch(ctx, job, interval)
-		}(job)
+			completed := map[string]bool{}
+			for _, job := range group {
+				if completed[strconv.FormatInt(job.id, 10)] {
+					continue
+				}
+				result := api.executeScheduledSearch(ctx, job, interval)
+				for _, member := range result.Seasons {
+					completed[member.SubscriptionID] = member.Completed
+				}
+			}
+		}(group)
 	}
 }
 
-func (api *subscriptionSearchRunner) executeScheduledSearch(ctx context.Context, job scheduledSubscription, interval time.Duration) {
+func (api *subscriptionSearchRunner) executeScheduledSearch(ctx context.Context, job scheduledSubscription, interval time.Duration) subscriptionSearchRunResult {
 	if ctx.Err() != nil {
-		return
+		return subscriptionSearchRunResult{}
 	}
 	if job.state == "R" {
 		current, _, err := api.recurringInterval()
 		if err != nil || current == 0 || current != interval {
-			return
+			return subscriptionSearchRunResult{}
 		}
 	}
 	result, failure := api.executeForState(ctx, job.kind, job.id, job.state)
@@ -321,8 +337,9 @@ func (api *subscriptionSearchRunner) executeScheduledSearch(ctx context.Context,
 		if ctx.Err() == nil {
 			slog.Warn("native subscription scheduled search failed or requires verification", "type", job.kind, "subscription_id", job.id, "status", failure.status)
 		}
-		return
+		return result
 	}
 	// No title, torrent URL, path, token or upstream error text in worker logs.
 	slog.Info("native subscription scheduled search finished", "type", job.kind, "subscription_id", job.id, "submitted", result.Submitted, "remaining", len(result.Remaining), "completed", result.Completed)
+	return result
 }

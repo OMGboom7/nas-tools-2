@@ -18,6 +18,7 @@ import (
 )
 
 var ErrManifest = errors.New("torrent file manifest or selection is invalid")
+var ErrNoCoverage = errors.Join(ErrManifest, errors.New("no selected episode is present"))
 
 const MaxFiles = 10000
 
@@ -176,6 +177,15 @@ func video(name string) bool {
 // Plan selects only indivisible files wholly within the requested episodes.
 // The caller has already verified the torrent's media identity and fixed season.
 func Plan(files []File, season, total int, target []int) ([]File, []int, error) {
+	return plan(files, season, total, target, false)
+}
+
+// PlanExactSeason never assigns an unqualified E01 to several seasons of a
+// mixed pack. A filename or its nearest season directory must identify it.
+func PlanExactSeason(files []File, season, total int, target []int) ([]File, []int, error) {
+	return plan(files, season, total, target, true)
+}
+func plan(files []File, season, total int, target []int, requireSeason bool) ([]File, []int, error) {
 	out, err := Normalize(files)
 	if err != nil || season < 0 || season > 1000 || total < 1 || total > 10000 || len(target) == 0 || len(target) > total {
 		return nil, nil, ErrManifest
@@ -207,6 +217,7 @@ func Plan(files []File, season, total int, target []int) ([]File, []int, error) 
 		if info.Season != nil && (*info.Season != season || info.EndSeason != nil && *info.EndSeason != season) {
 			continue
 		}
+		knownSeason := info.Season != nil
 		if info.Season == nil {
 			// Prefer the nearest explicit directory season; do not inherit a mixed pack.
 			for dir := path.Dir(f.Path); dir != "." && dir != "/"; dir = path.Dir(dir) {
@@ -215,6 +226,7 @@ func Plan(files []File, season, total int, target []int) ([]File, []int, error) 
 					return nil, nil, ErrManifest
 				}
 				if parent.Season != nil {
+					knownSeason = true
 					if parent.EndSeason != nil && *parent.EndSeason != season {
 						info.EndSeason = parent.EndSeason
 					}
@@ -227,6 +239,9 @@ func Plan(files []File, season, total int, target []int) ([]File, []int, error) 
 			if info.Season != nil && *info.Season != season || info.EndSeason != nil && *info.EndSeason != season {
 				continue
 			}
+		}
+		if requireSeason && !knownSeason {
+			continue
 		}
 		eps, err := fileEpisodes(base, total)
 		if err != nil {
@@ -249,7 +264,7 @@ func Plan(files []File, season, total int, target []int) ([]File, []int, error) 
 		stems[strings.TrimSuffix(f.Path, path.Ext(f.Path))] = true
 	}
 	if len(covered) == 0 {
-		return nil, nil, ErrManifest
+		return nil, nil, ErrNoCoverage
 	}
 	// Only known same-video companions, never a similarly numbered executable.
 	for i := range out {

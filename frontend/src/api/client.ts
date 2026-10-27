@@ -1245,6 +1245,7 @@ export async function abandonOrganizationJob(token: string, id: string, confirmD
 }
 
 export type SubscriptionSearchRunResult = {
+  seasons?: {subscriptionId:string;season:number;remaining:number[];completed:boolean}[];
   fileSelectionId?:string;
   submitted: number;
   remaining: number[];

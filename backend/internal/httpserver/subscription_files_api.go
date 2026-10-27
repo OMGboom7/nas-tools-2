@@ -13,22 +13,23 @@ import (
 )
 
 type subscriptionFilesPublic struct {
-	ID             string              `json:"id"`
-	DownloaderID   string              `json:"downloaderId"`
-	DownloaderType string              `json:"downloaderType"`
-	Title          string              `json:"title"`
-	SubscriptionID string              `json:"subscriptionId"`
-	Season         int                 `json:"season"`
-	Episodes       []int               `json:"episodes"`
-	InfoHash       string              `json:"infoHash"`
-	State          string              `json:"state"`
-	Recorded       bool                `json:"sourceRecorded"`
-	Files          []torrentfiles.File `json:"files"`
+	ID             string                                 `json:"id"`
+	DownloaderID   string                                 `json:"downloaderId"`
+	DownloaderType string                                 `json:"downloaderType"`
+	Title          string                                 `json:"title"`
+	SubscriptionID string                                 `json:"subscriptionId"`
+	Season         int                                    `json:"season"`
+	Episodes       []int                                  `json:"episodes"`
+	InfoHash       string                                 `json:"infoHash"`
+	State          string                                 `json:"state"`
+	Recorded       bool                                   `json:"sourceRecorded"`
+	Files          []torrentfiles.File                    `json:"files"`
+	Seasons        []downloaderconfig.FileSelectionSource `json:"seasons,omitempty"`
 }
 
 func publicSubscriptionFiles(p downloaderconfig.FileSelection) subscriptionFilesPublic {
 	d := p.Definition
-	return subscriptionFilesPublic{d.ID, strconv.FormatInt(d.DownloaderID, 10), d.DownloaderType, d.Title, strconv.FormatInt(d.SubscriptionID, 10), d.Season, append([]int{}, d.Episodes...), d.InfoHash, p.State, p.Committed, append([]torrentfiles.File{}, d.Files...)}
+	return subscriptionFilesPublic{d.ID, strconv.FormatInt(d.DownloaderID, 10), d.DownloaderType, d.Title, strconv.FormatInt(d.SubscriptionID, 10), d.Season, append([]int{}, d.Episodes...), d.InfoHash, p.State, p.Committed, append([]torrentfiles.File{}, d.Files...), append([]downloaderconfig.FileSelectionSource{}, d.Sources...)}
 }
 
 type subscriptionFilesReview struct {
@@ -354,6 +355,7 @@ func (api *subscriptionSearchRunner) serveSubscriptionFiles(w http.ResponseWrite
 		ConfirmSettings bool   `json:"confirmSettings"`
 		ConfirmStart    bool   `json:"confirmStart"`
 		ConfirmRecord   bool   `json:"confirmRecord"`
+		ConfirmSeasons  bool   `json:"confirmSeasons"`
 	}
 	if !decodeOrganizationRequest(w, r, &in, "invalid file selection action") {
 		return
@@ -400,7 +402,7 @@ func (api *subscriptionSearchRunner) serveSubscriptionFiles(w http.ResponseWrite
 		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": review})
 		return
 	}
-	if !in.Confirm || in.Fingerprint != review.Fingerprint || review.Next == "none" || review.Next == "select" && !in.ConfirmFiles || review.Next == "settings" && !in.ConfirmSettings || review.Next == "start" && !in.ConfirmStart || review.Next == "record" && !in.ConfirmRecord {
+	if len(p.Definition.Sources) > 0 && !in.ConfirmSeasons || !in.Confirm || in.Fingerprint != review.Fingerprint || review.Next == "none" || review.Next == "select" && !in.ConfirmFiles || review.Next == "settings" && !in.ConfirmSettings || review.Next == "start" && !in.ConfirmStart || review.Next == "record" && !in.ConfirmRecord {
 		writeAPIError(w, 409, 409, "fresh original review and independent next-step confirmation required")
 		return
 	}

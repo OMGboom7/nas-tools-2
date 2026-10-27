@@ -33,7 +33,7 @@ func selectionGuard(id int64, hash string) string {
 
 // Season packs and resources whose declared scope needs splitting enter this
 // flow. Explicit, wholly wanted episode releases keep their original semantics.
-func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Context, kind string, id int64, plan *subscriptionSearchPlan, candidate *subscriptionCandidate, item downloaderconfig.Downloader, options downloadAddOptions, magnet string, torrent []byte) ([]byte, downloadAddOptions, error) {
+func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Context, kind string, id int64, plan *subscriptionSearchPlan, candidate *subscriptionCandidate, item downloaderconfig.Downloader, options downloadAddOptions, magnet string, torrent []byte, providers ...subscriptionResourceProvider) ([]byte, downloadAddOptions, error) {
 	if kind != "TV" || !candidate.SelectFiles {
 		return torrent, options, nil
 	}
@@ -54,7 +54,20 @@ func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Contex
 	if magnet != "" && magnetInfoHash(magnet) != meta.InfoHash {
 		return nil, options, torrentfiles.ErrManifest
 	}
-	files, episodes, err := torrentfiles.Plan(files, plan.season, plan.total, candidate.Episodes)
+	var episodes []int
+	var members []subscriptionSeasonMember
+	var provider subscriptionResourceProvider
+	if len(providers) > 1 {
+		return nil, options, errSubscriptionSubmissionConflict
+	}
+	if len(providers) == 1 {
+		provider = providers[0]
+	}
+	if len(candidate.SeasonRange) > 0 {
+		files, episodes, members, err = api.planSeasonCohort(ctx, id, *plan, *candidate, files, provider)
+	} else {
+		files, episodes, err = torrentfiles.Plan(files, plan.season, plan.total, candidate.Episodes)
+	}
 	if err != nil {
 		return nil, options, err
 	}
@@ -66,7 +79,15 @@ func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Contex
 	if len(d.ID) != 32 {
 		return nil, options, torrentfiles.ErrManifest
 	}
+	baseOptions := options
 	options.Tags = append(append([]string{}, options.Tags...), d.Marker())
+	plan.fileSelectionID = d.ID
+	if len(members) > 0 {
+		d.Version = 2
+		for _, m := range members {
+			d.Sources = append(d.Sources, downloaderconfig.FileSelectionSource{SubscriptionID: m.ID, Season: m.Plan.season, Total: m.Plan.total, Episodes: append([]int{}, m.Candidate.Episodes...)})
+		}
+	}
 	d.Options = mustFuzzyJSON(options)
 	download := api.planner.runner.download.service
 	d.PresetFingerprint = downloadProfileFingerprint(item, meta.InfoHash, options)
@@ -89,6 +110,9 @@ func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Contex
 		}
 		plan.raw = raw
 		plan.typedSource = true
+		if err := api.freezeSeasonMembers(ctx, tx, members, id, plan, item, baseOptions); err != nil {
+			return err
+		}
 		d.Scope = scope
 		return nil
 	})
@@ -120,6 +144,7 @@ func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Contex
 	candidate.Episodes = append([]int{}, episodes...)
 	plan.files = d
 	plan.fileSelectionID = d.ID
+	plan.cohort = members
 	return torrent, options, nil
 }
 func selectionOptions(d downloaderconfig.FileSelectionDefinition) (downloadAddOptions, error) {
@@ -135,6 +160,12 @@ func (api *subscriptionSearchRunner) checkSelectionSource(ctx context.Context, t
 	d := p.Definition
 	proof, plan, err := decodeSubscriptionProof(d.Proof)
 	if err != nil || proof.FileSelectionID != d.ID || proof.ProfileDigest != d.ProfileFingerprint() || proof.DownloaderID != d.DownloaderID || proof.DownloaderType != d.DownloaderType || proof.InfoHash != d.InfoHash || proof.Season != d.Season || !slices.Equal(proof.Episodes, d.Episodes) || text(plan.raw["ID"]) != strconv.FormatInt(d.SubscriptionID, 10) {
+		return downloaderconfig.ErrFileSelectionPending
+	}
+	if proof.Version == 5 {
+		return api.checkSeasonSelection(ctx, tx, p, proof, plan)
+	}
+	if d.Version != 1 || len(d.Sources) != 0 {
 		return downloaderconfig.ErrFileSelectionPending
 	}
 	expected, episodes, err := torrentfiles.Plan(d.Files, proof.Season, proof.Total, proof.Episodes)

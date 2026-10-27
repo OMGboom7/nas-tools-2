@@ -103,10 +103,14 @@ func (api *subscriptionRSSAPI) execute(ctx context.Context) (subscriptionRSSResu
 		return fail(422, "subscription RSS site limit exceeded")
 	}
 	batch := subscriptionRSSBatch{api: api, sites: sites, feeds: map[int64]*subscriptionFeedCache{}}
+	groups, err := api.runner.groupSeasonJobs(ctx, jobs)
+	if err != nil {
+		return fail(503, "subscription RSS season groups could not be verified")
+	}
 	var executions sync.WaitGroup
 	capacity := make(chan struct{}, 4)
 	var resultMu sync.Mutex
-	for _, job := range jobs {
+	for _, group := range groups {
 		select {
 		case <-ctx.Done():
 			executions.Wait()
@@ -119,27 +123,39 @@ func (api *subscriptionRSSAPI) execute(ctx context.Context) (subscriptionRSSResu
 			return fail(504, "subscription RSS scan was cancelled or timed out")
 		}
 		executions.Add(1)
-		go func(job scheduledSubscription) {
+		go func(group []scheduledSubscription) {
 			defer executions.Done()
 			defer func() { <-capacity }()
-			item, failure := api.runner.executeResources(ctx, job.kind, job.id, "R", batch.resources)
-			resultMu.Lock()
-			defer resultMu.Unlock()
-			result.Submitted += item.Submitted
-			if item.Queued {
-				result.Queued++
+			completed := map[string]bool{}
+			for _, job := range group {
+				if completed[strconv.FormatInt(job.id, 10)] {
+					resultMu.Lock()
+					result.Completed++
+					resultMu.Unlock()
+					continue
+				}
+				item, failure := api.runner.executeResources(ctx, job.kind, job.id, "R", batch.resources)
+				for _, member := range item.Seasons {
+					completed[member.SubscriptionID] = member.Completed
+				}
+				resultMu.Lock()
+				result.Submitted += item.Submitted
+				if item.Queued {
+					result.Queued++
+				}
+				if item.Skipped {
+					result.Skipped++
+				}
+				if item.Completed {
+					result.Completed++
+				}
+				if failure != nil {
+					result.Failed++
+					result.Failures = append(result.Failures, subscriptionRSSFailure{job.kind, job.id, failure.status})
+				}
+				resultMu.Unlock()
 			}
-			if item.Skipped {
-				result.Skipped++
-			}
-			if item.Completed {
-				result.Completed++
-			}
-			if failure != nil {
-				result.Failed++
-				result.Failures = append(result.Failures, subscriptionRSSFailure{job.kind, job.id, failure.status})
-			}
-		}(job)
+		}(group)
 	}
 	executions.Wait()
 	if ctx.Err() != nil {
