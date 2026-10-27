@@ -18,6 +18,7 @@ import { mediaDetailPath } from "../utils/mediaDetail";
 import { SubscriptionEditor } from "../components/SubscriptionEditor";
 import { FuzzySubscriptionManager } from "../components/FuzzySubscriptionManager";
 import {SubscriptionEditionManager} from "../components/SubscriptionEditionManager";
+import {SubscriptionFileSelectionManager} from "../components/SubscriptionFileSelectionManager";
 
 type SubscriptionsPageProps = {
   session: AuthSession;
@@ -44,6 +45,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   const [options, setOptions] = useState<SubscriptionOptions | null>(null);
   const [fuzzySelected,setFuzzySelected]=useState<{type:"MOV"|"TV";id:string;name:string}|null>(null);
   const [editionSelected,setEditionSelected]=useState<{type:"MOV"|"TV";id:string;name:string}|null>(null),[editionLookup,setEditionLookup]=useState("");
+  const [fileSelectionLookup,setFileSelectionLookup]=useState("");
 
   async function load(showLoading = false) {
     if (showLoading) setState({ kind: "loading" });
@@ -60,7 +62,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
   }
 
   useEffect(() => { void load(true); }, [session.token]);
-  useEffect(()=>{setFuzzySelected(null);setEditionSelected(null);setEditionLookup("")},[session.token]);
+  useEffect(()=>{setFuzzySelected(null);setEditionSelected(null);setEditionLookup("");setFileSelectionLookup("")},[session.token]);
 
   const filtered = useMemo(() => {
     if (state.kind !== "ready") return { items: [] as SubscriptionItem[], history: [] as SubscriptionHistory[] };
@@ -77,6 +79,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
     if (action === "remove" && !window.confirm(`确定删除“${item.name}”的订阅吗？删除后将停止后续搜索。`)) return;
     await runAction(`item-${item.type}-${item.id}`, async () => {
       const result = await controlSubscription(session.token, item.type, item.id, action);
+      if(result?.fileSelectionId)setFileSelectionLookup(result.fileSelectionId);
       if(result?.upgrade?.cycleId){setEditionLookup(result.upgrade.cycleId);setEditionSelected(result.completed?null:{type:item.type,id:item.id,name:item.name})}
       const message = action === "remove" ? `已删除“${item.name}”订阅`
         : action === "reconcile" ? `已核实下载器收到资源，已恢复“${item.name}”的订阅进度`
@@ -155,6 +158,7 @@ export function SubscriptionsPage({ session, currentPath, onNavigate, onLogout, 
         {notice && <div className={`subscription-notice is-${notice.kind}`} role="status">{notice.message}</div>}
         <FuzzySubscriptionManager token={session.token} selected={fuzzySelected} onClose={()=>setFuzzySelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
         <SubscriptionEditionManager token={session.token} selected={editionSelected} lastCycleId={editionLookup} onClose={()=>setEditionSelected(null)} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
+        <SubscriptionFileSelectionManager token={session.token} lastId={fileSelectionLookup} onSessionExpired={onSessionExpired} onChanged={()=>void load()}/>
         {state.kind === "loading" && <SubscriptionSkeleton />}
         {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>订阅数据暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load(true)}>重新加载</button></section>}
         {state.kind === "ready" && <>

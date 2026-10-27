@@ -163,6 +163,9 @@ func (service downloadService) submitTransmissionProfile(ctx context.Context, it
 	if advance("configured") != nil {
 		return "", downloaderconfig.ErrProfilePending
 	}
+	if applySubscriptionFileHook(ctx) != nil {
+		return "", downloaderconfig.ErrProfilePending
+	}
 	if !d.Options.Paused {
 		if advance("starting") != nil || c.Control(ctx, hash, "start") != nil {
 			return "", downloaderconfig.ErrProfilePending
@@ -217,6 +220,9 @@ type transmissionProfileReview struct {
 
 func (service downloadService) reviewTransmissionProfile(ctx context.Context, p downloaderconfig.TransmissionProfile, actor string) (transmissionProfileReview, error) {
 	r := transmissionProfileReview{}
+	if service.guardSelectionPresetRecovery(ctx, p.Definition.DownloaderID, p.Definition.InfoHash) != nil {
+		return r, downloaderconfig.ErrProfilePending
+	}
 	if p.State == "rejected" {
 		return r, downloaderconfig.ErrProfilePending
 	}

@@ -201,7 +201,7 @@ func nativeSubscriptionConfiguration(ctx context.Context, r fuzzyReader, service
 		parts[name] = v
 	}
 	settings := map[string]string{}
-	for _, key := range []string{"DefaultDownloader", "DefaultDownloadSetting", "UserInstalledPlugins", "plugin.CustomReleaseGroups", "plugin.Customization"} {
+	for _, key := range []string{"DefaultDownloader", "DefaultDownloadSetting", "UserInstalledPlugins", "UserIndexerSites", "plugin.Prowlarr", "plugin.Jackett", "plugin.CustomReleaseGroups", "plugin.Customization"} {
 		var value string
 		err := r.QueryRowContext(ctx, `SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1`, key).Scan(&value)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {

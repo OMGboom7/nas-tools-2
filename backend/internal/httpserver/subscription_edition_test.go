@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -104,7 +105,9 @@ func newEditionFixture(t *testing.T, tv, rss bool) *editionFixture {
 	}
 	f.titles, f.hashes = []string{"Movie.2026.1080p.WEB-DL"}, []int{71}
 	if tv {
-		f.titles = []string{"Show.S01.1080p.WEB-DL"}
+		// Quality-only fixtures use an explicit episode range. Season-pack
+		// completeness is covered with real metainfo in subscription_files_test.
+		f.titles = []string{"Show.S01E01-E03.1080p.WEB-DL"}
 	}
 	return f
 }
@@ -242,7 +245,7 @@ func TestEditionExplicitAbandonPreservesAcceptedAttemptsAndDoesNotStartNewCycle(
 	f.hashes = []int{101}
 	v := editionRunForTest(t, f)
 	old := v.Upgrade.CycleID
-	f.titles = []string{"Show.S01.1080p.WEB-DL"}
+	f.titles = []string{"Show.S01E01-E03.1080p.WEB-DL"}
 	f.hashes = []int{102}
 	if v := editionRunForTest(t, f); v.Submitted != 0 || f.adds != 1 {
 		t.Fatal("replaced active quality without explicit choice", v, f.adds)
@@ -532,8 +535,11 @@ func TestEditionWholeResourcePlanningKeepsCrossSeasonAndOutOfScopeEpisodesBlocke
 	}
 	f.titles = []string{"Show.S01E01-E03.1080p.WEB-DL"}
 	f.hashes = []int{114}
-	if v := editionRunForTest(t, f); v.Submitted != 0 || v.Completed || f.adds != 1 {
-		t.Fatal("missing intersection authorized entire overlapping pack", v, f.adds)
+	// The overlap now enters real file selection, not a whole-pack submission.
+	// Keep this legacy fixture entirely offline when its magnet has no manifest.
+	t.Setenv("NASTOOL_ARIA2_BINARY", filepath.Join(t.TempDir(), "missing"))
+	if response := f.execute(); response.Code != 422 || f.adds != 1 {
+		t.Fatal("unverified magnet authorized whole overlap", response.Code, response.Body.String(), f.adds)
 	}
 }
 

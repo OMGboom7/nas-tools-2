@@ -159,6 +159,13 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		hash = metadata.InfoHash
 	}
 	if hash != "" && service.downloaders != nil {
+		if p, err := service.downloaders.FindFileSelection(ctx, item.ID, hash); err != nil {
+			return "", true, err
+		} else if p != nil {
+			if _, own := ctx.Value(selectionHookKey{}).(selectionHook); !own {
+				return "", true, downloaderconfig.ErrFileSelectionPending
+			}
+		}
 		guarded, close, err := service.seedingGuard(ctx, item.ID, hash)
 		if err != nil {
 			return "", true, errPTAdmissionBlocked

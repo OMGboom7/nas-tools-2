@@ -67,7 +67,7 @@ func ensureSubscriptionSubmissionSchema(ctx context.Context, tx *sql.Tx) error {
 // Compare all columns, including unknown user fields. The snapshot is read
 // before external lookups; edits, deletion and metadata refresh invalidate it.
 func verifySubscriptionSnapshot(ctx context.Context, tx *sql.Tx, kind string, id int64, plan subscriptionSearchPlan) error {
-	if plan.fuzzy || plan.edition != nil {
+	if plan.fuzzy || plan.edition != nil || plan.typedSource {
 		if err := verifyFuzzySource(ctx, tx, kind, id, plan.raw); err != nil {
 			return err
 		}
@@ -130,6 +130,12 @@ func (service subscriptionService) reserveSubscriptionSubmission(ctx context.Con
 	if err := service.checkEditionSnapshot(ctx, tx, kind, id, plan); err != nil {
 		return "", err
 	}
+	if plan.files != nil {
+		scope, err := nativeSubscriptionConfiguration(ctx, tx, service)
+		if err != nil || scope != plan.files.Scope {
+			return "", errSubscriptionSubmissionConflict
+		}
+	}
 	token, err := reserveSubscriptionSubmissionTx(ctx, tx, kind, id, plan, candidate, proofs...)
 	if err != nil {
 		return "", err
@@ -180,7 +186,7 @@ func reserveSubscriptionSubmissionTx(ctx context.Context, tx *sql.Tx, kind strin
 		return "", err
 	}
 	token := hex.EncodeToString(owner)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(RESOURCE_KEY,OWNER,KIND,SUB_ID,MEDIA_ID,SEASON,EPISODES) VALUES (?,?,?,?,?,?,?) ON CONFLICT(RESOURCE_KEY) DO UPDATE SET OWNER=excluded.OWNER,KIND=excluded.KIND,SUB_ID=excluded.SUB_ID,MEDIA_ID=excluded.MEDIA_ID,SEASON=excluded.SEASON,EPISODES=excluded.EPISODES`, key, token, kind, id, plan.mediaID, plan.season, subscriptionEpisodeString(candidate.Episodes)); err != nil {
+	if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_DOWNLOAD_CLAIMS(RESOURCE_KEY,OWNER,KIND,SUB_ID,MEDIA_ID,SEASON,EPISODES) VALUES (?,?,?,?,?,?,?) ON CONFLICT(RESOURCE_KEY) DO UPDATE SET OWNER=excluded.OWNER,KIND=excluded.KIND,SUB_ID=excluded.SUB_ID,MEDIA_ID=excluded.MEDIA_ID,SEASON=excluded.SEASON,EPISODES=excluded.EPISODES`, key, token, kind, id, plan.mediaID, plan.season, subscriptionEpisodeString(candidate.Episodes))); err != nil {
 		return "", err
 	}
 	if len(proofs) > 1 {
@@ -191,8 +197,17 @@ func reserveSubscriptionSubmissionTx(ctx context.Context, tx *sql.Tx, kind strin
 		if err != nil {
 			return "", err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_SUBMISSION_PROOFS(RESOURCE_KEY,OWNER,PAYLOAD) VALUES (?,?,?) ON CONFLICT(RESOURCE_KEY) DO UPDATE SET OWNER=excluded.OWNER,PAYLOAD=excluded.PAYLOAD`, key, token, payload); err != nil {
+		if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_SUBMISSION_PROOFS(RESOURCE_KEY,OWNER,PAYLOAD) VALUES (?,?,?) ON CONFLICT(RESOURCE_KEY) DO UPDATE SET OWNER=excluded.OWNER,PAYLOAD=excluded.PAYLOAD`, key, token, payload)); err != nil {
 			return "", err
+		}
+		if plan.files != nil {
+			if plan.files.ID != plan.fileSelectionID || proofs[0].ProfileDigest != plan.files.ProfileFingerprint() {
+				return "", errSubscriptionSubmissionConflict
+			}
+			plan.files.Proof = payload
+			if err := downloaderconfig.ReserveFileSelectionTx(ctx, tx, *plan.files); err != nil {
+				return "", err
+			}
 		}
 		if plan.edition != nil {
 			if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_EDITION_ATTEMPTS(CYCLE_ID,OWNER,RESOURCE_KEY,PAYLOAD,STATE) VALUES(?,?,?,?,'intent')`, plan.edition.Cycle.ID, token, key, payload)); err != nil {
@@ -228,13 +243,21 @@ func (service subscriptionService) releaseSubscriptionSubmission(ctx context.Con
 		if json.Unmarshal([]byte(rejectedProof), &header) != nil {
 			return errSubscriptionSubmissionConflict
 		}
-		if header.Version == 3 {
+		if header.Version == 3 || header.Version == 4 {
 			proof, _, err := decodeSubscriptionProof(rejectedProof)
 			if err != nil {
 				return err
 			}
-			if err := fuzzyOne(tx.ExecContext(ctx, `UPDATE GO_SUBSCRIPTION_EDITION_ATTEMPTS SET STATE='rejected' WHERE CYCLE_ID=? AND OWNER=? AND RESOURCE_KEY=? AND PAYLOAD=? AND STATE='intent'`, proof.Edition.Cycle.ID, owner, key, rejectedProof)); err != nil {
-				return err
+			if proof.Edition != nil {
+				if err := fuzzyOne(tx.ExecContext(ctx, `UPDATE GO_SUBSCRIPTION_EDITION_ATTEMPTS SET STATE='rejected' WHERE CYCLE_ID=? AND OWNER=? AND RESOURCE_KEY=? AND PAYLOAD=? AND STATE='intent'`, proof.Edition.Cycle.ID, owner, key, rejectedProof)); err != nil {
+					return err
+				}
+			}
+			if proof.FileSelectionID != "" {
+				var state string
+				if err := tx.QueryRowContext(ctx, `SELECT STATE FROM GO_TORRENT_FILE_SELECTIONS WHERE ID=?`, proof.FileSelectionID).Scan(&state); err != nil || state != "rejected" {
+					return errSubscriptionSubmissionConflict
+				}
 			}
 		}
 	}
@@ -271,6 +294,7 @@ func subscriptionEpisodeString(episodes []int) string {
 // history. Rollback leaves the durable pending claim intact after acceptance.
 func (service subscriptionService) persistSubscriptionSubmission(ctx context.Context, kind string, id int64, plan *subscriptionSearchPlan, candidate *subscriptionCandidate, owner string, guards ...subscriptionReconcileGuard) error {
 	profileDigest := ""
+	selectionScope := ""
 	db, err := service.openNativeSubscriptionWriteDatabase()
 	if err != nil {
 		return err
@@ -344,6 +368,23 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 		if json.Unmarshal([]byte(proofBody), &storedProof) != nil {
 			return errSubscriptionSubmissionConflict
 		}
+		if storedProof.FileSelectionID != "" {
+			if storedProof.FileSelectionID != plan.fileSelectionID || !slices.Equal(storedProof.Episodes, candidate.Episodes) {
+				return errSubscriptionSubmissionConflict
+			}
+			selection, err := downloaderconfig.FileSelectionTx(ctx, tx, storedProof.FileSelectionID)
+			if err != nil || selection.Definition.Proof != proofBody {
+				return errSubscriptionSubmissionConflict
+			}
+			scope, err := nativeSubscriptionConfiguration(ctx, tx, service)
+			if err != nil || scope != selection.Definition.Scope {
+				return errSubscriptionSubmissionConflict
+			}
+			selectionScope = scope
+			if err := downloaderconfig.CommitFileSelectionTx(ctx, tx, storedProof.FileSelectionID, proofBody); err != nil {
+				return err
+			}
+		}
 		if plan.edition != nil {
 			p, saved, err := decodeSubscriptionProof(proofBody)
 			if err != nil || saved.edition == nil || p.Priority != candidate.Priority || p.GroupID != candidate.groupID || p.TopOrder != candidate.topOrder || fuzzyDigest(saved.edition.Cycle) != fuzzyDigest(plan.edition.Cycle) || !slices.Equal(p.Episodes, candidate.Episodes) {
@@ -360,7 +401,17 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 		if err := downloaderconfig.VerifyDownloadProfile(ctx, tx, storedProof.ProfileDigest); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO RSS_TORRENTS(TORRENT_NAME,ENCLOSURE,TYPE,TITLE,YEAR,SEASON,EPISODE) VALUES (?,?,?,?,?,?,?)`, candidate.Title, candidate.resource.DownloadURL, kind, plan.raw["NAME"], plan.raw["YEAR"], plan.raw["SEASON"], subscriptionEpisodeString(candidate.Episodes)); err != nil {
+		values := []any{candidate.Title, candidate.resource.DownloadURL, kind, plan.raw["NAME"], plan.raw["YEAR"], plan.raw["SEASON"], subscriptionEpisodeString(candidate.Episodes)}
+		if plan.typedSource || plan.edition != nil {
+			for i, v := range values {
+				value, err := fuzzySQLValue(v)
+				if err != nil {
+					return err
+				}
+				values[i] = value
+			}
+		}
+		if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO RSS_TORRENTS(TORRENT_NAME,ENCLOSURE,TYPE,TITLE,YEAR,SEASON,EPISODE) VALUES (?,?,?,?,?,?,?)`, values...)); err != nil {
 			return err
 		}
 		if err := bus.Emit(ctx, tx, "download_start", key+":"+owner, "subscription:"+kind+":"+strconv.FormatInt(id, 10), text(plan.raw["NAME"])+" 开始下载", "来自：订阅；类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"；集："+subscriptionEpisodeString(candidate.Episodes)); err != nil {
@@ -381,7 +432,7 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 			return err
 		}
 		values := []any{kind, strconv.FormatInt(id, 10), plan.raw["NAME"], plan.raw["YEAR"], plan.mediaID, plan.raw["SEASON"], plan.raw["IMAGE"], plan.raw["DESC"], plan.raw["TOTAL_EP"], plan.raw["CURRENT_EP"], time.Now().Format("2006-01-02 15:04:05")}
-		if plan.edition != nil {
+		if plan.edition != nil || plan.typedSource {
 			for i, v := range values {
 				value, err := fuzzySQLValue(v)
 				if err != nil {
@@ -418,7 +469,7 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 	} else if plan.edition != nil {
 		// persistEditionTx preserved the ordinary episode ledger.
 	} else if kind == "TV" {
-		if _, err := tx.ExecContext(ctx, `UPDATE RSS_TVS SET STATE='R',TOTAL=?,LACK=? WHERE ID=?`, plan.total, len(remaining), id); err != nil {
+		if err := fuzzyOne(tx.ExecContext(ctx, `UPDATE RSS_TVS SET STATE='R',TOTAL=?,LACK=? WHERE ID=?`, plan.total, len(remaining), id)); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS RSS_TV_EPISODES (ID INTEGER PRIMARY KEY,RSSID TEXT,EPISODES TEXT)`); err != nil {
@@ -427,7 +478,7 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 		if err := removeNativeTVEpisodes(ctx, tx, id); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO RSS_TV_EPISODES(RSSID,EPISODES) VALUES (?,?)`, strconv.FormatInt(id, 10), subscriptionEpisodeString(remaining)); err != nil {
+		if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO RSS_TV_EPISODES(RSSID,EPISODES) VALUES (?,?)`, strconv.FormatInt(id, 10), subscriptionEpisodeString(remaining))); err != nil {
 			return err
 		}
 	} else {
@@ -437,6 +488,12 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 	}
 	if err := downloaderconfig.VerifyDownloadProfile(ctx, tx, profileDigest); err != nil {
 		return err
+	}
+	if selectionScope != "" {
+		scope, err := nativeSubscriptionConfiguration(ctx, tx, service)
+		if err != nil || scope != selectionScope {
+			return errSubscriptionSubmissionConflict
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err

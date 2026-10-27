@@ -17,15 +17,16 @@ import (
 )
 
 type subscriptionCandidate struct {
-	Title     string `json:"title"`
-	Site      string `json:"site"`
-	Priority  int    `json:"priority"`
-	Episodes  []int  `json:"episodes,omitempty"`
-	resource  externalindexer.Resource
-	site      *siteconfig.Site
-	siteOrder int
-	groupID   int64
-	topOrder  int
+	SelectFiles bool   `json:"fileSelectionRequired,omitempty"`
+	Title       string `json:"title"`
+	Site        string `json:"site"`
+	Priority    int    `json:"priority"`
+	Episodes    []int  `json:"episodes,omitempty"`
+	resource    externalindexer.Resource
+	site        *siteconfig.Site
+	siteOrder   int
+	groupID     int64
+	topOrder    int
 }
 
 type subscriptionCandidateInput struct {
@@ -176,11 +177,8 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 				continue
 			}
 			sort.Ints(episodes)
-			// Whole-resource washing cannot silently download previously
-			// accepted/out-of-scope episodes; file selection is a separate step.
-			if input.Upgrade && len(declared) != len(episodes) {
-				continue
-			}
+			// Season packs need actual file coverage even when every episode
+			// is missing; their title alone cannot prove the season is complete.
 		}
 		group := input.Group
 		if group == 0 && item.siteGroup != nil {
@@ -200,7 +198,7 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 		if input.Upgrade && (groupID < 1 || result.Order < 1 || result.Order <= input.PreviousOrder && input.PreviousOrder != 0 || input.Order != 0 && (result.Order != input.Order || groupID != input.UpgradeGroup)) {
 			continue
 		}
-		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, resource: item.resource, site: item.site, siteOrder: item.siteOrder, groupID: groupID, topOrder: top})
+		candidates = append(candidates, subscriptionCandidate{Title: item.resource.Title, Site: item.resource.Indexer, Priority: result.Order, Episodes: episodes, SelectFiles: input.TV && (item.meta.Episodes.Episode == nil || len(declared) != len(episodes)), resource: item.resource, site: item.site, siteOrder: item.siteOrder, groupID: groupID, topOrder: top})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
@@ -250,9 +248,7 @@ func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidate
 		if len(needed) == 0 {
 			continue
 		}
-		if input.Upgrade && len(needed) != len(candidate.Episodes) {
-			continue
-		}
+		candidate.SelectFiles = candidate.SelectFiles || len(needed) != len(candidate.Episodes)
 		candidate.Episodes = needed
 		selected = append(selected, candidate)
 		for _, n := range needed {

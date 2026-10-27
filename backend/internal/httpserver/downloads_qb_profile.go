@@ -102,6 +102,9 @@ func (s downloadService) submitQbProfile(ctx context.Context, item downloadercon
 	}
 	add := d.Options
 	add.Paused = true
+	if _, ok := ctx.Value(selectionHookKey{}).(selectionHook); ok {
+		add.SelectedFiles = true
+	}
 	add.Tags = append(append([]string{}, add.Tags...), p.Marker())
 	if torrent != nil {
 		err = c.AddTorrentWithOptions(ctx, torrent, add)
@@ -143,6 +146,9 @@ func (s downloadService) submitQbProfile(ctx context.Context, item downloadercon
 	if advance("configured") != nil {
 		return "", downloaderconfig.ErrQbProfilePending
 	}
+	if applySubscriptionFileHook(ctx) != nil {
+		return "", downloaderconfig.ErrQbProfilePending
+	}
 	if !d.Options.Paused {
 		if advance("starting") != nil || c.StartProfile(ctx, hash) != nil {
 			return "", downloaderconfig.ErrQbProfilePending
@@ -168,6 +174,9 @@ func (s downloadService) checkQbProfileReady(ctx context.Context, item downloade
 	return s.downloaders.VerifyQbSource(ctx, p.Definition)
 }
 func (s downloadService) verifyDownloadProfile(ctx context.Context, item downloaderconfig.Downloader, hash, fp string) error {
+	if strings.HasPrefix(fp, "files:") {
+		return s.verifySelectedFiles(ctx, item, hash, strings.TrimPrefix(fp, "files:"))
+	}
 	if !strings.HasPrefix(fp, "qb:") {
 		if item.Type != "transmission" {
 			return downloaderconfig.ErrProfilePending
@@ -216,6 +225,9 @@ type qbProfileReview struct {
 
 func (s downloadService) reviewQbProfile(ctx context.Context, p downloaderconfig.QbProfile, actor string) (qbProfileReview, error) {
 	r := qbProfileReview{}
+	if s.guardSelectionPresetRecovery(ctx, p.Definition.DownloaderID, p.Definition.InfoHash) != nil {
+		return r, downloaderconfig.ErrQbProfilePending
+	}
 	item, err := s.downloaders.Get(ctx, p.Definition.DownloaderID)
 	if err != nil || item.Enabled == 0 || item.Type != "qbittorrent" || p.State == "rejected" || bus.Hash(item) != p.Definition.ConfigDigest || s.downloaders.VerifyQbSource(ctx, p.Definition) != nil {
 		return r, downloaderconfig.ErrQbProfilePending

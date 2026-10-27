@@ -339,6 +339,11 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 	if item.ID == 0 {
 		return true, errors.New("default downloader is not configured")
 	}
+	if action == "start" && (item.Type == "qbittorrent" || item.Type == "transmission") {
+		if err := service.guardSelectedStart(ctx, item, id); err != nil {
+			return true, err
+		}
+	}
 	if item.Type == "pikpak" {
 		return true, errDownloaderControlUnsupported
 	}

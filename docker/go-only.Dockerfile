@@ -19,7 +19,7 @@ RUN mkdir -p /out/licenses \
     && cp "$(go list -m -f '{{.Dir}}' github.com/minio/minio-go/v7)/NOTICE" /out/licenses/minio-go-NOTICE
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone \
+RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone aria2 \
     && addgroup -S -g 911 nt \
     && adduser -S -u 911 -G nt -h /app nt
 WORKDIR /app

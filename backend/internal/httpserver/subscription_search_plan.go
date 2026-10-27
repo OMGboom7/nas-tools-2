@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
 )
 
@@ -31,6 +32,9 @@ type subscriptionSearchPlan struct {
 	storedMissing   []int
 	needed          []int
 	fuzzy           bool
+	typedSource     bool
+	files           *downloaderconfig.FileSelectionDefinition
+	fileSelectionID string
 }
 
 func (api subscriptionSearchPlanner) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -273,6 +277,15 @@ func (api subscriptionSearchPlanner) planResources(ctx context.Context, kind str
 	plan.Fetched = len(resources)
 	identified := []identifiedSubscriptionResource{}
 	for _, resource := range resources {
+		if kind == "TV" && !upgrade {
+			processed, err := subscriptionTorrentRecorded(ctx, db, resource.DownloadURL)
+			if err != nil {
+				return fail(503, "subscription submission ledger could not be verified")
+			}
+			if processed {
+				continue
+			}
+		}
 		if upgrade {
 			processed, err := subscriptionRSSProcessed(ctx, db, resource.DownloadURL)
 			if err != nil {

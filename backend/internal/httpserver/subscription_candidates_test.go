@@ -68,6 +68,19 @@ func TestSubscriptionCandidatesCoverMissingEpisodesWithoutDuplicates(t *testing.
 	}
 }
 
+func TestSubscriptionSeasonPackRequiresManifestEvenWhenEntireSeasonIsMissing(t *testing.T) {
+	input := subscriptionCandidateInput{TV: true, Season: 1, Total: 3, Missing: []int{1, 2, 3}, Group: -1}
+	for _, title := range []string{"Show.S01.1080p.WEB-DL", "Show.S01E01-E03.1080p.WEB-DL"} {
+		selected, remaining, err := planSubscriptionCandidates(t.Context(), input, nil, []identifiedSubscriptionResource{candidateFixture(t, title, 1, nil)})
+		if err != nil || len(selected) != 1 || len(remaining) != 0 || len(selected[0].Episodes) != 3 {
+			t.Fatal(title, selected, remaining, err)
+		}
+		if selected[0].SelectFiles != (title == "Show.S01.1080p.WEB-DL") {
+			t.Fatal("season pack trusted title or explicit full range changed semantics", title, selected)
+		}
+	}
+}
+
 func TestSubscriptionCandidatesKeepUnknownPromotionAndMovieRanking(t *testing.T) {
 	low, high := int64(1), int64(9)
 	resources := []identifiedSubscriptionResource{candidateFixture(t, "Movie.2026.1080p.WEB-DL", 1, nil), candidateFixture(t, "Movie.2026.1080p.WEB-DL", 2, &low), candidateFixture(t, "Movie.2026.1080p.WEB-DL", 3, &high)}

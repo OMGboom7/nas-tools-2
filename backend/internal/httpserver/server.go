@@ -475,6 +475,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/subscription-editions/{cycle}", subscriptionRunner.serveEditionReceipts)
 	mux.HandleFunc("/api/v1/subscription-editions", subscriptionRunner.editionFallback)
 	mux.HandleFunc("/api/v1/subscription-editions/", subscriptionRunner.editionFallback)
+	mux.HandleFunc("GET /api/v1/subscription-file-selections", subscriptionRunner.serveSubscriptionFiles)
+	mux.HandleFunc("GET /api/v1/subscription-file-selections/{selection}", subscriptionRunner.serveSubscriptionFiles)
+	mux.HandleFunc("POST /api/v1/subscription-file-selections/{selection}/{action}", subscriptionRunner.serveSubscriptionFiles)
+	mux.HandleFunc("/api/v1/subscription-file-selections", subscriptionRunner.editionFallback)
+	mux.HandleFunc("/api/v1/subscription-file-selections/", subscriptionRunner.editionFallback)
 	rssRunner.refresh = &subscriptionRefreshAPI{service: subscriptions, auth: nativeAuth, pureGo: cfg.DisableLegacy}
 	mux.HandleFunc("POST /api/v1/subscriptions/refresh", rssRunner.refresh.serveHTTP)
 	mux.HandleFunc("POST /api/v1/rss/name/test", (rssNameAPI{tasks: nativeRSSTasks, filters: nativeFilters, recognition: mediaNameAPI{service: subscriptions, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}}}).serveHTTP)

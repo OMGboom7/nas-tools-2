@@ -32,6 +32,7 @@ type Client struct {
 
 // AddOptions applies per-torrent settings without changing client-wide defaults.
 type AddOptions struct {
+	SelectedFiles    bool `json:"selectedFiles,omitempty"`
 	ManagedPT        bool `json:"managedPT,omitempty"`
 	SavePath         string
 	Category         string
@@ -255,6 +256,11 @@ func (client *Client) AddMagnetWithOptions(ctx context.Context, magnet string, o
 			return err
 		}
 	}
+	if options.SelectedFiles {
+		if err := client.prepareSelectedForm(ctx, form); err != nil {
+			return err
+		}
+	}
 	contents, err := client.request(ctx, http.MethodPost, "torrents/add", form)
 	if err != nil {
 		return err
@@ -282,6 +288,11 @@ func (client *Client) AddTorrentWithOptions(ctx context.Context, torrent []byte,
 	}
 	if options.ManagedPT {
 		if err := client.preparePTForm(ctx, form); err != nil {
+			return err
+		}
+	}
+	if options.SelectedFiles {
+		if err := client.prepareSelectedForm(ctx, form); err != nil {
 			return err
 		}
 	}

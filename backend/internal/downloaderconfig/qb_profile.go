@@ -278,6 +278,9 @@ func (s *Store) AdvanceQbProfile(ctx context.Context, p QbProfile, to, actor, fp
 // Typed qB fingerprints share the existing source-submission proof column;
 // old unprefixed Transmission fingerprints retain their exact encoding.
 func VerifyDownloadProfile(ctx context.Context, tx *sql.Tx, fp string) error {
+	if strings.HasPrefix(fp, "files:") {
+		return VerifyFileSelection(ctx, tx, strings.TrimPrefix(fp, "files:"))
+	}
 	if !strings.HasPrefix(fp, "qb:") {
 		return VerifyTransmissionProfile(ctx, tx, fp)
 	}

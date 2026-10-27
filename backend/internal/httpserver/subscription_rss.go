@@ -461,3 +461,13 @@ func subscriptionRSSProcessed(ctx context.Context, r subscriptionRowReader, url 
 	}
 	return false, nil
 }
+
+func subscriptionTorrentRecorded(ctx context.Context, r subscriptionRowReader, url string) (bool, error) {
+	exists, err := fuzzyTable(ctx, r, "RSS_TORRENTS")
+	if err != nil || !exists {
+		return false, err
+	}
+	var found bool
+	err = r.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM RSS_TORRENTS WHERE ENCLOSURE=?)`, url).Scan(&found)
+	return found, err
+}

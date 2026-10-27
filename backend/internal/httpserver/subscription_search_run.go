@@ -18,14 +18,15 @@ type subscriptionSearchRunner struct {
 }
 
 type subscriptionSearchRunResult struct {
-	Submitted int                      `json:"submitted"`
-	Remaining []int                    `json:"remaining"`
-	Completed bool                     `json:"completed"`
-	Uncertain bool                     `json:"uncertain"`
-	Queued    bool                     `json:"queued,omitempty"`
-	Skipped   bool                     `json:"skipped,omitempty"`
-	BatchID   string                   `json:"batchId,omitempty"`
-	Upgrade   *subscriptionEditionView `json:"upgrade,omitempty"`
+	FileSelectionID string                   `json:"fileSelectionId,omitempty"`
+	Submitted       int                      `json:"submitted"`
+	Remaining       []int                    `json:"remaining"`
+	Completed       bool                     `json:"completed"`
+	Uncertain       bool                     `json:"uncertain"`
+	Queued          bool                     `json:"queued,omitempty"`
+	Skipped         bool                     `json:"skipped,omitempty"`
+	BatchID         string                   `json:"batchId,omitempty"`
+	Upgrade         *subscriptionEditionView `json:"upgrade,omitempty"`
 }
 
 func (api *subscriptionSearchRunner) serveCompatSearch(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +142,8 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		return result, nil
 	}
 	for _, candidate := range plan.Candidates {
+		plan.files = nil
+		plan.fileSelectionID = ""
 		if ctx.Err() != nil {
 			return fail(504, "subscription execution was cancelled or timed out")
 		}
@@ -164,8 +167,15 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 		if err != nil {
 			return fail(502, "subscription torrent could not be retrieved")
 		}
+		torrent, options, err = api.prepareSubscriptionFiles(ctx, kind, id, &plan, &candidate, downloader, options, magnet, torrent)
+		if err != nil {
+			return fail(422, "complete torrent manifest, exact selectable episodes or original downloader unavailable; no download was added")
+		}
 		proof := newSubscriptionSubmissionProof(downloader, magnet, torrent)
 		proof.ProfileDigest = downloadProfileFingerprint(downloader, proof.InfoHash, options)
+		if plan.files != nil {
+			proof.ProfileDigest = plan.files.ProfileFingerprint()
+		}
 		owner, err := service.reserveSubscriptionSubmission(ctx, kind, id, plan, candidate, proof)
 		if err != nil {
 			return fail(409, "subscription changed or resource is reserved; verify pending downloads before retrying")
@@ -174,7 +184,13 @@ func (api *subscriptionSearchRunner) executeResources(parent context.Context, ki
 			plan.edition.Started = true
 			result.Upgrade = editionView(plan.edition)
 		}
-		_, handled, err := download.nativeAddConfiguredDownload(ctx, downloader, magnet, torrent, options)
+		result.FileSelectionID = plan.fileSelectionID
+		var handled bool
+		if plan.files != nil {
+			_, handled, err = api.submitSubscriptionFiles(ctx, downloader, torrent, options, *plan.files)
+		} else {
+			_, handled, err = download.nativeAddConfiguredDownload(ctx, downloader, magnet, torrent, options)
+		}
 		if err != nil || !handled {
 			if downloadDefinitelyNotSubmitted(handled, err) {
 				cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

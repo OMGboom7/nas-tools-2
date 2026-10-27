@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
@@ -22,6 +23,7 @@ import (
 // Private durable evidence, never an HTTP response. No downloader credentials
 // are copied: a digest binds verification to the configuration used to submit.
 type subscriptionSubmissionProof struct {
+	FileSelectionID                      string `json:"fileSelectionId,omitempty"`
 	ProfileDigest                        string `json:"profileDigest,omitempty"`
 	Version                              int
 	DownloaderID                         int64
@@ -71,6 +73,10 @@ func encodeSubscriptionSubmissionProof(proof subscriptionSubmissionProof, plan s
 		proof.Edition.Started = true
 		proof.Priority, proof.TopOrder, proof.GroupID = candidate.Priority, candidate.topOrder, candidate.groupID
 	}
+	if plan.typedSource || plan.fileSelectionID != "" {
+		proof.Version = 4
+		proof.FileSelectionID = plan.fileSelectionID
+	}
 	body, err := json.Marshal(proof)
 	if err != nil || len(body) > 2<<20 {
 		return "", errors.New("subscription proof exceeded limits")
@@ -85,7 +91,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	}
 	decoder := json.NewDecoder(bytes.NewBufferString(body))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&p) != nil || p.Version != 1 && p.Version != 3 || p.DownloaderID <= 0 || len(p.ConfigHash) != 64 || p.MediaID == "" || !rssDownloadURLAllowed(p.DownloadURL) || p.Title == "" || p.Total < 0 || p.Total > 10000 || p.Season < 0 || p.Season > 1000 {
+	if decoder.Decode(&p) != nil || p.Version != 1 && p.Version != 3 && p.Version != 4 || p.DownloaderID <= 0 || len(p.ConfigHash) != 64 || p.MediaID == "" || !rssDownloadURLAllowed(p.DownloadURL) || p.Title == "" || p.Total < 0 || p.Total > 10000 || p.Season < 0 || p.Season > 1000 {
 		return p, plan, errors.New("invalid subscription proof")
 	}
 	if decoder.Decode(new(any)) != io.EOF {
@@ -97,7 +103,7 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 		return p, plan, errors.New("invalid source snapshot")
 	}
 	for key, value := range plan.raw {
-		if p.Version == 3 {
+		if p.Version == 3 || p.Version == 4 {
 			if _, err := fuzzySQLValue(value); err != nil {
 				return p, plan, err
 			}
@@ -121,13 +127,25 @@ func decodeSubscriptionProof(body string) (subscriptionSubmissionProof, subscrip
 	}
 	plan.mediaID, plan.season, plan.total = p.MediaID, p.Season, p.Total
 	plan.storedMissing, plan.needed = p.StoredMissing, p.Needed
-	if p.Version == 3 {
+	if p.Version == 3 || p.Version == 4 && p.Edition != nil {
 		if p.Edition == nil || !p.Edition.Started || !validEditionCycle(p.Edition.Cycle) || p.Edition.Cycle.State != "active" || !truthy(text(normalizeNativeSubscriptionRow(plan.raw)["over_edition"])) || p.Edition.Cycle.Rule != editionRule(plan.raw) || p.Edition.Cycle.Order != p.Priority || p.Edition.Cycle.TopOrder != p.TopOrder || p.Edition.Cycle.GroupID != p.GroupID || p.Edition.Cycle.Season != p.Season || p.Edition.Cycle.Total != p.Total || !slices.Equal(p.Edition.Cycle.Remaining, p.Needed) {
 			return p, plan, errSubscriptionSubmissionConflict
 		}
 		plan.edition = p.Edition
 		plan.Upgrade = editionView(p.Edition)
 	} else if p.Edition != nil || p.Priority != 0 || p.TopOrder != 0 || p.GroupID != 0 {
+		return p, plan, errSubscriptionSubmissionConflict
+	}
+	if p.Version == 4 {
+		plan.typedSource = true
+		plan.fileSelectionID = p.FileSelectionID
+		if p.FileSelectionID == "" && strings.HasPrefix(p.ProfileDigest, "files:") {
+			return p, plan, errSubscriptionSubmissionConflict
+		}
+		if p.FileSelectionID != "" && (!fuzzyHex(p.FileSelectionID, 32) || p.ProfileDigest != "files:"+p.FileSelectionID) {
+			return p, plan, errSubscriptionSubmissionConflict
+		}
+	} else if p.FileSelectionID != "" || strings.HasPrefix(p.ProfileDigest, "files:") {
 		return p, plan, errSubscriptionSubmissionConflict
 	}
 	return p, plan, nil
@@ -275,7 +293,7 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	}
 	if proof.ProfileDigest != "" {
 		if err := download.verifyDownloadProfile(ctx, item, proof.InfoHash, proof.ProfileDigest); err != nil {
-			return fail(409, "original Transmission settings still require explicit review; no resubmission")
+			return fail(409, "original downloader settings or file selection still require explicit review; no resubmission")
 		}
 	}
 	switch item.Type {
@@ -321,6 +339,7 @@ func (api *subscriptionSearchRunner) reconcile(parent context.Context, kind stri
 	}
 	result.Submitted, result.Completed, result.Uncertain = 1, subscriptionPlanCompleted(kind, plan, true), false
 	result.Upgrade = editionView(plan.edition)
+	result.FileSelectionID = proof.FileSelectionID
 	result.Remaining = append([]int{}, plan.needed...)
 	return result, nil
 }
