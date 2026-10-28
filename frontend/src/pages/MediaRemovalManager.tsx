@@ -22,6 +22,7 @@ export function MediaRemovalConsentFields({value,onChange,review,disabled}:{valu
 
 function RemovalDetails({value}:{value:MediaRemoval}) {
   return <><p>{labels[value.state]} · 历史 {value.historyIds.join("、")||"无（仅所选文件）"} · 对应去重行 {value.dedupeRows}。{value.reason}</p>
+    {value.mediaSyncReceipt&&<p>此批次来自 Emby 同步删除，原同步删除编号：{value.mediaSyncReceipt}。继续执行请到插件页的“Emby 同步删除管理”区，按此编号重新审核并独立确认；这里仍可查看、停止或独立返还捕获对象。</p>}
     <ul>{value.records.map(r=><li key={r.id}>历史 #{r.id} · {r.title} ({r.year}) · {r.type} · TMDB {r.tmdbId} · {r.mode}<p>原来源：{r.sourcePath}/{r.sourceFilename}；原媒体库：{r.destPath}/{r.destFilename}</p></li>)}</ul>
     <ul>{value.units.map(u=><li key={u.ordinal}>#{u.ordinal+1} · {u.driver||"本机"} · {u.rootId} / {u.path} · {u.role} · {u.absent?"原本不存在：仅记录已核验缺失，不发送删除事件":`文件 ${u.files}，目录 ${u.directories}，链接 ${u.links}，载荷 ${u.bytes} 字节`}
       {u.disposal&&<p>逐项回执 {u.disposal.done}/{u.disposal.total} · {u.disposal.state}{u.disposal.capture&&` · 捕获位置：${u.disposal.capture}`}</p>}
@@ -92,7 +93,7 @@ export function MediaRemovalManager({token,enabled,onSessionExpired,onChanged,hi
     <p>最近 30 个批次。停止请求可在长操作进行中发送，不代表已送出的单次删除已撤回。停止后未删文件、捕获对象、原历史及旧目标预留保留。</p><label><input type="checkbox" checked={stopConfirm} onChange={e=>setStopConfirm(e.target.checked)}/>我确认只停止所点击批次的后续工作，不删除剩余对象，不重开旧任务</label>
     <ul>{status.removals.map(v=><li key={v.id}>{v.id.slice(0,12)} · {labels[v.state]} · 历史 {v.historyIds.join("、")||"无"}<button type="button" disabled={busy||stopping} onClick={()=>void operate(()=>inspectRecord(v.id))}>只读完整审核／查看回执</button>{!["closed","completed"].includes(v.state)&&<button type="button" disabled={!enabled||stopping||!stopConfirm} onClick={()=>void stop(v)}>停止整批后续工作</button>}</li>)}</ul>
     </>}
-    {review&&<fieldset disabled={!enabled||stopping}><legend>仅本次单次执行／续办</legend><RemovalDetails value={review}/><MediaRemovalConsentFields review={review} value={consent} onChange={setConsent} disabled={busy||stopping}/><button type="button" disabled={busy||!review.canContinue||!mediaRemovalGranted(review,consent)} onClick={()=>void operate(execute,true)}>按此新审核执行一次；不自动重发删除</button>
+    {review&&<fieldset disabled={!enabled||stopping}><legend>仅本次单次执行／续办</legend><RemovalDetails value={review}/>{!review.mediaSyncReceipt&&<><MediaRemovalConsentFields review={review} value={consent} onChange={setConsent} disabled={busy||stopping}/><button type="button" disabled={busy||!review.canContinue||!mediaRemovalGranted(review,consent)} onClick={()=>void operate(execute,true)}>按此新审核执行一次；不自动重发删除</button></>}
       {review.units.some(u=>u.review?.canReturn)&&<fieldset disabled={busy}><legend>归还尚未删除的本机捕获对象</legend><p>只能防覆盖归还该完整捕获到原空位置；不能恢复已经删除的兄弟范围。随后整批停止，旧任务不重开。</p><label><input type="checkbox" checked={returnConfirm} onChange={e=>setReturnConfirm(e.target.checked)}/>我独立确认上述整对象防覆盖归还和整批停止</label><label><input type="checkbox" checked={returnStopped} onChange={e=>setReturnStopped(e.target.checked)}/>全部外部写入器已实际停止</label>{review.units.filter(u=>u.review?.canReturn).map(u=><button key={u.ordinal} type="button" disabled={!returnConfirm||!returnStopped} onClick={()=>void operate(()=>giveBack(u.ordinal),true)}>只归还 {u.path}，然后停止整批</button>)}</fieldset>}
     </fieldset>}
   </section>;

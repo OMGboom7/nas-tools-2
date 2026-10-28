@@ -20,25 +20,26 @@ import (
 )
 
 type rssRunAPI struct {
-	library        *libraryScraper
-	mediaRefresh   *mediaRefreshAPI
-	eventWebhook   *eventWebhookAPI
-	speedLimiter   *speedLimiterAPI
-	scraper        *intakeScraper
-	subtitles      *subtitleAPI
-	indexerPlugins *nativeIndexerPlugins
-	mediaSync      *mediaSyncAPI
-	notifications  *businessNotifications
-	organizer      *organizationAPI
-	preview        rssPreviewAPI
-	download       rssItemDownloadAPI
-	filters        *filterconfig.Store
-	recognition    mediaNameAPI
-	pureGo         bool
-	mu             sync.Mutex
-	running        map[int64]bool
-	refresh        *subscriptionRefreshAPI
-	search         *subscriptionSearchRunner
+	library         *libraryScraper
+	mediaRefresh    *mediaRefreshAPI
+	eventWebhook    *eventWebhookAPI
+	speedLimiter    *speedLimiterAPI
+	mediaSyncDelete *mediaSyncDeleteAPI
+	scraper         *intakeScraper
+	subtitles       *subtitleAPI
+	indexerPlugins  *nativeIndexerPlugins
+	mediaSync       *mediaSyncAPI
+	notifications   *businessNotifications
+	organizer       *organizationAPI
+	preview         rssPreviewAPI
+	download        rssItemDownloadAPI
+	filters         *filterconfig.Store
+	recognition     mediaNameAPI
+	pureGo          bool
+	mu              sync.Mutex
+	running         map[int64]bool
+	refresh         *subscriptionRefreshAPI
+	search          *subscriptionSearchRunner
 }
 
 type rssRunResult struct {

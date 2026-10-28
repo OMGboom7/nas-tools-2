@@ -8,6 +8,8 @@ import (
 	"path"
 	"strconv"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
 )
 
 func mediaRemovalSchema(ctx context.Context, tx *sql.Tx) error {
@@ -65,7 +67,14 @@ func mediaRemovalClaimed(ctx context.Context, r recoveryReader, locations []stri
 	return nil
 }
 func (s *Store) CreateMediaRemoval(ctx context.Context, d MediaRemovalDefinition, fingerprint string) (string, error) {
-	if fingerprint != Digest(d) || d.Actor == "" || !recoveryHex(d.RequestID, 32) || !recoveryHex(d.InputDigest, 64) || len(d.Histories) > 100 || len(d.Units) > 1024 || len(d.Histories) == 0 && len(d.Units) == 0 {
+	historyLimit, unitLimit := 100, 1024
+	if d.MediaSyncDelete != nil {
+		if !mediasyncdel.Hex(d.MediaSyncDelete.Receipt, 64) {
+			return "", ErrState
+		}
+		historyLimit, unitLimit = mediasyncdel.HistoryLimit, RecoveryObjectLimit
+	}
+	if fingerprint != Digest(d) || d.Actor == "" || !recoveryHex(d.RequestID, 32) || !recoveryHex(d.InputDigest, 64) || len(d.Histories) > historyLimit || len(d.Units) > unitLimit || len(d.Histories) == 0 && len(d.Units) == 0 {
 		return "", ErrState
 	}
 	raw, err := json.Marshal(d)
@@ -129,6 +138,11 @@ func (s *Store) CreateMediaRemoval(ctx context.Context, d MediaRemovalDefinition
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO GO_MEDIA_REMOVAL_UNITS VALUES(?,?,?, 'pending')`, id, i, child); err != nil {
+			return "", err
+		}
+	}
+	if d.MediaSyncDelete != nil {
+		if err := mediasyncdel.BindParent(ctx, tx, d.MediaSyncDelete.Receipt, id, Digest(d), ids, d.MediaSyncDelete.Image); err != nil {
 			return "", err
 		}
 	}
@@ -249,7 +263,7 @@ func (s *Store) CloseMediaRemoval(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-func (s *Store) beginMediaRemoval(ctx context.Context, v MediaRemovalReview, fingerprint string) (bool, error) {
+func (s *Store) beginMediaRemoval(ctx context.Context, v MediaRemovalReview, fingerprint string, guards ...func(context.Context, *sql.Tx) error) (bool, error) {
 	if !recoveryHex(fingerprint, 64) || mediaRemovalTerminal(v.State) {
 		return false, ErrState
 	}
@@ -268,6 +282,14 @@ func (s *Store) beginMediaRemoval(ctx context.Context, v MediaRemovalReview, fin
 	var saved MediaRemovalDefinition
 	if json.Unmarshal([]byte(raw), &saved) != nil || Digest(saved) != Digest(v.Definition) || state != v.State {
 		return false, ErrState
+	}
+	for _, guard := range guards {
+		if guard == nil {
+			return false, ErrState
+		}
+		if err := guard(ctx, tx); err != nil {
+			return false, err
+		}
 	}
 	if err := verifyMediaRemovalHistories(ctx, tx, saved.Histories); err != nil {
 		return false, err
@@ -319,6 +341,16 @@ func (s *Store) beginMediaRemoval(ctx context.Context, v MediaRemovalReview, fin
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_MEDIA_REMOVALS SET STATE='running',FROZEN=?,LAST_REVIEW=?,UPDATED=?,REASON='explicit single reviewed attempt; no automatic retry' WHERE ID=?`, string(b), fingerprint, time.Now().UTC().Format(time.RFC3339Nano), v.ID); err != nil {
 		return false, err
+	}
+	if saved.MediaSyncDelete != nil {
+		if err := mediasyncdel.StartParent(ctx, tx, saved.MediaSyncDelete.Receipt, v.ID, Digest(saved)); err != nil {
+			return false, err
+		}
+	}
+	for _, guard := range guards {
+		if err := guard(ctx, tx); err != nil {
+			return false, err
+		}
 	}
 	return true, tx.Commit()
 }

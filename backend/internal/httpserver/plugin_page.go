@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeMediaSyncDelete(request.PathValue("id")) {
+		service.serveMediaSyncDeletePlugin(response, request, "page")
+		return
+	}
 	if service.nativeSpeedLimiter(request.PathValue("id")) {
 		service.serveSpeedLimiterPlugin(response, request, "page")
 		return

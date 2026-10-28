@@ -187,6 +187,10 @@ func (api *organizationAPI) serveMediaRemovalRecord(w http.ResponseWriter, r *ht
 		return
 	}
 	action := r.PathValue("action")
+	if action == "continue" && v.Definition.MediaSyncDelete != nil {
+		writeAPIError(w, 409, 409, "这份完整删除关联原同步删除回执，请在 Emby 同步删除管理区按原编号重新审核并逐项确认所选通知与范围")
+		return
+	}
 	if action == "close" {
 		if !in.Confirm || !in.ConfirmClose {
 			writeAPIError(w, 400, 400, "explicit whole-batch stop confirmation required")

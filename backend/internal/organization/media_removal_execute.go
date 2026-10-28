@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
+
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
@@ -193,7 +195,7 @@ func finishMediaRemovalChild(ctx context.Context, tx *sql.Tx, id string, d Recov
 	}
 	return receiptMediaRemovalUnitTx(ctx, tx, mediaRemovalProject(parent), ordinal)
 }
-func (s *Store) finishMediaRemoval(ctx context.Context, v MediaRemovalReview) error {
+func (s *Store) finishMediaRemoval(ctx context.Context, v MediaRemovalReview, guards ...func(context.Context, *sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -213,18 +215,38 @@ func (s *Store) finishMediaRemoval(ctx context.Context, v MediaRemovalReview) er
 	if pending != 0 {
 		return ErrState
 	}
+	for _, guard := range guards {
+		if guard == nil {
+			return ErrState
+		}
+		if err := guard(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if err := deleteMediaRemovalHistoryRows(ctx, tx, v.Definition.Histories); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_MEDIA_REMOVALS SET STATE='completed',UPDATED=?,REASON='all selected units verified absent; exact original history and dedupe rows removed atomically; journal retained' WHERE ID=? AND STATE='running'`, time.Now().UTC().Format(time.RFC3339Nano), v.ID); err != nil {
 		return err
 	}
+	if v.Definition.MediaSyncDelete != nil {
+		if err := mediasyncdel.CompleteParent(ctx, tx, v.Definition.MediaSyncDelete.Receipt, v.ID, Digest(v.Definition)); err != nil {
+			return err
+		}
+	}
+	// The source rows are now gone. Automatic guards check the same authority
+	// after the commit projection without expecting the deleted rows to exist.
+	for _, guard := range guards {
+		if err := guard(ctx, tx); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
 // Full-batch preflight precedes the first write. Every child retains the same
 // content/identity/delete-intent protocol; no media operation is scheduled.
-func (s *Store) ExecuteMediaRemoval(ctx context.Context, v MediaRemovalReview, clients []*remotestore.Client, fingerprint string, validate func(RecoveryScope) error) (err error) {
+func (s *Store) ExecuteMediaRemoval(ctx context.Context, v MediaRemovalReview, clients []*remotestore.Client, fingerprint string, validate func(RecoveryScope) error, guards ...func(context.Context, *sql.Tx) error) (err error) {
 	if validate == nil || !v.CanContinue || len(clients) != len(v.Definition.Units) {
 		return ErrState
 	}
@@ -233,7 +255,7 @@ func (s *Store) ExecuteMediaRemoval(ctx context.Context, v MediaRemovalReview, c
 			return err
 		}
 	}
-	started, err := s.beginMediaRemoval(ctx, v, fingerprint)
+	started, err := s.beginMediaRemoval(ctx, v, fingerprint, guards...)
 	if err != nil || !started {
 		return err
 	}
@@ -294,7 +316,7 @@ func (s *Store) ExecuteMediaRemoval(ctx context.Context, v MediaRemovalReview, c
 			return err
 		}
 	}
-	return s.finishMediaRemoval(ctx, v)
+	return s.finishMediaRemoval(ctx, v, guards...)
 }
 
 // Returned objects never reopen the original writer or reconstruct deleted

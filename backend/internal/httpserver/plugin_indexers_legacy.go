@@ -54,6 +54,11 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			s.serveSpeedLimiterPlugin(w, probe, "page")
 			return
 		}
+		if s.nativeMediaSyncDelete(id) {
+			probe.SetPathValue("id", id)
+			s.serveMediaSyncDeletePlugin(w, probe, "page")
+			return
+		}
 		if s.nativeEventWebhook(id) {
 			probe.SetPathValue("id", id)
 			s.serveEventWebhookPlugin(w, probe, "page")

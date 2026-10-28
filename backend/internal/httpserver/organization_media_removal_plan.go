@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
+	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
@@ -24,34 +25,42 @@ type mediaRemovalPath struct {
 	Role      string `json:"role,omitempty"`
 }
 type mediaRemovalInput struct {
-	HistoryIDs                 []string           `json:"historyIds"`
-	Flag                       string             `json:"flag"`
-	Paths                      []mediaRemovalPath `json:"paths"`
-	IncludeNFO                 bool               `json:"includeNfo"`
-	CleanupDirectories         bool               `json:"cleanupDirectories"`
-	RequestID                  string             `json:"requestId"`
-	Decision                   string             `json:"decision"`
-	Fingerprint                string             `json:"fingerprint"`
-	Ordinal                    int                `json:"ordinal"`
-	Confirm                    bool               `json:"confirm"`
-	ConfirmRead                bool               `json:"confirmRead"`
-	ConfirmHistoryDeletion     bool               `json:"confirmHistoryDeletion"`
-	ConfirmDedupeReset         bool               `json:"confirmDedupeReset"`
-	ConfirmPermanentDeletion   bool               `json:"confirmPermanentDeletion"`
-	ConfirmOnlyCopyRisk        bool               `json:"confirmOnlyCopyRisk"`
-	ConfirmExpandedScope       bool               `json:"confirmExpandedScope"`
-	ConfirmOldExecutorsStopped bool               `json:"confirmOldExecutorsStopped"`
-	ConfirmCloseRelated        bool               `json:"confirmCloseRelated"`
-	ConfirmRemoteExclusive     bool               `json:"confirmRemoteExclusive"`
-	ConfirmClose               bool               `json:"confirmClose"`
-	ConfirmReturnCapture       bool               `json:"confirmReturnCapture"`
+	MediaSyncDelete            *organization.MediaSyncDeleteRemoval `json:"-"`
+	HistoryIDs                 []string                             `json:"historyIds"`
+	Flag                       string                               `json:"flag"`
+	Paths                      []mediaRemovalPath                   `json:"paths"`
+	IncludeNFO                 bool                                 `json:"includeNfo"`
+	CleanupDirectories         bool                                 `json:"cleanupDirectories"`
+	RequestID                  string                               `json:"requestId"`
+	Decision                   string                               `json:"decision"`
+	Fingerprint                string                               `json:"fingerprint"`
+	Ordinal                    int                                  `json:"ordinal"`
+	Confirm                    bool                                 `json:"confirm"`
+	ConfirmRead                bool                                 `json:"confirmRead"`
+	ConfirmHistoryDeletion     bool                                 `json:"confirmHistoryDeletion"`
+	ConfirmDedupeReset         bool                                 `json:"confirmDedupeReset"`
+	ConfirmPermanentDeletion   bool                                 `json:"confirmPermanentDeletion"`
+	ConfirmOnlyCopyRisk        bool                                 `json:"confirmOnlyCopyRisk"`
+	ConfirmExpandedScope       bool                                 `json:"confirmExpandedScope"`
+	ConfirmOldExecutorsStopped bool                                 `json:"confirmOldExecutorsStopped"`
+	ConfirmCloseRelated        bool                                 `json:"confirmCloseRelated"`
+	ConfirmRemoteExclusive     bool                                 `json:"confirmRemoteExclusive"`
+	ConfirmClose               bool                                 `json:"confirmClose"`
+	ConfirmReturnCapture       bool                                 `json:"confirmReturnCapture"`
 }
 
 func mediaRemovalInputDigest(in mediaRemovalInput) string {
+	if in.MediaSyncDelete != nil {
+		return organization.Digest([]any{in.HistoryIDs, in.Flag, in.Paths, in.IncludeNFO, in.CleanupDirectories, strings.TrimSpace(in.Decision), in.MediaSyncDelete})
+	}
 	return organization.Digest([]any{in.HistoryIDs, in.Flag, in.Paths, in.IncludeNFO, in.CleanupDirectories, strings.TrimSpace(in.Decision)})
 }
 func mediaRemovalIDs(in mediaRemovalInput) ([]int64, error) {
-	if len(in.HistoryIDs) > 100 || len(in.Paths) > 1024 || len(in.HistoryIDs) == 0 && len(in.Paths) == 0 {
+	limit := 100
+	if in.MediaSyncDelete != nil {
+		limit = mediasyncdel.HistoryLimit
+	}
+	if len(in.HistoryIDs) > limit || len(in.Paths) > 1024 || len(in.HistoryIDs) == 0 && len(in.Paths) == 0 {
 		return nil, organization.ErrLimit
 	}
 	if in.Flag != "" && in.Flag != "del_source" && in.Flag != "del_dest" && in.Flag != "del_all" {
@@ -403,7 +412,7 @@ func (api *organizationAPI) prepareMediaRemoval(ctx context.Context, in mediaRem
 	if err != nil {
 		return organization.MediaRemovalReview{}, empty, err
 	}
-	d := organization.MediaRemovalDefinition{Actor: actor, RequestID: in.RequestID, Decision: strings.TrimSpace(in.Decision), InputDigest: mediaRemovalInputDigest(in), Units: []organization.MediaRemovalUnit{}}
+	d := organization.MediaRemovalDefinition{Actor: actor, RequestID: in.RequestID, Decision: strings.TrimSpace(in.Decision), InputDigest: mediaRemovalInputDigest(in), Units: []organization.MediaRemovalUnit{}, MediaSyncDelete: in.MediaSyncDelete}
 	opened := map[string]*remotestore.Client{}
 	scopes := map[string]organization.RecoveryScope{}
 	closeClients := func() {

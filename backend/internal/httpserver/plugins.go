@@ -13,17 +13,18 @@ import (
 )
 
 type pluginService struct {
-	legacyURL    string
-	client       *http.Client
-	system       *systemconfig.Store
-	auth         *nativeAuthentication
-	hosts        *nativeHostsPlugin
-	indexers     *nativeIndexerPlugins
-	subtitles    *subtitleAPI
-	library      *libraryScraper
-	mediaRefresh *mediaRefreshAPI
-	eventWebhook *eventWebhookAPI
-	speedLimiter *speedLimiterAPI
+	legacyURL       string
+	client          *http.Client
+	system          *systemconfig.Store
+	auth            *nativeAuthentication
+	hosts           *nativeHostsPlugin
+	indexers        *nativeIndexerPlugins
+	subtitles       *subtitleAPI
+	library         *libraryScraper
+	mediaRefresh    *mediaRefreshAPI
+	eventWebhook    *eventWebhookAPI
+	speedLimiter    *speedLimiterAPI
+	mediaSyncDelete *mediaSyncDeleteAPI
 }
 
 type pluginSummary struct {
@@ -78,6 +79,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeMediaSyncDelete(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveMediaSyncDeletePlugin(response, request, action)
+		return
+	}
 	if service.nativeSpeedLimiter(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

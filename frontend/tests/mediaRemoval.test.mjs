@@ -61,6 +61,21 @@ test("expired authentication and malformed receipts never trigger a write retry"
   assert.equal(api.validMediaRemoval({...review,units:[{...unit,absent:true}]}),false);
   assert.equal(api.validMediaRemoval({...review,units:[{...unit,bytes:1125899906842624},{...unit,ordinal:1,bytes:1}]}),false);
 });
+test("linked full-series deletion stays readable above the manual limit and continues only in its own manager",async t=>{
+  const historyIds=Array.from({length:151},(_,i)=>String(i+1)),records=historyIds.map(id=>({...preview.records[0],id}));
+  const many={...review,mediaSyncReceipt:"f".repeat(64),historyIds,records,units:[]};
+  assert.equal(api.validMediaRemoval(many),true);
+  assert.equal(api.validMediaRemoval({...many,mediaSyncReceipt:undefined}),false);
+  assert.equal(api.validMediaRemoval({...many,mediaSyncReceipt:"broken"}),false);
+  assert.equal(api.validMediaRemoval({...many,historyIds:[...historyIds,"152"]}),false);
+  const tooMany=Array.from({length:20001},(_,i)=>String(i+1));
+  assert.equal(api.validMediaRemoval({...many,historyIds:tooMany,records:tooMany.map(id=>({...preview.records[0],id}))}),false);
+  let calls=0;t.mock.method(globalThis,"fetch",async()=>{calls++;return response(many)});
+  assert.equal((await api.reviewMediaRemoval("token",many.id)).historyIds.length,151);
+  await assert.rejects(api.continueMediaRemoval("token",many,grants),e=>e.code===409&&e.message.includes("Emby 同步删除"));
+  await assert.rejects(api.previewMediaRemoval("token",{...s,historyIds}));
+  assert.equal(calls,1);
+});
 test("media removal UI separately explains history reset, complete directories and irreversible risk",async()=>{
   const require=createRequire(import.meta.url),jsx=pathToFileURL(require.resolve("react/jsx-runtime")).href,react=pathToFileURL(require.resolve("react")).href;
   const source=compile(readFileSync(new URL("../src/pages/MediaRemovalManager.tsx",import.meta.url),"utf8")).replace('"react/jsx-runtime"',JSON.stringify(jsx)).replace('"react"',JSON.stringify(react)).replace('"../api/client"',JSON.stringify(client)).replace('"../api/mediaRemoval"',JSON.stringify(apiURL));

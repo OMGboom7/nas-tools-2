@@ -292,7 +292,7 @@ func isMigratedProtectedPath(path string) bool {
 	for _, prefix := range []string{
 		"/api/v1/dashboard", "/api/v1/search/resources", "/api/v1/downloads",
 		"/api/v1/subscriptions", "/api/v1/discovery", "/api/v1/sites",
-		"/api/v1/services", "/api/v1/notifications", "/api/v1/plugins", "/api/v1/plugin", "/api/v1/media-webhooks", "/api/v1/event-webhooks", "/api/v1/speed-limiter",
+		"/api/v1/services", "/api/v1/notifications", "/api/v1/plugins", "/api/v1/plugin", "/api/v1/media-webhooks", "/api/v1/event-webhooks", "/api/v1/speed-limiter", "/api/v1/media-sync-delete",
 		"/api/v1/system/logout", "/api/v1/system/path", "/api/v1/system/version", "/api/v1/service/network/test", "/api/v1/service/rule/test", "/api/v1/media/category/list", "/api/v1/media/tv/seasons", "/api/v1/organization/history/list", "/api/v1/organization/history/statistics",
 		"/api/v1/user",
 		"/api/v1/words",

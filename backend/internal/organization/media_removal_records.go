@@ -119,7 +119,7 @@ func removalRows(ctx context.Context, r recoveryReader, table, where string, arg
 	return result, rows.Err()
 }
 func mediaRemovalHistories(ctx context.Context, r recoveryReader, ids []int64) ([]mediaRemovalHistoryDocument, error) {
-	if len(ids) > 100 {
+	if len(ids) > 20000 {
 		return nil, ErrLimit
 	}
 	out := []mediaRemovalHistoryDocument{}

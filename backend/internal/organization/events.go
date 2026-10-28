@@ -10,6 +10,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
+	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
 	"github.com/0xforee/nas-tools/backend/internal/speedlimit"
 	"github.com/0xforee/nas-tools/backend/internal/subtitles"
 )
@@ -19,6 +20,7 @@ func (s *Store) Subtitles() *subtitles.Store              { return subtitles.New
 func (s *Store) MediaRefresh() *mediaserver.RefreshStore  { return mediaserver.NewRefreshStore(s.db) }
 func (s *Store) MediaWebhooks() *mediaserver.WebhookStore { return mediaserver.NewWebhookStore(s.db) }
 func (s *Store) SpeedLimiter() *speedlimit.Store          { return speedlimit.New(s.db) }
+func (s *Store) MediaSyncDelete() *mediasyncdel.Store     { return mediasyncdel.New(s.db) }
 
 func mediaRefreshItems(d Definition) []mediaserver.RefreshItem {
 	items := []mediaserver.RefreshItem{}

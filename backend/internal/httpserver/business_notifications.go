@@ -10,6 +10,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
+	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 )
 
@@ -109,6 +110,21 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 				err = mediaserver.ErrWebhook
 			} else {
 				image, link = media.Image, media.Link
+			}
+		}
+		if e.Kind == "plugin_message" {
+			var p struct {
+				Plugin string `json:"plugin"`
+				Image  string `json:"image"`
+			}
+			if json.Unmarshal(e.Data, &p) != nil {
+				err = mediasyncdel.ErrState
+			} else if p.Plugin == mediasyncdel.Plugin {
+				if !mediasyncdel.SafeImage(p.Image) {
+					err = mediasyncdel.ErrState
+				} else {
+					image = p.Image
+				}
 			}
 		}
 		if err == nil && nativeNotificationDeliveryEligible(c.Type, objectValue(record["config"])) {

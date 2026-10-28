@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 )
 
@@ -24,13 +25,18 @@ type MediaRemovalUnit struct {
 	Events     []MediaRemovalEventRef `json:"events"`
 }
 type MediaRemovalDefinition struct {
-	Actor       string                        `json:"actor"`
-	RequestID   string                        `json:"requestId"`
-	Decision    string                        `json:"decision"`
-	InputDigest string                        `json:"inputDigest"`
-	Histories   []mediaRemovalHistoryDocument `json:"histories"`
-	Units       []MediaRemovalUnit            `json:"units"`
-	Owners      []RecoveryOwner               `json:"owners"`
+	Actor           string                        `json:"actor"`
+	RequestID       string                        `json:"requestId"`
+	Decision        string                        `json:"decision"`
+	InputDigest     string                        `json:"inputDigest"`
+	Histories       []mediaRemovalHistoryDocument `json:"histories"`
+	Units           []MediaRemovalUnit            `json:"units"`
+	Owners          []RecoveryOwner               `json:"owners"`
+	MediaSyncDelete *MediaSyncDeleteRemoval       `json:"mediaSyncDelete,omitempty"`
+}
+type MediaSyncDeleteRemoval struct {
+	Receipt string `json:"receipt"`
+	Image   string `json:"image"`
 }
 type MediaRemovalScopeView struct {
 	Ordinal     int                     `json:"ordinal"`
@@ -49,6 +55,7 @@ type MediaRemovalScopeView struct {
 	Review      *RecoveryDisposalReview `json:"review,omitempty"`
 }
 type MediaRemovalReview struct {
+	MediaSyncReceipt    string                       `json:"mediaSyncReceipt,omitempty"`
 	ID                  string                       `json:"id"`
 	State               string                       `json:"state"`
 	Actor               string                       `json:"actor"`
@@ -174,7 +181,14 @@ func (s *Store) MediaRemovalUnitOwners(ctx context.Context, d RecoveryDefinition
 }
 
 func (s *Store) PrepareMediaRemoval(ctx context.Context, d MediaRemovalDefinition, ids []int64) (MediaRemovalReview, error) {
-	if d.Actor == "" || !recoveryHex(d.RequestID, 32) || !recoveryHex(d.InputDigest, 64) || strings.TrimSpace(d.Decision) == "" || len(d.Decision) > 512 || len(d.Units) > 1024 || len(ids) == 0 && len(d.Units) == 0 {
+	historyLimit, unitLimit := 100, 1024
+	if d.MediaSyncDelete != nil {
+		if !mediasyncdel.Hex(d.MediaSyncDelete.Receipt, 64) {
+			return MediaRemovalReview{}, ErrState
+		}
+		historyLimit, unitLimit = mediasyncdel.HistoryLimit, RecoveryObjectLimit
+	}
+	if d.Actor == "" || !recoveryHex(d.RequestID, 32) || !recoveryHex(d.InputDigest, 64) || strings.TrimSpace(d.Decision) == "" || len(d.Decision) > 512 || len(d.Units) > unitLimit || len(ids) > historyLimit || len(ids) == 0 && len(d.Units) == 0 {
 		return MediaRemovalReview{}, ErrState
 	}
 	var err error
@@ -235,6 +249,9 @@ func (s *Store) PrepareMediaRemoval(ctx context.Context, d MediaRemovalDefinitio
 }
 func mediaRemovalProject(d MediaRemovalDefinition) MediaRemovalReview {
 	v := MediaRemovalReview{ID: MediaRemovalID(d.Actor, d.RequestID), Actor: d.Actor, RequestID: d.RequestID, Decision: d.Decision, HistoryIDs: []string{}, Records: []MediaRemovalHistorySummary{}, Units: []MediaRemovalScopeView{}, Owners: d.Owners, Definition: d, CreationFingerprint: Digest(d)}
+	if d.MediaSyncDelete != nil {
+		v.MediaSyncReceipt = d.MediaSyncDelete.Receipt
+	}
 	seen := map[string]bool{}
 	for _, h := range d.Histories {
 		id := strconv.FormatInt(h.Record.ID, 10)

@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeMediaSyncDelete(request.PathValue("id")) {
+		service.serveMediaSyncDeletePlugin(response, request, "get")
+		return
+	}
 	if service.nativeSpeedLimiter(request.PathValue("id")) {
 		service.serveSpeedLimiterPlugin(response, request, "get")
 		return
@@ -106,6 +110,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeMediaSyncDelete(request.PathValue("id")) {
+		service.serveMediaSyncDeletePlugin(response, request, "save")
+		return
+	}
 	if service.nativeSpeedLimiter(request.PathValue("id")) {
 		service.serveSpeedLimiterPlugin(response, request, "save")
 		return
