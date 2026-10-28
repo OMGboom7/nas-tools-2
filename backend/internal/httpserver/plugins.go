@@ -23,6 +23,7 @@ type pluginService struct {
 	library      *libraryScraper
 	mediaRefresh *mediaRefreshAPI
 	eventWebhook *eventWebhookAPI
+	speedLimiter *speedLimiterAPI
 }
 
 type pluginSummary struct {
@@ -77,6 +78,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeSpeedLimiter(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveSpeedLimiterPlugin(response, request, action)
+		return
+	}
 	if service.nativeEventWebhook(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/speedlimit"
 )
 
 // A raw callback is a different event from its optional notification projection.
@@ -65,6 +66,9 @@ func recordWebhookSignal(ctx context.Context, tx *sql.Tx, c WebhookControl, id, 
 		return false, ErrWebhookState
 	}
 	if err := bus.PublishSignal(ctx, tx, c.Server+".webhook", id, "media-webhook:"+id, raw); err != nil {
+		return false, err
+	}
+	if err := speedlimit.Capture(ctx, tx, c.Server, id, raw); err != nil {
 		return false, err
 	}
 	return false, nil

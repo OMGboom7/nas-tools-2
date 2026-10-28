@@ -4,6 +4,7 @@ import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { PluginConfigEditor } from "../components/PluginConfigEditor";
 import { PluginPageViewer } from "../components/PluginPageViewer";
 import { EventWebhookReceipts } from "../components/EventWebhookReceipts";
+import { SpeedLimiterManager } from "../components/SpeedLimiterManager";
 
 type PluginsPageProps = {
   session: AuthSession;
@@ -104,6 +105,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
         {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的插件。</div> : <section className="plugin-grid" aria-label="插件列表">{filtered.map((plugin) => <PluginCard key={plugin.id} plugin={plugin} busy={Boolean(busy[plugin.id])} onView={() => setViewing(plugin)} onConfigure={() => setEditing(plugin)} onInstall={() => void install(plugin)} onUninstall={() => { setConfirmation(""); setRemoving(plugin); }} />)}</section>}
       </>}
       {data?.items.some(p=>p.id==="Webhook"&&p.native&&p.actionsAvailable)&&<EventWebhookReceipts token={session.token} onSessionExpired={onSessionExpired}/>}
+      {data?.items.some(p=>p.id==="SpeedLimiter"&&p.native&&p.actionsAvailable)&&<SpeedLimiterManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {viewing && <PluginPageViewer session={session} plugin={viewing} onClose={() => setViewing(undefined)} onSessionExpired={onSessionExpired} />}
       {editing && <PluginConfigEditor session={session} plugin={editing} onClose={() => setEditing(undefined)} onSaved={() => void configured(editing)} onSessionExpired={onSessionExpired} />}
       {removing && <UninstallDialog plugin={removing} value={confirmation} busy={Boolean(busy[removing.id])} onChange={setConfirmation} onClose={() => setRemoving(undefined)} onConfirm={() => void confirmUninstall()} />}

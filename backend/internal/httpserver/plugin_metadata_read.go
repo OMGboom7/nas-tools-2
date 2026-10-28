@@ -84,13 +84,32 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeSpeedLimiter(id) {
+				actor, ok := service.speedLimiter.authorize(response, request)
+				if !ok {
+					return
+				}
+				raw, err := service.system.ReadMany(request.Context(), speedLimiterKeys)
+				if err != nil {
+					speedLimiterError(response, err)
+					return
+				}
+				detail, err := service.speedLimiter.detail(request.Context(), raw, actor)
+				if err != nil {
+					speedLimiterError(response, err)
+					return
+				}
+				running, known := service.speedLimiterSummary(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeEventWebhook(id) {
 				actor, ok := service.eventWebhook.authorize(response, request)
 				if !ok {

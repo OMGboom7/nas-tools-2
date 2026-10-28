@@ -82,6 +82,9 @@ func scanChannel(row interface{ Scan(...any) error }) (notificationconfig.Channe
 	return c, err
 }
 func selected(c notificationconfig.Channel, kind string) bool {
+	if kind == "plugin_message" {
+		kind = "custom_message"
+	}
 	var switches []string
 	if c.Enabled == 0 || json.Unmarshal([]byte(c.Switches), &switches) != nil {
 		return false
@@ -99,7 +102,7 @@ func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body str
 }
 func emitBusiness(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string, data json.RawMessage) error {
 	switch kind {
-	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted", "mediaserver_message":
+	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted", "mediaserver_message", "plugin_message":
 	default:
 		return ErrState
 	}

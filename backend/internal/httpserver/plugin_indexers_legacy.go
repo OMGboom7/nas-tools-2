@@ -49,6 +49,11 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeSpeedLimiter(id) {
+			probe.SetPathValue("id", id)
+			s.serveSpeedLimiterPlugin(w, probe, "page")
+			return
+		}
 		if s.nativeEventWebhook(id) {
 			probe.SetPathValue("id", id)
 			s.serveEventWebhookPlugin(w, probe, "page")

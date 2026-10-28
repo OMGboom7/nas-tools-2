@@ -43,7 +43,7 @@ React 插件页提供只读状态、本页最多 30 条与较早稳定编号查�
 
 下载时机明确为原生接收／核实后的 `native_event.stage=committed`；旧 Python 在 Add 前发送，前置可变参数钩子没有被冒充为已移植。只保留实际可用的旧字段，不伪造缺少的媒体信息或设置。媒体回调保留原 JSON；其余业务增加原生观察上下文。订阅结束、下载接收、文件入库和外发成功仍是不同事实。
 
-通用消费者接受旧枚举的 20 个事件名，合同测试不代表全部真实生产者已迁移。`download.fail`、`transfer.fail`、`subtitle.download`、`message.incoming`、`search.start`、`media.scrap.start`、`plugin.reload`、`douban.sync`、`autoseed.start`、`refresh.mediaserver`、`site.signin` 的独立事件与旧调用时机继续逐项接入。原生字幕／刮削／刷新执行器不证明旧钩子完整接通，SpeedLimiter、MediaSyncDel、MovieLike 不因收到回调而启动。
+通用消费者接受旧枚举的 20 个事件名，合同测试不代表全部真实生产者已迁移。`download.fail`、`transfer.fail`、`subtitle.download`、`message.incoming`、`search.start`、`media.scrap.start`、`plugin.reload`、`douban.sync`、`autoseed.start`、`refresh.mediaserver`、`site.signin` 的独立事件与旧调用时机继续逐项接入。原生字幕／刮削／刷新执行器不证明旧钩子完整接通。后续 [SpeedLimiter](playback-speed-limiter.md) 已用自己的独立授权接通原始媒体回调；外发授权不代替限速授权。MediaSyncDel、MovieLike 仍不因收到回调而启动。
 
 ## 集中验证
 

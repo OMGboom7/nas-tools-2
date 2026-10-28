@@ -77,7 +77,7 @@
 
 ## 剩余退出条件
 
-播放回调通知不等于 SpeedLimiter、MediaSyncDel、MovieLike、外发 Webhook 插件及其余播放／站点／下载器消费者全部迁移。继续按真实调用者、原配置与实际副作用逐个补齐；不把本批通知当作删文件、移动、删种或 PT 义务解除证据。
+播放回调通知不代表其他消费者已迁移。后续批次已独立接通 [Webhook 事件外发](event-webhook.md) 和 [SpeedLimiter 播放限速](playback-speed-limiter.md)，两者均须各自授权。MediaSyncDel、MovieLike 及其余播放／站点／下载器消费者继续按真实调用者、原配置与实际副作用补齐；通知及限速不作为删文件、移动、删种或 PT 义务解除证据。
 
 真实媒体服务器／通知渠道、账户级 PT、其他保留业务、存量升级／回滚和生产镜像仍待验收。2026-10-27 只读检查 Docker daemon 仍不可用，按用户选择不代为启动 Docker；候选镜像实际构建、运行和健康检查仍待完成。
 

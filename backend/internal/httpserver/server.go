@@ -78,6 +78,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitLibrary := startLibraryScraper(workerContext, runner.library)
 		waitMediaRefresh := startMediaRefreshWorker(workerContext, runner.mediaRefresh)
 		waitEventWebhook := startEventWebhookWorker(workerContext, runner.eventWebhook)
+		waitSpeedLimiter := startSpeedLimiterWorker(workerContext, runner.speedLimiter)
 		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
 		wait = func() {
 			waitExisting()
@@ -91,6 +92,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitLibrary()
 			waitMediaRefresh()
 			waitEventWebhook()
+			waitSpeedLimiter()
 			waitFuzzy()
 		}
 	}
@@ -590,6 +592,16 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	playbackLimiter := &speedLimiterAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}
+	if organizationJobs != nil {
+		playbackLimiter.queue = organizationJobs.SpeedLimiter()
+	}
+	if nativeSystemConfig != nil {
+		plugins.speedLimiter = playbackLimiter
+	}
+	rssRunner.speedLimiter = playbackLimiter
+	mux.HandleFunc("/api/v1/speed-limiter", playbackLimiter.manage)
+	mux.HandleFunc("/api/v1/speed-limiter/", playbackLimiter.manage)
 	eventWebhooks := &eventWebhookAPI{organizer: &organizer, system: nativeSystemConfig, queue: businessMessages.queue, transport: transport}
 	if nativeSystemConfig != nil {
 		plugins.eventWebhook = eventWebhooks
@@ -693,7 +705,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		})
 	}
 
-	var handler http.Handler = nativeMediaRefresh.reservePlugin(mux)
+	var handler http.Handler = playbackLimiter.reservePlugin(nativeMediaRefresh.reservePlugin(mux))
 	if nativeAuth != nil {
 		handler = nativeAuth.protectAPI(handler)
 	}

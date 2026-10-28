@@ -23,6 +23,7 @@ type rssRunAPI struct {
 	library        *libraryScraper
 	mediaRefresh   *mediaRefreshAPI
 	eventWebhook   *eventWebhookAPI
+	speedLimiter   *speedLimiterAPI
 	scraper        *intakeScraper
 	subtitles      *subtitleAPI
 	indexerPlugins *nativeIndexerPlugins
