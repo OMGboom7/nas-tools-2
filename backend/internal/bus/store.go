@@ -96,7 +96,7 @@ func selected(c notificationconfig.Channel, kind string) bool {
 
 func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string) error {
 	switch kind {
-	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted":
+	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted", "mediaserver_message":
 	default:
 		return ErrState
 	}
@@ -249,6 +249,9 @@ func (s *Store) Claim(ctx context.Context, expected Delivery) (Event, notificati
 		return e, c, ErrState
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT ID,KIND,REFERENCE,TITLE,BODY,CREATED FROM GO_BUSINESS_EVENTS WHERE ID=?`, d.EventID).Scan(&e.ID, &e.Kind, &e.Reference, &e.Title, &e.Text, &e.Created); err != nil {
+		return e, c, err
+	}
+	if err := eventData(ctx, tx, &e); err != nil {
 		return e, c, err
 	}
 	c, err = scanChannel(tx.QueryRowContext(ctx, channelsSQL+` WHERE ID=?`, d.ChannelID))

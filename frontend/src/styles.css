@@ -1000,3 +1000,18 @@ a.nav-item:hover { color: #d9e5f2; background: #101e31; }
 .fuzzy-subscription-panel details { margin: .8rem 0; padding: .7rem; border: 1px solid #2a3a4a; border-radius: 8px; }
 .fuzzy-subscription-panel details > ol,.fuzzy-subscription-panel details > ul { max-height: 26rem; overflow: auto; padding-left: 1.5rem; }
 .fuzzy-subscription-panel li { margin: .55rem 0; line-height: 1.65; }
+.notification-receipt-panel { margin: 20px 0; padding: 20px; border: 1px solid #263548; border-radius: 14px; background: #101a29; overflow-wrap: anywhere; }
+.notification-receipt-panel h2 { margin: 0 0 14px; font-size: 1.25rem; letter-spacing: normal; }
+.notification-receipt-panel h3 { font-size: 1.05rem; line-height: 1.5; }
+.notification-receipt-panel p { margin: 10px 0; color: #b5c3d7; font-size: .9rem; line-height: 1.7; }
+.notification-receipt-panel button { margin: 6px 8px 6px 0; padding: 10px 14px; border: 1px solid #315d52; border-radius: 8px; background: #14372e; color: #b6f0dd; cursor: pointer; }
+.notification-receipt-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.notification-receipt-panel fieldset { display: grid; gap: 10px; margin: 16px 0; padding: 16px; border: 1px solid #334155; border-radius: 10px; }
+.notification-receipt-panel label { display: flex; align-items: baseline; gap: 10px; margin: 12px 0; font-size: .9rem; line-height: 1.7; }
+.notification-receipt-panel input:not([type="checkbox"]) { min-width: 0; max-width: 100%; padding: 9px 12px; border: 1px solid #334155; border-radius: 7px; background: #0b1320; color: #e8eef8; }
+.notification-receipt-panel input[type="checkbox"] { flex: 0 0 auto; accent-color: #55d6b4; }
+.notification-receipt-panel small { display: block; margin: 14px 0; color: #a9b8cb; line-height: 1.6; }
+.notification-receipt-panel article { margin-top: 18px; padding: 16px; border: 1px solid #2d4756; border-radius: 10px; background: #0b1421; }
+.notification-receipt-panel li { margin: 10px 0; line-height: 1.7; }
+.notification-receipt-panel :focus-visible { outline: 2px solid #55d6b4; outline-offset: 3px; }
+@media (max-width: 650px) { .notification-receipt-panel { padding: 16px; } .notification-receipt-panel label { align-items: flex-start; flex-wrap: wrap; } }

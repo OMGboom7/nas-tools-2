@@ -2,12 +2,14 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 )
 
@@ -100,8 +102,17 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 		}
 		record, err := nativeNotificationRecord(c)
 		state, reason := "blocked", "channel format or template is not supported; no delivery attempted"
+		image, link := "", ""
+		if e.Kind == "mediaserver_message" {
+			var media mediaserver.WebhookEvent
+			if json.Unmarshal(e.Data, &media) != nil || media.Validate() != nil {
+				err = mediaserver.ErrWebhook
+			} else {
+				image, link = media.Image, media.Link
+			}
+		}
 		if err == nil && nativeNotificationDeliveryEligible(c.Type, objectValue(record["config"])) {
-			sent, sendErr := api.service.sendNativeNotification(ctx, c.Type, objectValue(record["config"]), e.Title, e.Text, "", "")
+			sent, sendErr := api.service.sendNativeNotification(ctx, c.Type, objectValue(record["config"]), e.Title, e.Text, image, link)
 			state, reason = "uncertain", "notification response not positively acknowledged; do not retry automatically"
 			if sendErr == nil && sent {
 				state, reason = "sent", ""

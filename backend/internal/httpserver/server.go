@@ -556,6 +556,16 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	if organizationJobs != nil {
 		businessMessages.queue = organizationJobs.BusinessEvents()
 	}
+	mediaWebhooks := &mediaWebhookAPI{connection: mediaSyncAPI{auth: nativeAuth, config: nativeConfig, guards: organizationJobs, transport: transport, pureGo: cfg.DisableLegacy}, events: businessMessages.queue}
+	if organizationJobs != nil {
+		mediaWebhooks.store = organizationJobs.MediaWebhooks()
+	}
+	mux.HandleFunc("/api/v1/media-webhooks", mediaWebhooks.manage)
+	mux.HandleFunc("/api/v1/media-webhooks/", mediaWebhooks.manage)
+	for _, path := range []string{"/emby", "/jellyfin", "/plex"} {
+		mux.HandleFunc(path, mediaWebhooks.receive)
+		mux.HandleFunc(path+"/", mediaWebhooks.receive)
+	}
 	rssRunner.notifications = businessMessages
 	mux.HandleFunc("GET /api/v1/notifications/events", businessMessages.list)
 	mux.HandleFunc("POST /api/v1/notifications/events/{id}/dismiss", businessMessages.dismiss)
