@@ -133,6 +133,13 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 		if err := subtitles.Emit(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest, IsDisc(e)); err != nil {
 			return err
 		}
+		if err := bus.PublishSignal(ctx, tx, "transfer.finished", fmt.Sprintf("%s:%d", id, ordinal), id, map[string]any{
+			"in_path": d.SourceRoot, "file": filepath.Join(d.SourceRoot, e.Source), "target_path": d.TargetRoot, "dest": filepath.Join(d.TargetRoot, e.Target),
+			"media_info":   map[string]any{"title": e.Title, "year": e.Year, "type": e.MediaType, "tmdb_id": e.TMDBID, "season_episode": e.SeasonEpisode},
+			"native_event": map[string]any{"stage": "committed", "job_id": id, "ordinal": ordinal, "mode": d.Mode, "size": e.Size},
+		}); err != nil {
+			return err
+		}
 		if first == "" {
 			first = e.Title
 		}

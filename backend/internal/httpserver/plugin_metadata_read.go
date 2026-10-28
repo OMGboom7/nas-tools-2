@@ -84,13 +84,33 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeEventWebhook(id) {
+				actor, ok := service.eventWebhook.authorize(response, request)
+				if !ok {
+					return
+				}
+				raw, err := service.system.ReadMany(request.Context(), eventWebhookKeys)
+				if err != nil {
+					eventWebhookError(response, err)
+					return
+				}
+				values, err := decodeMetadataConfig(raw["plugin.Webhook"])
+				if err != nil {
+					eventWebhookError(response, err)
+					return
+				}
+				detail := service.eventWebhook.detail(raw, values, actor)
+				running, known := service.eventWebhookSummary(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeMediaRefresh(id) {
 				actor, ok := service.mediaRefresh.authorize(response, request)
 				if !ok {

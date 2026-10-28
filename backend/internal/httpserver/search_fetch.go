@@ -83,7 +83,7 @@ func (service *nativeExternalResourceSearch) fetchResources(ctx context.Context,
 	}
 	active := map[string]bool{}
 	for _, id := range installed {
-		if id != "Jackett" && id != "Prowlarr" && id != "CustomReleaseGroups" && id != "Customization" && id != "CustomHosts" && id != "ChineseSubFinder" && id != "LibraryScraper" {
+		if id != "Jackett" && id != "Prowlarr" && id != "CustomReleaseGroups" && id != "Customization" && id != "CustomHosts" && id != "ChineseSubFinder" && id != "LibraryScraper" && id != "LibraryRefresh" && id != "Webhook" {
 			return nil, errors.New("installed search plugin is not supported natively")
 		}
 		active[id] = true

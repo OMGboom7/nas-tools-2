@@ -77,6 +77,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitScraper := startIntakeScraper(workerContext, runner.scraper)
 		waitLibrary := startLibraryScraper(workerContext, runner.library)
 		waitMediaRefresh := startMediaRefreshWorker(workerContext, runner.mediaRefresh)
+		waitEventWebhook := startEventWebhookWorker(workerContext, runner.eventWebhook)
 		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
 		wait = func() {
 			waitExisting()
@@ -89,6 +90,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitScraper()
 			waitLibrary()
 			waitMediaRefresh()
+			waitEventWebhook()
 			waitFuzzy()
 		}
 	}
@@ -588,6 +590,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	eventWebhooks := &eventWebhookAPI{organizer: &organizer, system: nativeSystemConfig, queue: businessMessages.queue, transport: transport}
+	if nativeSystemConfig != nil {
+		plugins.eventWebhook = eventWebhooks
+	}
+	rssRunner.eventWebhook = eventWebhooks
+	mux.HandleFunc("/api/v1/event-webhooks", eventWebhooks.manage)
+	mux.HandleFunc("/api/v1/event-webhooks/", eventWebhooks.manage)
 	nativeMediaRefresh := &mediaRefreshAPI{organizer: &organizer, system: nativeSystemConfig, connection: mediaSync}
 	if organizationRecords != nil {
 		nativeMediaRefresh.queue = organizationRecords.MediaRefresh()

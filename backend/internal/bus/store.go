@@ -95,6 +95,9 @@ func selected(c notificationconfig.Channel, kind string) bool {
 }
 
 func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string) error {
+	return emitBusiness(ctx, tx, kind, key, reference, title, body, nil)
+}
+func emitBusiness(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string, data json.RawMessage) error {
 	switch kind {
 	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted", "mediaserver_message":
 	default:
@@ -131,7 +134,7 @@ func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body str
 		return err
 	}
 	if !exists {
-		return nil
+		return finishBusinessSignal(ctx, tx, kind, key, reference, title, body, data)
 	}
 	rows, err := tx.QueryContext(ctx, channelsSQL+` WHERE COALESCE(ENABLED,0)<>0 ORDER BY ID LIMIT 1001`)
 	if err != nil {
@@ -170,7 +173,7 @@ func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body str
 			return ErrState
 		}
 	}
-	return nil
+	return finishBusinessSignal(ctx, tx, kind, key, reference, title, body, data)
 }
 
 // Durable typed events are committed with the individual deletion receipt.
@@ -180,7 +183,7 @@ func EmitData(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body
 	if err != nil || len(raw) > 64<<10 {
 		return ErrState
 	}
-	if err := Emit(ctx, tx, kind, key, reference, title, body); err != nil {
+	if err := emitBusiness(ctx, tx, kind, key, reference, title, body, raw); err != nil {
 		return err
 	}
 	id := Hash([]string{kind, key})

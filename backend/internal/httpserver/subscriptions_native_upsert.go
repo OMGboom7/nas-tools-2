@@ -204,7 +204,10 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 			return 0, err
 		}
 		reference := "subscription:" + input.Type + ":" + strconv.FormatInt(id, 10)
-		if err := bus.Emit(ctx, transaction, "rss_added", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, name+" 已添加订阅", "类型："+input.Type+"；年份："+year+"；季："+season); err != nil {
+		if err := bus.EmitData(ctx, transaction, "rss_added", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, name+" 已添加订阅", "类型："+input.Type+"；年份："+year+"；季："+season, subscriptionEventData(map[string]any{
+			"NAME": name, "YEAR": year, "TMDBID": tmdbID, "SEASON": season, "IMAGE": image, "RSS_SITES": input.RSSSites, "SEARCH_SITES": input.SearchSites, "OVER_EDITION": input.OverEdition,
+			"FILTER_RESTYPE": input.Quality, "FILTER_PIX": input.Resolution, "FILTER_TEAM": input.ReleaseGroup, "FILTER_RULE": filterRule, "SAVE_PATH": input.SavePath, "DOWNLOAD_SETTING": downloadSetting,
+		}, input.Type, id, true)); err != nil {
 			return 0, err
 		}
 	}

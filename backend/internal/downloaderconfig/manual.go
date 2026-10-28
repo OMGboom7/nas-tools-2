@@ -219,7 +219,10 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 		title = d.Title + " 已核实任务存在"
 		message = "管理员只读核实原 Hash 当前存在；不证明本次新建任务或全部设置已生效，不代表文件完成或入库。"
 	}
-	if err := bus.Emit(ctx, tx, "download_start", r.ID, "manual-download:"+r.ID, title, "来自："+d.Source+"；下载器："+d.DownloaderName+"。"+message); err != nil {
+	if err := bus.EmitData(ctx, tx, "download_start", r.ID, "manual-download:"+r.ID, title, "来自："+d.Source+"；下载器："+d.DownloaderName+"。"+message, map[string]any{
+		"media_info": map[string]any{"title": d.Title}, "downloader_id": d.DownloaderID, "download_dir": d.SavePath,
+		"native_download": map[string]any{"task_id": taskID, "info_hash": d.InfoHash, "proof": proof, "source": d.Source},
+	}); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS GO_MANUAL_DOWNLOAD_CONFIRMATIONS(SUBMISSION_ID TEXT PRIMARY KEY,ACTOR TEXT NOT NULL,PROOF TEXT NOT NULL,CREATED TEXT NOT NULL)`); err != nil {

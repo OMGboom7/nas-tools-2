@@ -234,7 +234,9 @@ func recordDownloadTx(ctx context.Context, transaction *sql.Tx, taskID int64, ti
 	if _, err := transaction.ExecContext(ctx, `INSERT INTO USERRSS_TASK_HISTORY (TASK_ID,TITLE,DOWNLOADER,DATE) VALUES (?,?,?,?)`, strconv.FormatInt(taskID, 10), title, downloaderName, time.Now().Format("2006-01-02 15:04:05")); err != nil {
 		return err
 	}
-	return bus.Emit(ctx, transaction, "download_start", bus.Hash([]any{taskID, enclosure, title}), "rss:"+strconv.FormatInt(taskID, 10), title+" 开始下载", "来自：自定义 RSS；下载器："+downloaderName+"；年份："+year)
+	return bus.EmitData(ctx, transaction, "download_start", bus.Hash([]any{taskID, enclosure, title}), "rss:"+strconv.FormatInt(taskID, 10), title+" 开始下载", "来自：自定义 RSS；下载器："+downloaderName+"；年份："+year, map[string]any{
+		"media_info": map[string]any{"title": title, "year": year}, "torrent_file": enclosure, "native_download": map[string]any{"rss_task_id": taskID, "downloader_name": downloaderName},
+	})
 }
 
 type Article struct {

@@ -193,6 +193,10 @@ func (store *Store) UpdateMany(ctx context.Context, keys []string, transform fun
 		if !allowed[key] || value == "" {
 			return ErrInvalidSetting
 		}
+		var previous int64
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=?", key).Scan(&previous); err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, "UPDATE SYSTEM_DICT SET VALUE=? WHERE TYPE='SystemConfig' AND KEY=?", value, key)
 		if err != nil {
 			return err
@@ -201,13 +205,28 @@ func (store *Store) UpdateMany(ctx context.Context, keys []string, transform fun
 		if err != nil {
 			return err
 		}
-		if n == 0 {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE,NOTE) VALUES('SystemConfig',?,?, '')", key, value); err != nil {
+		if n != previous {
+			return ErrInvalidSetting
+		}
+		if previous == 0 {
+			result, err := tx.ExecContext(ctx, "INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE,NOTE) VALUES('SystemConfig',?,?, '')", key, value)
+			if err != nil {
 				return err
+			}
+			if n, err := result.RowsAffected(); err != nil || n != 1 {
+				return ErrInvalidSetting
 			}
 		}
 		var stored string
 		if err := tx.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&stored); err != nil || stored != value {
+			return ErrInvalidSetting
+		}
+	}
+	// A trigger on a later key may alter an earlier verified key. Verify the
+	// complete related snapshot immediately before committing the grant.
+	for key, value := range next {
+		var matches, total int64
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*),COALESCE(SUM(VALUE=?),0) FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=?", value, key).Scan(&total, &matches); err != nil || total == 0 || matches != total {
 			return ErrInvalidSetting
 		}
 	}

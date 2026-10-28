@@ -171,7 +171,10 @@ func (api *fuzzySubscriptionAPI) result(ctx context.Context, id string, index in
 				return err
 			}
 			reference := "subscription:" + j.Kind + ":" + strconv.FormatInt(j.SubscriptionID, 10)
-			if err := bus.Emit(ctx, tx, "download_start", key+":"+v.owner, reference, c.View.Name+" 开始下载", "来自：模糊 RSS 订阅；类型："+j.Kind+"；年份："+c.View.Year+"；季："+c.View.Season+"；集："+c.View.Episodes+"。此为下载器接受，不代表下载或入库完成。"); err != nil {
+			if err := bus.EmitData(ctx, tx, "download_start", key+":"+v.owner, reference, c.View.Name+" 开始下载", "来自：模糊 RSS 订阅；类型："+j.Kind+"；年份："+c.View.Year+"；季："+c.View.Season+"；集："+c.View.Episodes+"。此为下载器接受，不代表下载或入库完成。", map[string]any{
+				"media_info":   map[string]any{"title": c.View.Name, "year": c.View.Year, "type": j.Kind, "season": c.View.Season},
+				"torrent_file": c.Resource.DownloadURL, "downloader_id": proof.Native.DownloaderID, "native_download": map[string]any{"resource_title": c.View.Title, "episodes": c.View.Episodes},
+			}); err != nil {
 				return err
 			}
 			state, reason = "accepted", "downloader accepted this exact submission; download completion is not proven"
@@ -439,7 +442,7 @@ func (api *fuzzySubscriptionAPI) finalize(ctx context.Context, id string) error 
 				return err
 			}
 			reference := "subscription:" + j.Kind + ":" + strconv.FormatInt(j.SubscriptionID, 10)
-			if err := bus.Emit(ctx, tx, "rss_finished", "fuzzy:"+id, reference, text(d.Raw["NAME"])+" 订阅完成", "本轮模糊 RSS 批次已提交全部 "+strconv.Itoa(len(j.Items))+" 个目标；原行完整留档。此为订阅计划完成，不代表媒体下载或入库完成。"); err != nil {
+			if err := bus.EmitData(ctx, tx, "rss_finished", "fuzzy:"+id, reference, text(d.Raw["NAME"])+" 订阅完成", "本轮模糊 RSS 批次已提交全部 "+strconv.Itoa(len(j.Items))+" 个目标；原行完整留档。此为订阅计划完成，不代表媒体下载或入库完成。", subscriptionEventData(d.Raw, j.Kind, j.SubscriptionID, false)); err != nil {
 				return err
 			}
 			result, reason = "finished", "all selected submissions accepted; original subscription archived and finished, not media completion"

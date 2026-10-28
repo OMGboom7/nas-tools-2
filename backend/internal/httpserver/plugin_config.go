@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeEventWebhook(request.PathValue("id")) {
+		service.serveEventWebhookPlugin(response, request, "get")
+		return
+	}
 	if service.nativeMediaRefresh(request.PathValue("id")) {
 		service.serveMediaRefreshPlugin(response, request, "get")
 		return
@@ -98,6 +102,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeEventWebhook(request.PathValue("id")) {
+		service.serveEventWebhookPlugin(response, request, "save")
+		return
+	}
 	if service.nativeMediaRefresh(request.PathValue("id")) {
 		service.serveMediaRefreshPlugin(response, request, "save")
 		return

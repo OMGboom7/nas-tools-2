@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeEventWebhook(request.PathValue("id")) {
+		service.serveEventWebhookPlugin(response, request, "page")
+		return
+	}
 	if service.nativeMediaRefresh(request.PathValue("id")) {
 		service.serveMediaRefreshPlugin(response, request, "page")
 		return

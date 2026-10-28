@@ -22,6 +22,7 @@ type pluginService struct {
 	subtitles    *subtitleAPI
 	library      *libraryScraper
 	mediaRefresh *mediaRefreshAPI
+	eventWebhook *eventWebhookAPI
 }
 
 type pluginSummary struct {
@@ -76,6 +77,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeEventWebhook(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveEventWebhookPlugin(response, request, action)
+		return
+	}
 	if service.nativeMediaRefresh(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

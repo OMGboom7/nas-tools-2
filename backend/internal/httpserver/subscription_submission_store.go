@@ -443,7 +443,7 @@ func (service subscriptionService) persistSubscriptionSubmission(ctx context.Con
 		if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO RSS_TORRENTS(TORRENT_NAME,ENCLOSURE,TYPE,TITLE,YEAR,SEASON,EPISODE) VALUES (?,?,?,?,?,?,?)`, values...)); err != nil {
 			return err
 		}
-		if err := bus.Emit(ctx, tx, "download_start", key+":"+owner, "subscription:"+kind+":"+strconv.FormatInt(id, 10), text(plan.raw["NAME"])+" 开始下载", "来自：订阅；类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"；集："+subscriptionEpisodeString(candidate.Episodes)); err != nil {
+		if err := bus.EmitData(ctx, tx, "download_start", key+":"+owner, "subscription:"+kind+":"+strconv.FormatInt(id, 10), text(plan.raw["NAME"])+" 开始下载", "来自：订阅；类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"；集："+subscriptionEpisodeString(candidate.Episodes), subscriptionDownloadEventData(plan.raw, kind, id, candidate.Title, candidate.resource.DownloadURL, candidate.Episodes)); err != nil {
 			return err
 		}
 	}

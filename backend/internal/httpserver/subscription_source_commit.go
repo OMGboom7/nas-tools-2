@@ -98,7 +98,7 @@ func (service subscriptionService) applySubscriptionSourceTx(ctx context.Context
 			return subscriptionSourceOutcome{}, err
 		}
 		reference := "subscription:" + kind + ":" + strconv.FormatInt(id, 10)
-		if err := bus.Emit(ctx, tx, "rss_finished", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, text(plan.raw["NAME"])+" 订阅完成", "类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"。此为订阅计划完成，不代表文件已入库。"); err != nil {
+		if err := bus.EmitData(ctx, tx, "rss_finished", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, text(plan.raw["NAME"])+" 订阅完成", "类型："+kind+"；年份："+text(plan.raw["YEAR"])+"；季："+text(plan.raw["SEASON"])+"。此为订阅计划完成，不代表文件已入库。", subscriptionEventData(plan.raw, kind, id, false)); err != nil {
 			return subscriptionSourceOutcome{}, err
 		}
 	} else if plan.edition != nil {

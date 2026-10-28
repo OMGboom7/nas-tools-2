@@ -135,7 +135,7 @@ func restoreFuzzyRule(ctx context.Context, service subscriptionService, batchID,
 		return 0, err
 	}
 	reference := "subscription:" + j.Kind + ":" + strconv.FormatInt(restored, 10)
-	if err := bus.Emit(ctx, tx, "rss_added", "fuzzy-restore:"+requestID, reference, text(raw["NAME"])+" 已恢复模糊订阅", "由原模糊批次恢复完整规则副本；执行授权保持关闭，旧历史、批次及已提交下载均不重放。"); err != nil {
+	if err := bus.EmitData(ctx, tx, "rss_added", "fuzzy-restore:"+requestID, reference, text(raw["NAME"])+" 已恢复模糊订阅", "由原模糊批次恢复完整规则副本；执行授权保持关闭，旧历史、批次及已提交下载均不重放。", subscriptionEventData(raw, j.Kind, restored, true)); err != nil {
 		return 0, err
 	}
 	return restored, tx.Commit()

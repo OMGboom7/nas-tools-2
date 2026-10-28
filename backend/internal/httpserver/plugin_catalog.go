@@ -56,9 +56,13 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			continue
 		}
 		item.Installed = installedSet[item.ID]
-		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID)
+		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID) || service.nativeEventWebhook(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
+		if service.nativeEventWebhook(item.ID) {
+			item.ActionsAvailable = service.eventWebhook.organizer.pureGo
+			item.HasPage = true
+		}
 		if service.nativeMediaRefresh(item.ID) {
 			item.ActionsAvailable = service.mediaRefresh.organizer.pureGo
 			item.HasPage = true
@@ -76,6 +80,11 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
+			if service.nativeEventWebhook(item.ID) {
+				item.Running, item.StateKnown = service.eventWebhookSummary(ctx)
+				data.Items = append(data.Items, item)
+				continue
+			}
 			if service.nativeMediaRefresh(item.ID) {
 				item.Running, item.StateKnown = service.mediaRefreshSummary(ctx)
 				data.Items = append(data.Items, item)

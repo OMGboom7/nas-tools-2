@@ -350,7 +350,9 @@ func (service subscriptionService) persistSeasonSubmission(ctx context.Context, 
 	if err != nil || torrentID < 1 {
 		return errSubscriptionSubmissionConflict
 	}
-	if err := bus.Emit(ctx, tx, "download_start", key+":"+owner, "subscription-seasons:"+proof.FileSelectionID, text(saved.raw["NAME"])+" 跨季资源开始下载", "一个原下载任务；实际选集："+strings.Join(coverage, "；")+"。接收不代表下载或入库完成。"); err != nil {
+	if err := bus.EmitData(ctx, tx, "download_start", key+":"+owner, "subscription-seasons:"+proof.FileSelectionID, text(saved.raw["NAME"])+" 跨季资源开始下载", "一个原下载任务；实际选集："+strings.Join(coverage, "；")+"。接收不代表下载或入库完成。", map[string]any{
+		"media_info": subscriptionEventData(saved.raw, "TV", 0, false)["media_info"], "torrent_file": proof.DownloadURL, "native_download": map[string]any{"resource_title": proof.Title, "file_selection_id": proof.FileSelectionID, "coverage": coverage},
+	}); err != nil {
 		return err
 	}
 	scope, err := nativeSubscriptionConfiguration(ctx, tx, service)

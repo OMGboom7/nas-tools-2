@@ -217,7 +217,7 @@ func (s *WebhookStore) List(ctx context.Context, page int) ([]WebhookReceipt, er
 	return out, tx.Commit()
 }
 
-func (s *WebhookStore) Receive(ctx context.Context, c WebhookControl, p WebhookReceipt, digest string, validate func() error) (WebhookReceipt, error) {
+func (s *WebhookStore) Receive(ctx context.Context, c WebhookControl, p WebhookReceipt, digest string, validate func() error, callback ...json.RawMessage) (WebhookReceipt, error) {
 	if !c.Enabled || !refreshHex(p.ID, 32) || !refreshHex(digest, 64) || p.Event.Server != c.Server || p.Deduplicated || p.Event.Validate() != nil || validate == nil {
 		return p, ErrWebhookState
 	}
@@ -274,6 +274,14 @@ func (s *WebhookStore) Receive(ctx context.Context, c WebhookControl, p WebhookR
 	title, body := p.Event.Message(p.Received)
 	if err := bus.EmitData(ctx, tx, "mediaserver_message", p.ID, "media-webhook:"+p.ID, title, body, p.Event); err != nil {
 		return p, err
+	}
+	if len(callback) > 1 {
+		return p, ErrWebhookState
+	}
+	if len(callback) == 1 {
+		if _, err := recordWebhookSignal(ctx, tx, c, p.ID, digest, p.Received, callback[0]); err != nil {
+			return p, err
+		}
 	}
 	saved, epoch, original, err := readWebhookReceipt(ctx, tx, p.ID)
 	if err != nil || epoch != c.Revision || original != digest || RefreshDigest(saved) != RefreshDigest(p) {

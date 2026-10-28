@@ -53,6 +53,13 @@ func TestNativeFetchScopedIndexersAndHTTPPermission(t *testing.T) {
 	if err != nil || len(resources) != 1 || len(queries) != 1 || queries[0] != "43" || discoveries != 1 {
 		t.Fatal(resources, err, queries, discoveries)
 	}
+	if err := store.Set(t.Context(), "UserInstalledPlugins", `["Prowlarr","Webhook","LibraryRefresh"]`); err != nil {
+		t.Fatal(err)
+	}
+	resources, err = service.fetchResources(t.Context(), "Movie", []string{"Second-prowlarr"})
+	if err != nil || len(resources) != 1 {
+		t.Fatal("native event consumers blocked real provider", resources, err)
+	}
 	before := discoveries
 	for _, requested := range [][]string{{"Missing-prowlarr"}, {"First-prowlarr", "Missing-prowlarr"}, {""}, {"https://private.local/key"}} {
 		if resources, err := service.fetchResources(t.Context(), "Movie", requested); !errors.Is(err, errNativeSearchSelection) || resources != nil || discoveries != before {

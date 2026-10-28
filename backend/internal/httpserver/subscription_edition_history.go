@@ -217,7 +217,7 @@ func (service subscriptionService) restoreEditionHistory(ctx context.Context, ki
 	if err := fuzzyOne(tx.ExecContext(ctx, `INSERT INTO GO_SUBSCRIPTION_EDITION_RESTORES(REQUEST_ID,HISTORY_ID,ARCHIVE_FP,NEW_ID,CREATED) VALUES(?,?,?,?,?)`, requestID, id, fuzzyDigest(*archive), created, time.Now().UTC().Format(time.RFC3339Nano))); err != nil {
 		return 0, true, err
 	}
-	if err := bus.Emit(ctx, tx, "rss_added", "edition-restore:"+requestID, "subscription:"+kind+":"+strconv.FormatInt(created, 10), text(copy["NAME"])+" 已恢复洗版订阅", "保留原洗版、过滤、目录及优先级配置并重新排队；旧历史与接收事实保留，此请求不直接添加下载。"); err != nil {
+	if err := bus.EmitData(ctx, tx, "rss_added", "edition-restore:"+requestID, "subscription:"+kind+":"+strconv.FormatInt(created, 10), text(copy["NAME"])+" 已恢复洗版订阅", "保留原洗版、过滤、目录及优先级配置并重新排队；旧历史与接收事实保留，此请求不直接添加下载。", subscriptionEventData(copy, kind, created, true)); err != nil {
 		return 0, true, err
 	}
 	return created, true, tx.Commit()

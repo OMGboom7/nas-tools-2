@@ -501,12 +501,16 @@ func (api *mediaWebhookAPI) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e, identity, err := mediaserver.ParseWebhook(server, raw)
-	if errors.Is(err, mediaserver.ErrWebhookIgnored) {
-		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "ignored": true})
+	ignored := errors.Is(err, mediaserver.ErrWebhookIgnored)
+	if err != nil && !ignored {
+		writeAPIError(w, 400, 400, "media webhook notification fields are invalid")
 		return
 	}
+	// Identity belongs to the original callback, including non-notification
+	// actions such as pause. Do not derive it from a normalized projection.
+	identity, err = mediaserver.WebhookSignalIdentity(raw)
 	if err != nil {
-		writeAPIError(w, 400, 400, "media webhook notification fields are invalid")
+		writeAPIError(w, 400, 400, "invalid original webhook event identity")
 		return
 	}
 	keys := r.Header.Values("X-NASTool-Event-ID")
@@ -534,6 +538,22 @@ func (api *mediaWebhookAPI) receive(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, 400, "invalid webhook payload")
 		return
 	}
+	validate := func() error {
+		current, err := api.scope(c.Actor)
+		if err != nil || current.scope != c.Scope || current.server != c.Server {
+			return mediaserver.ErrWebhookState
+		}
+		return nil
+	}
+	if ignored {
+		duplicate, err := api.store.ReceiveSignal(r.Context(), c, id, digest, raw, validate)
+		if err != nil {
+			writeAPIError(w, 409, 409, "original webhook acceptance not confirmed; do not replay")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "ignored": true, "data": map[string]any{"id": id, "deduplicated": duplicate, "received": true}})
+		return
+	}
 	// Enrichment only contacts the configured server with its stored credential;
 	// callback ServerUrl, thumb, avatar and playback URLs are never followed.
 	if _, err := api.store.Get(r.Context(), id); errors.Is(err, mediaserver.ErrWebhookMissing) && s.client != nil && e.ItemID != "" {
@@ -545,13 +565,7 @@ func (api *mediaWebhookAPI) receive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p := mediaserver.WebhookReceipt{ID: id, Received: time.Now().UTC().Format(time.RFC3339Nano), Event: e}
-	p, err = api.store.Receive(r.Context(), c, p, digest, func() error {
-		current, err := api.scope(c.Actor)
-		if err != nil || current.scope != c.Scope || current.server != c.Server {
-			return mediaserver.ErrWebhookState
-		}
-		return nil
-	})
+	p, err = api.store.Receive(r.Context(), c, p, digest, validate, raw)
 	if err != nil {
 		writeAPIError(w, 409, 409, "webhook acceptance was not confirmed; query original receipts without replaying notification")
 		return
