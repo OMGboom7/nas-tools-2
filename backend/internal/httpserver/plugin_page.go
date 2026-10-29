@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeMovieLike(request.PathValue("id")) {
+		service.serveMovieLikePlugin(response, request, "page")
+		return
+	}
 	if service.nativeMediaSyncDelete(request.PathValue("id")) {
 		service.serveMediaSyncDeletePlugin(response, request, "page")
 		return

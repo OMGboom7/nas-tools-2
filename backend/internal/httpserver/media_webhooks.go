@@ -18,6 +18,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
+	"github.com/0xforee/nas-tools/backend/internal/movielike"
 )
 
 type mediaWebhookAPI struct {
@@ -502,6 +503,15 @@ func (api *mediaWebhookAPI) receive(w http.ResponseWriter, r *http.Request) {
 	}
 	e, identity, err := mediaserver.ParseWebhook(server, raw)
 	ignored := errors.Is(err, mediaserver.ErrWebhookIgnored)
+	// A valid old MovieLike action needs a movie path, not a notification
+	// title. Keep it as a raw signal when it has no valid notification
+	// projection. Strict payload/identity, peer and key validation still apply.
+	if err != nil && !ignored && server == "emby" {
+		_, handles, parseErr := movielike.Parse(raw)
+		if handles && parseErr == nil {
+			ignored = true
+		}
+	}
 	if err != nil && !ignored {
 		writeAPIError(w, 400, 400, "media webhook notification fields are invalid")
 		return

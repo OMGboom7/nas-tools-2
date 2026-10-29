@@ -38,6 +38,15 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			service.serveSpeedLimiterPlugin(response, probe, nativeAction)
 			return
 		}
+		if service.nativeMovieLike(id) {
+			probe.SetPathValue("id", id)
+			nativeAction := action
+			if action == "config" {
+				nativeAction = "legacy-save"
+			}
+			service.serveMovieLikePlugin(response, probe, nativeAction)
+			return
+		}
 		if service.nativeMediaSyncDelete(id) {
 			probe.SetPathValue("id", id)
 			nativeAction := action

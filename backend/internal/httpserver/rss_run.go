@@ -25,6 +25,7 @@ type rssRunAPI struct {
 	eventWebhook    *eventWebhookAPI
 	speedLimiter    *speedLimiterAPI
 	mediaSyncDelete *mediaSyncDeleteAPI
+	movieLike       *movieLikeAPI
 	scraper         *intakeScraper
 	subtitles       *subtitleAPI
 	indexerPlugins  *nativeIndexerPlugins

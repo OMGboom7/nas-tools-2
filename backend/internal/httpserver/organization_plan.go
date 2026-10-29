@@ -576,6 +576,9 @@ func (api organizationAPI) plan(ctx context.Context, input organizationPlanInput
 			ext = ""
 		}
 		relative, err := api.targetName(ctx, media, recognition, ext, file.Disc != nil)
+		if err == nil {
+			relative, err = api.favoriteTarget(ctx, target, relative, recognition, file.Disc != nil, remote)
+		}
 		if ctx.Err() != nil {
 			return fail(504, "organization preview was cancelled or timed out")
 		}

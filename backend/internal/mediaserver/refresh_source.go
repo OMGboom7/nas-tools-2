@@ -60,6 +60,14 @@ func refreshSource(ctx context.Context, r refreshReader, reference string) (stri
 	return raw, state, dependencies, ready, rows.Err()
 }
 func bindRefreshSource(ctx context.Context, r refreshReader, d RefreshDefinition) (RefreshDefinition, error) {
+	if d.Source == "movie_like" {
+		raw, err := favoriteRefreshSource(ctx, r, d.Reference)
+		if err != nil {
+			return d, err
+		}
+		d.OriginDigest, d.Enrichment = RefreshDigest(raw), []RefreshDependency{}
+		return d, nil
+	}
 	if d.Reference == "" {
 		return d, nil
 	}
@@ -90,6 +98,13 @@ func (s *RefreshStore) SourceReady(ctx context.Context, d RefreshDefinition) (bo
 	return refreshSourceReady(ctx, tx, d)
 }
 func refreshSourceReady(ctx context.Context, r refreshReader, d RefreshDefinition) (bool, error) {
+	if d.Source == "movie_like" {
+		raw, err := favoriteRefreshSource(ctx, r, d.Reference)
+		if err != nil {
+			return false, err
+		}
+		return RefreshDigest(raw) == d.OriginDigest && len(d.Enrichment) == 0, nil
+	}
 	if d.Reference == "" {
 		return true, nil
 	}

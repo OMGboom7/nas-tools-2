@@ -166,13 +166,16 @@ func ValidRefreshPlan(p RefreshPlan) bool {
 	return true
 }
 func validRefreshDefinition(d RefreshDefinition) bool {
-	if d.Actor == "" || !refreshHex(d.RequestID, 32) || d.Source != "transfer_finished" && d.Source != "refresh_media_server" || !d.Control.Authorized || d.Actor != d.Control.Actor {
+	if d.Actor == "" || !refreshHex(d.RequestID, 32) || d.Source != "transfer_finished" && d.Source != "refresh_media_server" && d.Source != "movie_like" || !d.Control.Authorized || d.Actor != d.Control.Actor {
 		return false
 	}
 	if d.Whole && len(d.Items) != 0 || !d.Whole && !ValidRefreshItems(d.Items) {
 		return false
 	}
 	if d.Source == "transfer_finished" && (!refreshHex(d.Reference, 32) || d.Whole || d.Reviewed != nil) {
+		return false
+	}
+	if d.Source == "movie_like" && (!refreshHex(d.Reference, 64) || d.Whole || d.Reviewed != nil) {
 		return false
 	}
 	if d.Reference != "" && !refreshHex(d.OriginDigest, 64) || len(d.Enrichment) > RefreshItemLimit {

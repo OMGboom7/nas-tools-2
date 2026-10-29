@@ -44,6 +44,9 @@ func (s *Store) CreateRecoveryDisposal(ctx context.Context, d RecoveryDefinition
 }
 
 func createRecoveryDisposal(ctx context.Context, tx *sql.Tx, d RecoveryDefinition, fingerprint string) (string, error) {
+	if err := favoriteClaims(ctx, tx, []string{path.Join(d.Scope.Root.Path, d.Path)}, ""); err != nil {
+		return "", err
+	}
 	if fingerprint != Digest(d) || !recoveryScopeValid(d.Scope) || !recoveryDefinitionPath(d) || len(d.Nodes) < 1 || len(d.Nodes) > RecoveryObjectLimit || d.Actor == "" || !recoveryHex(d.RequestID, 32) {
 		return "", ErrState
 	}

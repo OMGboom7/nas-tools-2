@@ -56,9 +56,13 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			continue
 		}
 		item.Installed = installedSet[item.ID]
-		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID) || service.nativeEventWebhook(item.ID) || service.nativeSpeedLimiter(item.ID) || service.nativeMediaSyncDelete(item.ID)
+		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID) || service.nativeEventWebhook(item.ID) || service.nativeSpeedLimiter(item.ID) || service.nativeMovieLike(item.ID) || service.nativeMediaSyncDelete(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
+		if service.nativeMovieLike(item.ID) {
+			item.ActionsAvailable = service.movieLike.organizer.pureGo
+			item.HasPage = true
+		}
 		if service.nativeMediaSyncDelete(item.ID) {
 			item.ActionsAvailable = service.mediaSyncDelete.organizer.pureGo
 			item.HasPage = true
@@ -88,6 +92,11 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
+			if service.nativeMovieLike(item.ID) {
+				item.Running, item.StateKnown = service.movieLikeSummary(ctx)
+				data.Items = append(data.Items, item)
+				continue
+			}
 			if service.nativeMediaSyncDelete(item.ID) {
 				item.Running, item.StateKnown = service.mediaSyncDeleteSummary(ctx)
 				data.Items = append(data.Items, item)

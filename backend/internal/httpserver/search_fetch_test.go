@@ -53,7 +53,7 @@ func TestNativeFetchScopedIndexersAndHTTPPermission(t *testing.T) {
 	if err != nil || len(resources) != 1 || len(queries) != 1 || queries[0] != "43" || discoveries != 1 {
 		t.Fatal(resources, err, queries, discoveries)
 	}
-	if err := store.Set(t.Context(), "UserInstalledPlugins", `["Prowlarr","Webhook","LibraryRefresh","SpeedLimiter","MediaSyncDel"]`); err != nil {
+	if err := store.Set(t.Context(), "UserInstalledPlugins", `["Prowlarr","Webhook","LibraryRefresh","SpeedLimiter","MediaSyncDel", "MovieLike"]`); err != nil {
 		t.Fatal(err)
 	}
 	resources, err = service.fetchResources(t.Context(), "Movie", []string{"Second-prowlarr"})

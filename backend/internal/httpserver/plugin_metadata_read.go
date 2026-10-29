@@ -84,13 +84,32 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMediaSyncDelete(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) {
 				fallback.ServeHTTP(response, request)
 				return
 			}
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeMovieLike(id) {
+				actor, ok := service.movieLike.authorize(response, request)
+				if !ok {
+					return
+				}
+				raw, err := service.system.ReadMany(request.Context(), movieLikeKeys)
+				if err != nil {
+					movieLikeError(response, err)
+					return
+				}
+				detail, err := service.movieLike.detail(raw, actor)
+				if err != nil {
+					movieLikeError(response, err)
+					return
+				}
+				running, known := service.movieLikeSummary(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeMediaSyncDelete(id) {
 				actor, ok := service.mediaSyncDelete.authorize(response, request)
 				if !ok {

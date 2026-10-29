@@ -25,6 +25,9 @@ func mediaRemovalSchema(ctx context.Context, tx *sql.Tx) error {
 }
 
 func mediaRemovalClaimed(ctx context.Context, r recoveryReader, locations []string, historyIDs []int64, except string) error {
+	if err := favoriteClaims(ctx, r, locations, except); err != nil {
+		return err
+	}
 	yes, err := recoveryTable(ctx, r, "GO_MEDIA_REMOVALS")
 	if err != nil || !yes {
 		return err

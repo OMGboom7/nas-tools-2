@@ -80,6 +80,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitEventWebhook := startEventWebhookWorker(workerContext, runner.eventWebhook)
 		waitSpeedLimiter := startSpeedLimiterWorker(workerContext, runner.speedLimiter)
 		waitMediaDelete := startMediaSyncDeleteWorker(workerContext, runner.mediaSyncDelete)
+		waitFavorites := startMovieLikeWorker(workerContext, runner.movieLike)
 		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
 		wait = func() {
 			waitExisting()
@@ -95,6 +96,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitEventWebhook()
 			waitSpeedLimiter()
 			waitMediaDelete()
+			waitFavorites()
 			waitFuzzy()
 		}
 	}
@@ -594,6 +596,16 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}
+	if organizationJobs != nil {
+		movieLikes.queue = organizationJobs.MovieLike()
+	}
+	if nativeSystemConfig != nil {
+		plugins.movieLike = movieLikes
+	}
+	rssRunner.movieLike = movieLikes
+	mux.HandleFunc("/api/v1/movie-like", movieLikes.manage)
+	mux.HandleFunc("/api/v1/movie-like/", movieLikes.manage)
 	mediaDelete := &mediaSyncDeleteAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	if organizationJobs != nil {
 		mediaDelete.queue = organizationJobs.MediaSyncDelete()
@@ -717,7 +729,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		})
 	}
 
-	var handler http.Handler = mediaDelete.reservePlugin(playbackLimiter.reservePlugin(nativeMediaRefresh.reservePlugin(mux)))
+	var handler http.Handler = movieLikes.reservePlugin(mediaDelete.reservePlugin(playbackLimiter.reservePlugin(nativeMediaRefresh.reservePlugin(mux))))
 	if nativeAuth != nil {
 		handler = nativeAuth.protectAPI(handler)
 	}

@@ -88,7 +88,15 @@ func (service subscriptionService) nativeLocalMediaInventory(ctx context.Context
 		}
 		detail.EnglishTitle = &title
 	}
-	return localMediaInventory(ctx, media, meta, detail, identity, category)
+	favorite := "精选"
+	if !identity.TV {
+		var err error
+		favorite, err = service.favoriteDirectory(ctx)
+		if err != nil {
+			return mediaserver.Inventory{}, err
+		}
+	}
+	return localMediaInventory(ctx, media, meta, detail, identity, category, favorite)
 }
 
 // Do not request metadata for escaped placeholders or filename-only fields.
@@ -109,7 +117,7 @@ func libraryTemplateUsesField(format, field string) bool {
 	return false
 }
 
-func localMediaInventory(ctx context.Context, media map[string]any, meta mediameta.Metadata, detail tmdbMediaDetails, identity mediaserver.Identity, category []string) (mediaserver.Inventory, error) {
+func localMediaInventory(ctx context.Context, media map[string]any, meta mediameta.Metadata, detail tmdbMediaDetails, identity mediaserver.Identity, category []string, favorites ...string) (mediaserver.Inventory, error) {
 	result := mediaserver.Inventory{Episodes: map[int]map[int]bool{}}
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -215,7 +223,11 @@ func localMediaInventory(ctx context.Context, media map[string]any, meta mediame
 				}
 				paths[0] = filepath.Join(paths[0], seasonDirectory)
 			} else {
-				paths = append(paths, filepath.Join("精选", directory))
+				favorite := "精选"
+				if len(favorites) > 0 {
+					favorite = favorites[0]
+				}
+				paths = append(paths, filepath.Join(favorite, directory))
 			}
 			for _, relative := range paths {
 				files, err := scanLocalMedia(ctx, root, relative, &visited)
