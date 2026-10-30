@@ -38,7 +38,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
         <p className="summary">新界面正在渐进迁移。登录、权限与现有 NAS Tools 数据保持兼容。</p>
         <div className="migration-note">
           <span>01</span>
-          <p><strong>第一站：账户系统</strong>当前登录请求由 Go 网关安全转发至旧服务。</p>
+          <p><strong>使用现有账户</strong>登录信息、权限和配置与现有 NAS Tools 保持兼容。</p>
         </div>
       </section>
 

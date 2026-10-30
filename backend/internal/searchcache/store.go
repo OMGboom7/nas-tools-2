@@ -39,6 +39,10 @@ type Store struct {
 func New() *Store { return &Store{entries: map[string]*entry{}, now: time.Now} }
 
 func clone(resource externalindexer.Resource) externalindexer.Resource {
+	if resource.Browser != nil {
+		v := *resource.Browser
+		resource.Browser = &v
+	}
 	if resource.Seeders != nil {
 		v := *resource.Seeders
 		resource.Seeders = &v
@@ -108,6 +112,9 @@ func (store *Store) Put(owner string, resources []externalindexer.Resource) ([]s
 	total := 0
 	for index, item := range resources {
 		costs[index] = len(owner) + len(item.IndexerID) + len(item.Indexer) + len(item.Title) + len(item.DownloadURL) + len(item.DownloadResolver) + len(item.Description) + len(item.PageURL) + len(item.IMDbID) + 256
+		if item.Browser != nil {
+			costs[index] += len(item.Browser.Cookie) + len(item.Browser.UserAgent) + len(item.Browser.Origin) + 512
+		}
 		total += costs[index]
 		if total > maxBytes-store.bytes {
 			return nil, ErrCapacity

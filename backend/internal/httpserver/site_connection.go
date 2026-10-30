@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
@@ -26,16 +27,13 @@ func checkSiteConnection(ctx context.Context, site siteconfig.Site, app map[stri
 	return checkSiteConnectionAdmitted(ctx, site, app, transport, nil)
 }
 
-func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app map[string]any, transport http.RoundTripper, admit func(context.Context) error) (bool, string, bool) {
+func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app map[string]any, transport http.RoundTripper, admit func(context.Context) error, renderers ...browserruntime.Renderer) (bool, string, bool) {
 	if strings.TrimSpace(site.Cookie) == "" {
 		return false, "未配置站点Cookie", false
 	}
 	note := map[string]any{}
 	if site.Note != "" && site.Note != "null" && json.Unmarshal([]byte(site.Note), &note) != nil {
 		return false, "站点配置无效", false
-	}
-	if text(note["chrome"]) == "Y" {
-		return false, "浏览器仿真测试尚未迁移", true
 	}
 	raw := strings.TrimSpace(site.SignURL)
 	if raw == "" {
@@ -75,6 +73,30 @@ func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app 
 		}
 	}
 	parsed.RawQuery, parsed.Fragment = "", ""
+	if method == http.MethodGet && (note["chrome"] == "Y" || truthy(note["chrome"])) {
+		if len(renderers) == 0 || renderers[0] == nil || !renderers[0].Available() {
+			return false, "原生浏览器不可用，请检查浏览器安装和运行权限", true
+		}
+		page, e := renderers[0].Render(ctx, browserruntime.Request{URL: parsed.String(), Cookie: site.Cookie, UserAgent: userAgent, Transport: transport, ReadOnly: true, Assets: true, Guard: func(ctx context.Context) error { return ctx.Err() },
+			Before: func(ctx context.Context, _ browserruntime.Exchange) (func(string, string) error, error) {
+				if admit != nil {
+					if e := admit(ctx); e != nil {
+						return nil, e
+					}
+				}
+				return func(string, string) error { return nil }, nil
+			}})
+		if e != nil {
+			if e == browserruntime.ErrVerification {
+				return false, "站点需要人工验证，请在站点完成验证后更新Cookie", false
+			}
+			return false, "原生浏览器未能完成站点页面", false
+		}
+		if !siteHTMLLoggedIn(page.HTML) {
+			return false, "Cookie失效", false
+		}
+		return true, "连接成功（原生浏览器）", false
+	}
 	if transport == nil {
 		transport = http.DefaultTransport
 	}

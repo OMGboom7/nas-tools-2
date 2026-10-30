@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
+	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
@@ -91,6 +92,9 @@ func (service downloadService) addSiteLink(response http.ResponseWriter, request
 }
 
 func (service downloadService) fetchSiteTorrent(ctx context.Context, site siteconfig.Site, rawURL string) ([]byte, error) {
+	return service.fetchSiteTorrentBound(ctx, site, rawURL, nil)
+}
+func (service downloadService) fetchSiteTorrentBound(ctx context.Context, site siteconfig.Site, rawURL string, guard func(context.Context) error) ([]byte, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Hostname() == "" || parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errSiteLinkNotAllowed
@@ -110,8 +114,34 @@ func (service downloadService) fetchSiteTorrent(ctx context.Context, site siteco
 	if site.Note != "" && site.Note != "null" && json.Unmarshal([]byte(site.Note), &note) != nil {
 		return nil, errors.New("invalid site settings")
 	}
-	if text(note["chrome"]) == "Y" {
-		return nil, errors.New("browser emulation is not migrated")
+	if guard == nil && (text(note["chrome"]) == "Y" || truthy(note["chrome"])) {
+		if service.configStore == nil {
+			return nil, errors.New("browser settings are unavailable")
+		}
+		cfg, e := service.configStore.Snapshot()
+		if e != nil {
+			return nil, e
+		}
+		original := site
+		if service.sites != nil {
+			original, e = service.sites.Get(ctx, site.ID)
+			if e != nil {
+				return nil, e
+			}
+			if !subscriptionSiteOriginAllowed(original, rawURL) {
+				return nil, errSiteLinkNotAllowed
+			}
+		}
+		home := parsed.Scheme + "://" + parsed.Host + "/"
+		_, session, e := (siteBrowser{renderer: service.browser, sites: service.sites, config: service.configStore, limits: service.siteLimits, transport: service.client.Transport}).render(ctx, original, cfg, home, nil, "", "", nil)
+		if e != nil {
+			return nil, e
+		}
+		magnet, body, e := service.prepareBrowserSearchTorrent(ctx, externalindexer.Resource{DownloadURL: rawURL, Browser: session})
+		if magnet != "" {
+			body = []byte(magnet)
+		}
+		return body, e
 	}
 	transport := service.client.Transport
 	if text(note["proxy"]) == "Y" {
@@ -140,14 +170,31 @@ func (service downloadService) fetchSiteTorrent(ctx context.Context, site siteco
 	if site.Cookie != "" {
 		request.Header.Set("Cookie", site.Cookie)
 	}
-	if err := service.siteLimits.Wait(ctx, service.sites, site.ID); err != nil {
-		return nil, err
+	if guard != nil {
+		if err := guard(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if site.ID > 0 {
+		if err := service.siteLimits.Wait(ctx, service.sites, site.ID); err != nil {
+			return nil, err
+		}
+	}
+	if guard != nil {
+		if err := guard(ctx); err != nil {
+			return nil, err
+		}
 	}
 	result, err := client.Do(request)
 	if err != nil {
 		return nil, err
 	}
 	defer result.Body.Close()
+	if guard != nil {
+		if err := guard(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if result.StatusCode != http.StatusOK {
 		return nil, errors.New("site returned a non-success status")
 	}

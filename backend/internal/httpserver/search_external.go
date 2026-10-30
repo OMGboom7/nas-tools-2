@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
@@ -27,6 +28,7 @@ type nativeExternalResourceSearch struct {
 	config      *config.Store
 	catalogPath string
 	siteLimits  *siteRequestLimiter
+	browser     browserruntime.Renderer
 }
 
 var errNativeSearchPermission = errors.New("resource search permission is required")

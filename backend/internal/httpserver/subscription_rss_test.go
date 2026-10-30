@@ -95,7 +95,7 @@ func TestSubscriptionRSSDetailRequiresVerifiedIdentityAndPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog.Conf["tracker.test"]["RENDER"] = json.RawMessage(`true`)
-	if _, err := subscriptionDetailRules(catalog, "https://tracker.test/details"); !errors.Is(err, errSubscriptionRSSUnsupported) {
+	if _, err := subscriptionDetailRules(catalog, "https://tracker.test/details"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -269,7 +269,7 @@ func TestSubscriptionRSSSiteSelectionAndOrigin(t *testing.T) {
 			t.Fatal("unsafe credential scope", raw)
 		}
 	}
-	for _, note := range []string{`{"parse":"invalid"}`, `{"rule":"bad"}`, `{"limit_seconds":"-1"}`, `{"chrome":"Y"}`, `{"limit_count":"1"}`} {
+	for _, note := range []string{`{"parse":"invalid"}`, `{"rule":"bad"}`, `{"limit_seconds":"-1"}`, `{"limit_count":"1"}`} {
 		if _, _, _, err := subscriptionRSSSiteNote(siteconfig.Site{Note: note}); err == nil {
 			t.Fatal("unsupported note accepted", note)
 		}

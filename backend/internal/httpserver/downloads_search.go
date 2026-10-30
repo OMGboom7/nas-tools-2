@@ -102,6 +102,9 @@ func (service downloadService) addNativeSearchResource(response http.ResponseWri
 // Shared by interactive and subscription downloads; tracker credentials and
 // private locators never enter planning responses.
 func (service downloadService) prepareNativeSearchTorrent(ctx context.Context, resource externalindexer.Resource) (string, []byte, error) {
+	if resource.Browser != nil {
+		return service.prepareBrowserSearchTorrent(ctx, resource)
+	}
 	if validMagnet(resource.DownloadURL) {
 		return resource.DownloadURL, nil, nil
 	}
@@ -132,7 +135,7 @@ func (service downloadService) prepareNativeSearchTorrent(ctx context.Context, r
 }
 
 func (service downloadService) prepareSubscriptionTorrent(ctx context.Context, candidate subscriptionCandidate) (string, []byte, error) {
-	if candidate.site == nil || validMagnet(candidate.resource.DownloadURL) {
+	if candidate.site == nil || candidate.resource.Browser != nil || validMagnet(candidate.resource.DownloadURL) {
 		return service.prepareNativeSearchTorrent(ctx, candidate.resource)
 	}
 	if !subscriptionSiteOriginAllowed(*candidate.site, candidate.resource.DownloadURL) {

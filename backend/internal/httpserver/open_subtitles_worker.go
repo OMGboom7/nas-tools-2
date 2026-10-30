@@ -347,7 +347,12 @@ func (api *openSubtitleAPI) run(ctx context.Context, p organization.OpenSubtitle
 		}
 		return nil
 	}
-	client := &opensubtitles.Client{Config: cfg, Transport: api.transport, Gate: api.rate}
+	client := &opensubtitles.Client{Config: cfg, Transport: api.transport, Gate: api.rate, Renderer: api.browser, Guard: func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return current()
+	}}
 	api.mu.Lock()
 	client.Session = api.sessions[scope.Epoch]
 	if !time.Now().Before(client.Session.CachedUntil) {

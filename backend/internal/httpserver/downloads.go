@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
@@ -32,6 +33,7 @@ type downloadService struct {
 	resources    *searchcache.Store
 	auth         *nativeAuthentication
 	siteLimits   *siteRequestLimiter
+	browser      browserruntime.Renderer
 }
 
 type downloadsData struct {

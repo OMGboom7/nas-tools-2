@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
@@ -245,9 +246,6 @@ func subscriptionRSSSiteNote(site siteconfig.Site) (map[string]any, *int64, int,
 			note[key] = "N"
 		}
 	}
-	if text(note["chrome"]) == "Y" || truthy(note["chrome"]) {
-		return nil, nil, 0, errSubscriptionRSSUnsupported
-	}
 	if _, err := parseSiteRequestPolicy(note); err != nil {
 		return nil, nil, 0, err
 	}
@@ -294,6 +292,10 @@ func (batch *subscriptionRSSBatch) feed(ctx context.Context, site siteconfig.Sit
 }
 
 func (api *subscriptionRSSAPI) fetchDocument(ctx context.Context, site siteconfig.Site, raw string, note map[string]any, credentials bool) ([]byte, error) {
+	if credentials && (text(note["chrome"]) == "Y" || truthy(note["chrome"])) {
+		body, _, err := api.fetchRenderedDetail(ctx, site, raw)
+		return body, err
+	}
 	if len(raw) > 4096 || !subscriptionSiteOriginAllowed(site, raw) {
 		return nil, errors.New("RSS document is outside configured site")
 	}
@@ -436,7 +438,22 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 				if err != nil {
 					return fail(err)
 				}
-				body, err := batch.api.fetchDocument(ctx, site, resource.PageURL, note, true)
+				var body []byte
+				var render bool
+				if raw := rules["RENDER"]; len(raw) > 0 {
+					var v any
+					if json.Unmarshal(raw, &v) != nil {
+						return fail(errSubscriptionRSSUnsupported)
+					}
+					render = truthy(v) || text(v) == "Y"
+				}
+				if render || note["chrome"] == "Y" || truthy(note["chrome"]) {
+					var session *browserruntime.Session
+					body, session, err = batch.api.fetchRenderedDetail(ctx, site, resource.PageURL)
+					resource.Browser = session
+				} else {
+					body, err = batch.api.fetchDocument(ctx, site, resource.PageURL, note, true)
+				}
 				if err != nil {
 					return fail(err)
 				}

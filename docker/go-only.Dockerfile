@@ -16,10 +16,19 @@ RUN mkdir -p /out/licenses \
     && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/da)/LICENSE" /out/licenses/da-LICENSE \
     && cp "$(go list -m -f '{{.Dir}}' github.com/liuzl/cedar-go)/LICENSE.md" /out/licenses/cedar-go-LICENSE \
     && cp "$(go list -m -f '{{.Dir}}' github.com/minio/minio-go/v7)/LICENSE" /out/licenses/minio-go-LICENSE \
-    && cp "$(go list -m -f '{{.Dir}}' github.com/minio/minio-go/v7)/NOTICE" /out/licenses/minio-go-NOTICE
+    && cp "$(go list -m -f '{{.Dir}}' github.com/minio/minio-go/v7)/NOTICE" /out/licenses/minio-go-NOTICE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/chromedp/chromedp)/LICENSE" /out/licenses/chromedp-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/chromedp/cdproto)/LICENSE" /out/licenses/cdproto-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/chromedp/sysutil)/LICENSE" /out/licenses/chromedp-sysutil-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/go-json-experiment/json)/LICENSE" /out/licenses/go-json-experiment-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/gobwas/ws)/LICENSE" /out/licenses/gobwas-ws-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/gobwas/httphead)/LICENSE" /out/licenses/gobwas-httphead-LICENSE \
+    && cp "$(go list -m -f '{{.Dir}}' github.com/gobwas/pool)/LICENSE" /out/licenses/gobwas-pool-LICENSE
 
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone aria2 \
+FROM alpine:3.24
+RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone aria2 chromium \
+    && test -x /usr/bin/chromium \
+    && test -u /usr/lib/chromium/chrome-sandbox \
     && addgroup -S -g 911 nt \
     && adduser -S -u 911 -G nt -h /app nt
 WORKDIR /app
@@ -34,6 +43,7 @@ ENV NASTOOL_GO_ADDRESS="0.0.0.0:3000" \
     NASTOOL_FRONTEND_DIST="/app/frontend/dist" \
     NASTOOL_SITE_CATALOG="/app/user.sites.bin" \
     NASTOOL_DEFAULT_CATEGORY="/app/default-category.yaml" \
+    NASTOOL_BROWSER_BINARY="/usr/bin/chromium" \
     TZ="Asia/Shanghai"
 USER 911:911
 EXPOSE 3000

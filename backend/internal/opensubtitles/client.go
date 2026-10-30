@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 )
 
@@ -71,6 +72,8 @@ type Client struct {
 	Gate      func(context.Context, string, string) error
 	Session   Session
 	Jar       http.CookieJar
+	Renderer  browserruntime.Renderer
+	Guard     func(context.Context) error
 }
 
 func Digest(data []byte) string { s := sha256.Sum256(data); return hex.EncodeToString(s[:]) }

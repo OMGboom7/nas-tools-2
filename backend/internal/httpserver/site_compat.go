@@ -233,7 +233,7 @@ func (service siteService) serveCompatTest(response http.ResponseWriter, request
 		return
 	}
 	started := time.Now()
-	ok, message, unsupported := checkSiteConnection(ctx, item, objectValue(configuration["app"]), service.client.Transport)
+	ok, message, unsupported := checkSiteConnectionAdmitted(ctx, item, objectValue(configuration["app"]), service.client.Transport, func(ctx context.Context) error { return service.siteLimits.Wait(ctx, service.store, item.ID) }, service.connectionRenderer(item, configuration))
 	if unsupported {
 		writeAPIError(response, http.StatusNotImplemented, 501, message)
 		return

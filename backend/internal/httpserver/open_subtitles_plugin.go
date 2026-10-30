@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/opensubtitles"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
@@ -24,6 +25,7 @@ type openSubtitleAPI struct {
 	subtitle  *subtitleAPI
 	system    *systemconfig.Store
 	transport http.RoundTripper
+	browser   browserruntime.Renderer
 	mu        sync.Mutex
 	sessions  map[string]opensubtitles.Session
 	active    map[string]context.CancelFunc

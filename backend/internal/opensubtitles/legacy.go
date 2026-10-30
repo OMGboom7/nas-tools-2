@@ -2,11 +2,14 @@ package opensubtitles
 
 import (
 	"context"
+	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/andybalholm/cascadia"
 	"golang.org/x/net/html"
 )
@@ -49,6 +52,43 @@ func (c *Client) searchLegacy(ctx context.Context, q Query) ([]Candidate, error)
 		address += "imdbid-" + strings.TrimPrefix(q.IMDb, "tt") + "/sublanguageid-chi"
 	} else {
 		address += "moviename-" + url.PathEscape(strings.TrimSpace(q.Name+" "+q.Year)) + "/sublanguageid-chi"
+	}
+	if c.Renderer != nil {
+		if c.Step == nil || c.Guard == nil {
+			return nil, ErrState
+		}
+		agent := c.Config.UserAgent
+		if agent == "" {
+			agent = DefaultAgent
+		}
+		page, e := c.Renderer.Render(ctx, browserruntime.Request{URL: address, Cookie: c.Config.Cookie, UserAgent: agent, ReadySelector: "#search_results", ReadOnly: true, Transport: c.Transport, Guard: c.Guard,
+			Before: func(ctx context.Context, x browserruntime.Exchange) (func(string, string) error, error) {
+				if !legacyURL(x.URL) || browserruntime.Origin(x.URL) != "https://www.opensubtitles.org" {
+					return nil, ErrConfig
+				}
+				if c.Gate != nil {
+					if e := c.Gate(ctx, "www.opensubtitles.org", "search"); e != nil {
+						return nil, e
+					}
+				}
+				return c.Step(ctx, "search", browserruntime.Hash([]any{"browser", x.Ordinal, x.Method, x.URL, x.Kind, x.Body}))
+			}})
+		if e != nil {
+			return nil, e
+		}
+		if !legacyURL(page.URL) || browserruntime.Origin(page.URL) != "https://www.opensubtitles.org" {
+			return nil, ErrConfig
+		}
+		c.Jar, _ = cookiejar.New(nil)
+		seed, _ := url.Parse("https://www.opensubtitles.org/")
+		h := http.Header{}
+		h.Set("Cookie", page.Cookie)
+		cookies := (&http.Request{Header: h}).Cookies()
+		if len(cookies) > 128 {
+			return nil, ErrLimit
+		}
+		c.Jar.SetCookies(seed, cookies)
+		return ParseLegacy(string(page.HTML), q)
 	}
 	var raw []byte
 	for redirect := 0; ; redirect++ {

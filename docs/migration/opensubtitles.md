@@ -2,6 +2,8 @@
 
 2026-10-30。本批将实际入库与单文件请求中的 OpenSubtitles 检索、字幕下载和原视频旁的补写接入 Go／React。原 ChineseSubFinder 接收任务、OpenSubtitles 下载文件及独立 Webhook 发送分别留痕；任何一方成功都不能代表其他一方完成。
 
+后续 [共享浏览器批次](browser-runtime.md) 已将 .org 检索接到 Go 管理的独立 Chromium／Chrome，保留实际网络意图并把原站点 Cookie 传给归档下载。自动 Cloudflare／CAPTCHA 处理及真实提供方仍未验收；以下保留原字幕批次的范围和记录。
+
 ## 原提供方与协议
 
 旧 `app/plugins/modules/opensubtitles.py` 使用 opensubtitles.org 网页和 ZIP，不是 XML-RPC。Go 默认仍为 `org`，保持原 IMDb 优先、无 IMDb 电影名称／年份以及 TV 季集筛选；没有 IMDb 的 TV 不改成模糊电影查询。检索只采用实际识别字段及核验过的同一 TMDB 详情，不伪造 IMDb。

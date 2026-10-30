@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/auth"
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
@@ -276,10 +277,14 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	search := searchService{}
 	siteLimits := &siteRequestLimiter{}
+	var nativeBrowser browserruntime.Renderer
+	if cfg.DisableLegacy && cfg.BrowserBinary != "" {
+		nativeBrowser = browserruntime.New(cfg.BrowserBinary)
+	}
 	if nativeSearchResources != nil {
 		search.native = &nativeExternalResourceSearch{system: nativeSystemConfig, auth: nativeAuth, resources: nativeSearchResources, transport: transport, images: images,
-			siteLimits: siteLimits,
-			sites:      nativeSites, config: nativeConfig, catalogPath: cfg.SiteCatalogPath,
+			siteLimits: siteLimits, browser: nativeBrowser,
+			sites: nativeSites, config: nativeConfig, catalogPath: cfg.SiteCatalogPath,
 			recognition: &mediaNameAPI{service: subscriptionService{client: &http.Client{Transport: transport}, configStore: nativeConfig, systemConfig: nativeSystemConfig, words: nativeWords}, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},
 		}
 	}
@@ -297,6 +302,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		resources:    nativeSearchResources,
 		auth:         nativeAuth,
 		siteLimits:   siteLimits,
+		browser:      nativeBrowser,
 	}
 	mux.HandleFunc("GET /api/v1/downloads", downloads.serveList)
 	mux.HandleFunc("GET /api/v1/downloads/submissions", downloads.serveManualSubmissions)
@@ -531,7 +537,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/media/similar", mediaDetails.serveRelated)
 	mux.HandleFunc("POST /api/v1/media/recommendations", mediaDetails.serveRelated)
 	mux.HandleFunc("POST /api/v1/discovery", discovery.serveHTTP)
-	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits}
+	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits, browser: nativeBrowser}
 	mux.HandleFunc("GET /api/v1/sites", sites.serveList)
 	mux.HandleFunc("POST /api/v1/sites", sites.create)
 	mux.HandleFunc("GET /api/v1/sites/options", sites.serveOptions)
@@ -680,7 +686,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("PUT /api/v1/organization/scraper/options", nativeScraper.saveOptions)
 	mux.HandleFunc("PUT /api/v1/organization/scraper/enabled", nativeScraper.setEnabled)
 	nativeSubtitles := &subtitleAPI{organizer: &organizer, transport: transport}
-	nativeOpenSubtitles := &openSubtitleAPI{subtitle: nativeSubtitles, system: nativeSystemConfig, transport: transport}
+	nativeOpenSubtitles := &openSubtitleAPI{subtitle: nativeSubtitles, system: nativeSystemConfig, transport: transport, browser: nativeBrowser}
 	if organizationJobs != nil {
 		nativeSubtitles.queue = organizationJobs.Subtitles()
 	}

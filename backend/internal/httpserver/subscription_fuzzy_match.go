@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
@@ -50,10 +51,11 @@ type fuzzyCandidateDocument struct {
 	DownloadResolver string
 	SiteID           int64
 	SiteDigest       string
+	Browser          *browserruntime.Session `json:",omitempty"`
 }
 
 func (c fuzzyCandidateRecord) MarshalJSON() ([]byte, error) {
-	return json.Marshal(fuzzyCandidateDocument{c.View, c.Resource, c.Resource.DownloadURL, c.Resource.DownloadResolver, c.SiteID, c.SiteDigest})
+	return json.Marshal(fuzzyCandidateDocument{c.View, c.Resource, c.Resource.DownloadURL, c.Resource.DownloadResolver, c.SiteID, c.SiteDigest, c.Resource.Browser})
 }
 func (c *fuzzyCandidateRecord) UnmarshalJSON(b []byte) error {
 	var document fuzzyCandidateDocument
@@ -62,6 +64,7 @@ func (c *fuzzyCandidateRecord) UnmarshalJSON(b []byte) error {
 	}
 	c.View, c.Resource, c.SiteID, c.SiteDigest = document.View, document.Resource, document.SiteID, document.SiteDigest
 	c.Resource.DownloadURL, c.Resource.DownloadResolver = document.DownloadURL, document.DownloadResolver
+	c.Resource.Browser = document.Browser
 	return nil
 }
 

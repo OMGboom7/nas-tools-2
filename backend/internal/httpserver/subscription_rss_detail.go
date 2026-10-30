@@ -41,9 +41,6 @@ func subscriptionDetailRules(catalog indexercatalog.Catalog, page string) (map[s
 		if json.Unmarshal(raw, &value) != nil {
 			return nil, errors.New("invalid torrent render rule")
 		}
-		if truthy(value) || text(value) == "Y" {
-			return nil, errSubscriptionRSSUnsupported
-		}
 	}
 	for _, key := range []string{"FREE", "2XFREE", "HR"} {
 		var paths []string

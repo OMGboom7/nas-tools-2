@@ -6,9 +6,11 @@ import (
 	"errors"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
+	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
 func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, selected map[string]bool, keyword string) ([]externalindexer.Resource, error) {
@@ -40,6 +42,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		cookie, note, key := "", "", ""
 		configured := false
 		var siteID int64
+		var originalSite siteconfig.Site
 		for _, site := range sites {
 			address := site.SignURL
 			if address == "" {
@@ -53,6 +56,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 			}
 			configured = true
 			siteID = site.ID
+			originalSite = site
 			cookie, note = site.Cookie, site.Note
 			key = site.APIKey
 			definition.Name = site.Name
@@ -126,19 +130,47 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 				return nil, err
 			}
 		}
-		// Cookies/UA come only from the saved site. Never use browser/client credentials.
-		if configured {
-			if err := service.siteLimits.Wait(ctx, service.sites, siteID); err != nil {
-				return nil, err
+		var body []byte
+		var session *browserruntime.Session
+		if plan.Form != nil || options["chrome"] == "Y" || truthy(options["chrome"]) {
+			var rules struct {
+				List struct {
+					Selector string `json:"selector"`
+				} `json:"list"`
 			}
+			if json.Unmarshal(definition.Torrents, &rules) != nil {
+				return nil, builtinindexer.ErrConfig
+			}
+			catalogHash := browserruntime.Hash(catalog)
+			guard := func(ctx context.Context) error {
+				current, e := indexercatalog.Load(service.catalogPath)
+				if e != nil || browserruntime.Hash(current) != catalogHash {
+					return browserruntime.ErrScope
+				}
+				return ctx.Err()
+			}
+			page, private, e := (siteBrowser{renderer: service.browser, sites: service.sites, config: service.config, limits: service.siteLimits, transport: service.transport}).render(ctx, originalSite, configuration, plan.URL.String(), plan.Form, rules.List.Selector, empty, guard)
+			if e != nil {
+				return nil, e
+			}
+			body, session = page.HTML, private
+		} else {
+			if configured {
+				if err := service.siteLimits.Wait(ctx, service.sites, siteID); err != nil {
+					return nil, err
+				}
+			}
+			body, err = builtinindexer.Fetch(ctx, plan, cookie, ua, transport)
 		}
-		body, err := builtinindexer.Fetch(ctx, plan, cookie, ua, transport)
 		if err != nil {
 			return nil, err
 		}
 		items, err := builtinindexer.ParseResults(ctx, plan, body, builtinindexer.ResultOptions{Now: now, Limit: 2000 - len(results), EmptySelector: empty})
 		if err != nil {
 			return nil, err
+		}
+		for i := range items {
+			items[i].Browser = session
 		}
 		results = append(results, items...)
 		if len(results) >= 2000 && len(seen) < len(selected) {

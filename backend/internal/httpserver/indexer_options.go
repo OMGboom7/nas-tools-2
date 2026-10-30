@@ -27,7 +27,7 @@ func (service subscriptionService) nativeIndexerOptions(ctx context.Context) (ma
 		for _, id := range installed {
 			// These metadata plugins are consumed directly by Go and do not
 			// contribute indexers. Other plugin capabilities remain unmigrated.
-			if id != "CustomReleaseGroups" && id != "Customization" && id != "CustomHosts" && id != "Jackett" && id != "Prowlarr" && id != "ChineseSubFinder" && id != "LibraryScraper" {
+			if !nativeSearchPlugin(id) {
 				return nil, false, nil
 			}
 		}

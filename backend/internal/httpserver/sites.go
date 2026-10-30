@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
@@ -23,6 +24,7 @@ type siteService struct {
 	configStore *config.Store
 	catalogPath string
 	siteLimits  *siteRequestLimiter
+	browser     browserruntime.Renderer
 }
 
 type sitesData struct {
@@ -150,7 +152,7 @@ func (service siteService) testConnection(response http.ResponseWriter, request 
 		return
 	}
 	started := time.Now()
-	ok, message, unsupported := checkSiteConnectionAdmitted(ctx, item, objectValue(configuration["app"]), service.client.Transport, func(ctx context.Context) error { return service.siteLimits.Wait(ctx, service.store, item.ID) })
+	ok, message, unsupported := checkSiteConnectionAdmitted(ctx, item, objectValue(configuration["app"]), service.client.Transport, func(ctx context.Context) error { return service.siteLimits.Wait(ctx, service.store, item.ID) }, service.connectionRenderer(item, configuration))
 	if unsupported {
 		writeAPIError(response, http.StatusNotImplemented, 501, message)
 		return

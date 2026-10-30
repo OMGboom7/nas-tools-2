@@ -43,6 +43,7 @@ Go 服务支持以下环境变量：
 | `NASTOOL_LEGACY_URL` | `http://127.0.0.1:3000` | Flask 旧服务地址 |
 | `NASTOOL_FRONTEND_DIST` | 空 | React 构建产物目录；设置后由 Go 托管前端 |
 | `NASTOOL_CONFIG` | 空 | 现有 `config.yaml` 路径；设置后启用 Go 原生认证并读取同目录的 `user.db` |
+| `NASTOOL_BROWSER_BINARY` | `auto` | Go-only 进程使用的 Chromium／Chrome 可执行文件；自动查找系统安装，不下载驱动、不读取日常浏览器资料。候选镜像为 `/usr/bin/chromium`；找不到或不能启动时明确失败，路径存在不代表运行健康。见 [浏览器运行时](browser-runtime.md) |
 | `NASTOOL_UI_MODE` | `legacy`（生产镜像为 `react`） | 容器入口模式；`react` 启动 Go 公网关，`legacy` 直接暴露 Flask |
 | `NASTOOL_LEGACY_PORT` | `3002` | React 模式下 Flask 的容器内部监听端口 |
 

@@ -85,9 +85,9 @@ func TestNativeMTeamConnectionUsesAPIKey(t *testing.T) {
 	}
 }
 
-func TestNativeSiteConnectionRejectsUnsupportedBrowserMode(t *testing.T) {
+func TestNativeSiteConnectionRequiresAvailableBrowser(t *testing.T) {
 	handler, store, token := nativeSiteFixture(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		t.Fatal("unsupported browser mode must not make a request")
+		t.Fatal("unconfigured browser must not make a request")
 		return nil, nil
 	}))
 	item, err := store.Upsert(context.Background(), siteconfig.Site{Name: "Tracker", SignURL: "https://tracker.example", Cookie: "session=secret", Note: `{"chrome":"Y"}`})

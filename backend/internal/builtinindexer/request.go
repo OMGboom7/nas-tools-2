@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 )
 
@@ -23,12 +24,14 @@ var ErrResponse = errors.New("builtin indexer search response is unavailable or 
 type Plan struct {
 	URL        *url.URL `json:"-"`
 	Definition indexercatalog.Definition
+	Form       *browserruntime.Form `json:"-"`
 }
 type searchConfig struct {
 	Paths []struct {
-		Path   string `json:"path"`
-		Method string `json:"method"`
-		Type   string `json:"type"`
+		Path   string            `json:"path"`
+		Method string            `json:"method"`
+		Type   string            `json:"type"`
+		Params map[string]string `json:"params"`
 	} `json:"paths"`
 	Params map[string]json.RawMessage `json:"params"`
 }
@@ -136,7 +139,8 @@ func Build(definition indexercatalog.Definition, keyword string, page int, kind 
 		return Plan{}, ErrUnsupported
 	}
 	selected := configuration.Paths[path]
-	if selected.Method != "" && !strings.EqualFold(selected.Method, "get") {
+	chrome := strings.EqualFold(selected.Method, "chrome")
+	if selected.Method != "" && !strings.EqualFold(selected.Method, "get") && !chrome {
 		return Plan{}, ErrUnsupported
 	}
 	if len(selected.Path) > 4096 || strings.HasPrefix(selected.Path, "//") {
@@ -212,12 +216,34 @@ func Build(definition indexercatalog.Definition, keyword string, page int, kind 
 		}
 		address.RawQuery = query.Encode()
 	}
-	return Plan{URL: address, Definition: definition}, nil
+	plan := Plan{URL: address, Definition: definition}
+	if chrome {
+		f := &browserruntime.Form{Input: selected.Params["keyword"], Submit: selected.Params["submit"], Script: selected.Params["script"], Value: keyword, Referer: base.String()}
+		if f.Input == "" || f.Submit == "" || len(f.Input) > 4096 || len(f.Submit) > 4096 || len(f.Script) > 16384 {
+			return Plan{}, ErrConfig
+		}
+		if selected.Params["referer"] != "" {
+			relative, e := substitute(selected.Params["referer"], pathVariables)
+			if e != nil || strings.HasPrefix(relative, "//") {
+				return Plan{}, ErrConfig
+			}
+			ref, e := base.Parse(relative)
+			if e != nil || browserruntime.Origin(ref.String()) != browserruntime.Origin(address.String()) {
+				return Plan{}, ErrConfig
+			}
+			f.Referer = ref.String()
+		}
+		plan.Form = f
+	}
+	return plan, nil
 }
 
 // Fetch does not treat a login HTML page as empty search results. The parser
 // must subsequently establish a valid results list before returning success.
 func Fetch(ctx context.Context, plan Plan, cookie, userAgent string, transport http.RoundTripper) ([]byte, error) {
+	if plan.Form != nil {
+		return nil, ErrUnsupported
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

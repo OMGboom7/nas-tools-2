@@ -41,7 +41,7 @@ func TestRequestRejectsUnsupportedAndMalformedDefinitions(t *testing.T) {
 		unsupported            bool
 	}{
 		{`{"paths":[{"path":"api/search","method":"post"}]}`, "", "https://tracker.local", true},
-		{`{"paths":[{"path":"search","method":"chrome"}]}`, "", "https://tracker.local", true},
+		{`{"paths":[{"path":"search","method":"chrome"}]}`, "", "https://tracker.local", false},
 		{`{"paths":[{"path":"search","method":"get"}]}`, "MTeamSpider", "https://tracker.local", true},
 		{`{"paths":[{"path":"search?word={unknown}"}]}`, "", "https://tracker.local", false},
 		{`{"paths":[{"path":"//other.local/collect"}]}`, "", "https://tracker.local", false},

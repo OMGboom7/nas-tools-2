@@ -20,6 +20,7 @@ type Config struct {
 	RcloneBinary          string
 	MinioConfigFile       string
 	MinioCAFile           string
+	BrowserBinary         string
 }
 
 func FromEnv() (Config, error) {
@@ -36,6 +37,7 @@ func FromEnv() (Config, error) {
 		RcloneBinary:          envOrDefault("NASTOOL_RCLONE_BINARY", "rclone"),
 		MinioConfigFile:       os.Getenv("NASTOOL_MINIO_CONFIG"),
 		MinioCAFile:           os.Getenv("NASTOOL_MINIO_CA"),
+		BrowserBinary:         envOrDefault("NASTOOL_BROWSER_BINARY", "auto"),
 	}
 	if cfg.DisableLegacy {
 		cfg.LegacyBackendURL = ""

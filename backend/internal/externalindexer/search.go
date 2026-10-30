@@ -15,14 +15,17 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 )
 
 // Download URLs can carry tracker credentials. They remain server-side and
 // must not be included in client-facing errors or used as resource IDs.
 type Resource struct {
 	IndexerID, Indexer, Title, Description, PageURL, IMDbID string
-	DownloadURL                                             string `json:"-"`
-	DownloadResolver                                        string `json:"-"`
+	DownloadURL                                             string                  `json:"-"`
+	DownloadResolver                                        string                  `json:"-"`
+	Browser                                                 *browserruntime.Session `json:"-"`
 	Size                                                    int64
 	Seeders                                                 *int64
 	Peers                                                   *int64
