@@ -3,7 +3,6 @@ package siteconfig
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -180,21 +179,23 @@ func (store *Store) UpdateCookieAndAgent(ctx context.Context, id int64, cookie, 
 	} else if err != nil {
 		return fmt.Errorf("read site attributes: %w", err)
 	}
-	note := map[string]any{}
-	if raw != "" && raw != "null" {
-		if err := json.Unmarshal([]byte(raw), &note); err != nil {
-			return fmt.Errorf("decode site attributes: %w", err)
-		}
-	}
-	if agent != "" {
-		note["ua"] = agent
-	}
-	encoded, err := json.Marshal(note)
+	encoded, err := CookieNote(raw, agent)
 	if err != nil {
 		return fmt.Errorf("encode site attributes: %w", err)
 	}
-	if _, err := transaction.ExecContext(ctx, "UPDATE CONFIG_SITE SET COOKIE=?, NOTE=? WHERE ID=?", cookie, string(encoded), id); err != nil {
+	result, err := transaction.ExecContext(ctx, "UPDATE CONFIG_SITE SET COOKIE=?, NOTE=? WHERE ID=?", cookie, encoded, id)
+	if err != nil {
 		return fmt.Errorf("update site cookie: %w", err)
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return errors.New("site cookie update was not acknowledged")
+	}
+	var savedCookie, savedNote string
+	if err := transaction.QueryRowContext(ctx, "SELECT COALESCE(COOKIE,''), COALESCE(NOTE,'') FROM CONFIG_SITE WHERE ID=?", id).Scan(&savedCookie, &savedNote); err != nil {
+		return fmt.Errorf("verify site cookie update: %w", err)
+	}
+	if savedCookie != cookie || savedNote != encoded {
+		return errors.New("site cookie update was replaced")
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit site cookie update: %w", err)

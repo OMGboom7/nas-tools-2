@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, deleteSite, getSites, testSiteConnection, type AuthSession, type SiteSummary, type SiteTestResult, type SitesData } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { SiteEditor } from "../components/SiteEditor";
+import { SiteLoginPanel } from "../components/SiteLoginPanel";
 
 type SitesPageProps = {
   session: AuthSession;
@@ -26,6 +27,7 @@ export function SitesPage({ session, currentPath, onNavigate, onLogout, onSessio
   const [actionError, setActionError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [editing, setEditing] = useState<SiteSummary | null | undefined>(undefined);
+  const [loggingIn,setLoggingIn]=useState<SiteSummary[]>();
   const [batchTesting, setBatchTesting] = useState(false);
   const [deleting, setDeleting] = useState<SiteSummary | undefined>();
   const [deleteText, setDeleteText] = useState("");
@@ -139,7 +141,7 @@ export function SitesPage({ session, currentPath, onNavigate, onLogout, onSessio
       <div className="sites-page">
         <header className="sites-heading">
           <div><p className="eyebrow">SITE DIRECTORY</p><h1>站点管理</h1><p className="summary">集中查看站点用途并按需测试连接。敏感凭据只保留在服务端。</p></div>
-          <div className="sites-heading__actions"><button className="secondary-button" type="button" onClick={() => void load(true)} disabled={state.kind === "loading"}>刷新</button><button className="secondary-button" type="button" onClick={() => void testVisibleSites()} disabled={batchTesting || filtered.length === 0}>{batchTesting ? "测试中…" : "测试当前列表"}</button><button className="primary-button" type="button" onClick={() => setEditing(null)}>新增站点</button></div>
+          <div className="sites-heading__actions"><button className="secondary-button" type="button" onClick={() => void load(true)} disabled={state.kind === "loading"}>刷新</button><button className="secondary-button" type="button" onClick={() => void testVisibleSites()} disabled={batchTesting || filtered.length === 0}>{batchTesting ? "测试中…" : "测试当前列表"}</button><button className="secondary-button" type="button" onClick={()=>setLoggingIn(filtered)}>站点登录与回执</button><button className="primary-button" type="button" onClick={() => setEditing(null)}>新增站点</button></div>
         </header>
 
         {actionError && <div className="data-warning" role="alert">{actionError}</div>}
@@ -163,18 +165,19 @@ export function SitesPage({ session, currentPath, onNavigate, onLogout, onSessio
 
           {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的站点。</div> : (
             <section className="site-grid" aria-label="站点列表">
-              {filtered.map((site) => <SiteCard key={site.id} site={site} test={tests[site.id]} batchTesting={batchTesting} onDelete={() => requestDelete(site)} onEdit={() => setEditing(site)} onTest={() => void testConnection(site)} />)}
+              {filtered.map((site) => <SiteCard key={site.id} site={site} test={tests[site.id]} batchTesting={batchTesting} onDelete={() => requestDelete(site)} onEdit={() => setEditing(site)} onTest={() => void testConnection(site)} onLogin={()=>setLoggingIn([site])}/>)}
             </section>
           )}
         </>}
         {editing !== undefined && <SiteEditor session={session} site={editing || undefined} onClose={() => setEditing(undefined)} onSaved={() => void saved()} onSessionExpired={onSessionExpired} />}
+        {loggingIn&&<SiteLoginPanel session={session} sites={loggingIn} onClose={()=>setLoggingIn(undefined)} onSaved={()=>void load(true)} onSessionExpired={onSessionExpired}/>}
         {deleting && <DeleteSiteDialog site={deleting} value={deleteText} busy={deleteBusy} error={deleteError} onChange={setDeleteText} onClose={() => setDeleting(undefined)} onConfirm={() => void confirmDelete()} />}
       </div>
     </WorkspaceLayout>
   );
 }
 
-function SiteCard({ site, test, batchTesting, onTest, onEdit, onDelete }: { site: SiteSummary; test?: TestState; batchTesting: boolean; onTest: () => void; onEdit: () => void; onDelete: () => void }) {
+function SiteCard({ site, test, batchTesting, onTest, onEdit, onDelete,onLogin }: { site: SiteSummary; test?: TestState; batchTesting: boolean; onTest: () => void; onEdit: () => void; onDelete: () => void;onLogin:()=>void }) {
   const pending = test && "pending" in test;
   const result = test && !("pending" in test) ? test : undefined;
   return (
@@ -187,7 +190,7 @@ function SiteCard({ site, test, batchTesting, onTest, onEdit, onDelete }: { site
         <div className={`site-test-result ${result ? result.ok ? "is-success" : "is-failed" : ""}`} aria-live="polite">
           {pending ? <><i />正在测试…</> : result ? <><i />{result.ok ? "连接正常" : "连接失败"}{result.duration > 0 && <small>{result.duration} ms</small>}<em>{result.message}</em></> : <><i />尚未测试</>}
         </div>
-        <div className="site-card__actions"><button type="button" onClick={onEdit}>编辑</button><button type="button" className="is-danger" onClick={onDelete}>删除</button><button type="button" onClick={onTest} disabled={pending || batchTesting}>{pending ? "测试中" : "测试连接"}</button></div>
+        <div className="site-card__actions"><button type="button" onClick={onEdit}>编辑</button><button type="button" onClick={onLogin}>登录更新</button><button type="button" className="is-danger" onClick={onDelete}>删除</button><button type="button" onClick={onTest} disabled={pending || batchTesting}>{pending ? "测试中" : "测试连接"}</button></div>
       </footer>
     </article>
   );

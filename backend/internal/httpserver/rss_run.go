@@ -29,6 +29,7 @@ type rssRunAPI struct {
 	scraper         *intakeScraper
 	subtitles       *subtitleAPI
 	openSubtitles   *openSubtitleAPI
+	siteLogin       *siteLoginAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI
 	notifications   *businessNotifications

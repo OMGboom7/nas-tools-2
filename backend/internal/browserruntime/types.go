@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,6 +41,7 @@ type Before func(context.Context, Exchange) (func(state, digest string) error, e
 type Request struct {
 	URL, Cookie, UserAgent, Proxy string
 	Form                          *Form
+	Login                         *Login `json:"-"`
 	// Selectors are from the original trusted catalog, never supplied by page text.
 	ReadySelector, EmptySelector string
 	ReadOnly                     bool
@@ -54,6 +56,7 @@ type Result struct {
 	HTML                   []byte
 	URL, Cookie, UserAgent string
 	Requests               int
+	LoginState             string
 }
 type Renderer interface {
 	Available() bool
@@ -108,16 +111,31 @@ func text(s string, max int) bool {
 }
 func Origin(raw string) string {
 	u, e := url.Parse(raw)
-	if e != nil || !validURL(u) {
+	if e != nil {
 		return ""
 	}
-	return strings.ToLower(u.Scheme + "://" + u.Host)
+	u.Fragment, u.RawFragment = "", ""
+	if !validURL(u) {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if u.Scheme == "https" && port == "443" || u.Scheme == "http" && port == "80" {
+		port = ""
+	}
+	if port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	return u.Scheme + "://" + host
 }
 func validURL(u *url.URL) bool {
 	return u != nil && (u.Scheme == "https" || u.Scheme == "http") && u.Hostname() != "" && u.User == nil && u.Opaque == "" && u.Fragment == "" && len(u.String()) <= 16000 && !strings.ContainsAny(u.String(), "\x00\r\n")
 }
 func validate(r Request) error {
-	if Origin(r.URL) == "" || !text(r.Cookie, 16000) || !text(r.UserAgent, 512) || r.UserAgent == "" || r.Guard == nil {
+	u, err := url.Parse(r.URL)
+	if err != nil || !validURL(u) || Origin(r.URL) == "" || !text(r.Cookie, 16000) || !text(r.UserAgent, 512) || r.UserAgent == "" || r.Guard == nil {
 		return ErrScope
 	}
 	if r.Proxy != "" {
@@ -134,6 +152,9 @@ func validate(r Request) error {
 		if r.ReadOnly || f.Input == "" || f.Submit == "" || !text(f.Input, 4096) || !text(f.Submit, 4096) || !text(f.Value, 2048) || len(f.Script) > 16384 || !utf8.ValidString(f.Script) || strings.ContainsRune(f.Script, 0) || f.Referer != "" && Origin(f.Referer) != Origin(r.URL) {
 			return ErrScope
 		}
+	}
+	if r.Login != nil && (r.Form != nil || r.ReadOnly || !r.Login.valid()) {
+		return ErrScope
 	}
 	return nil
 }

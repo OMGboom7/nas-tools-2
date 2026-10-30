@@ -28,6 +28,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/rsstaskconfig"
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
+	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 	"github.com/0xforee/nas-tools/backend/internal/wordconfig"
 )
@@ -84,6 +85,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitMediaDelete := startMediaSyncDeleteWorker(workerContext, runner.mediaSyncDelete)
 		waitFavorites := startMovieLikeWorker(workerContext, runner.movieLike)
 		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
+		waitSiteLogin := startSiteLoginWorker(workerContext, runner.siteLogin)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -101,6 +103,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitMediaDelete()
 			waitFavorites()
 			waitFuzzy()
+			waitSiteLogin()
 		}
 	}
 	return handler, wait, nil
@@ -144,6 +147,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	var nativeSystemConfig *systemconfig.Store
 	var nativeDownloaders *downloaderconfig.Store
 	var nativeSites *siteconfig.Store
+	var nativeSiteLogins *sitelogin.Store
 	var nativeFilters *filterconfig.Store
 	var nativeNotifications *notificationconfig.Store
 	var nativeRSSParsers *rssparserconfig.Store
@@ -178,6 +182,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeSites, err = siteconfig.Open(application.UserDatabasePath())
 		if err != nil {
 			return nil, fmt.Errorf("open native site configuration: %w", err)
+		}
+		nativeSiteLogins, err = sitelogin.Open(application.UserDatabasePath())
+		if err != nil {
+			return nil, fmt.Errorf("open native site login receipts: %w", err)
 		}
 		nativeFilters, err = filterconfig.OpenWritable(application.UserDatabasePath())
 		if err != nil {
@@ -538,6 +546,16 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/media/recommendations", mediaDetails.serveRelated)
 	mux.HandleFunc("POST /api/v1/discovery", discovery.serveHTTP)
 	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits, browser: nativeBrowser}
+	nativeSiteLogin := &siteLoginAPI{store: nativeSiteLogins, sites: nativeSites, config: nativeConfig, auth: nativeAuth, browser: nativeBrowser, transport: transport, catalogPath: cfg.SiteCatalogPath, limits: siteLimits, guards: &organizationJobs, pureGo: cfg.DisableLegacy}
+	rssRunner.siteLogin = nativeSiteLogin
+	mux.HandleFunc("GET /api/v1/site-login", nativeSiteLogin.status)
+	mux.HandleFunc("POST /api/v1/site-login/review", nativeSiteLogin.serveReview)
+	mux.HandleFunc("POST /api/v1/site-login/requests", nativeSiteLogin.serveStart)
+	mux.HandleFunc("GET /api/v1/site-login/requests", nativeSiteLogin.serveList)
+	mux.HandleFunc("GET /api/v1/site-login/requests/{id}", nativeSiteLogin.serveDetail)
+	mux.HandleFunc("GET /api/v1/site-login/batches/{id}", nativeSiteLogin.serveBatch)
+	mux.HandleFunc("POST /api/v1/site-login/requests/{id}/input", nativeSiteLogin.serveInput)
+	mux.HandleFunc("POST /api/v1/site-login/requests/{id}/stop", nativeSiteLogin.serveStop)
 	mux.HandleFunc("GET /api/v1/sites", sites.serveList)
 	mux.HandleFunc("POST /api/v1/sites", sites.create)
 	mux.HandleFunc("GET /api/v1/sites/options", sites.serveOptions)
@@ -698,7 +716,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("/api/v1/open-subtitles", nativeOpenSubtitles.manage)
 	mux.HandleFunc("/api/v1/open-subtitles/", nativeOpenSubtitles.manage)
-	mux.HandleFunc("/do", nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape))
+	mux.HandleFunc("/do", nativeSiteLogin.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))
+	mux.HandleFunc("GET /stream-progress", nativeSiteLogin.legacyProgress)
 	mux.HandleFunc("/api/v1/media/subtitle/download", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc(subtitleRequestsBase, nativeSubtitles.serveRequests)

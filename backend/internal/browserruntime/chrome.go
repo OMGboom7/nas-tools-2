@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/fetch"
@@ -41,7 +42,11 @@ func (e *Engine) Render(parent context.Context, r Request) (Result, error) {
 		}
 		return out, ErrScope
 	}
-	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	duration := 60 * time.Second
+	if r.Login != nil {
+		duration = 4 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(parent, duration)
 	defer cancel()
 	b, err := newBroker(r)
 	if err != nil {
@@ -105,9 +110,22 @@ func (e *Engine) Render(parent context.Context, r Request) (Result, error) {
 	if r.Form != nil && r.Form.Referer != "" {
 		extra["Referer"] = r.Form.Referer
 	}
+	agentAction := chromedp.ActionFunc(func(ctx context.Context) error {
+		if r.Login != nil && r.UserAgent == "auto" {
+			_, _, _, agent, _, e := browser.GetVersion().Do(ctx)
+			if e != nil || !text(agent, 512) || agent == "" {
+				return ErrUnavailable
+			}
+			r.UserAgent = agent
+			b.mu.Lock()
+			b.request.UserAgent = agent
+			b.mu.Unlock()
+		}
+		return emulation.SetUserAgentOverride(r.UserAgent).Do(ctx)
+	})
 	err = chromedp.Run(tab, network.Enable(), network.SetCacheDisabled(true), network.SetBypassServiceWorker(true), network.SetExtraHTTPHeaders(extra),
 		network.SetBlockedURLs([]string{"file://*", "ftp://*", "ws://*", "wss://*"}),
-		emulation.SetUserAgentOverride(r.UserAgent), network.SetCookies(cookies),
+		agentAction, network.SetCookies(cookies),
 		fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: "http://*", RequestStage: fetch.RequestStageRequest}, {URLPattern: "https://*", RequestStage: fetch.RequestStageRequest}}),
 		chromedp.Navigate(r.URL))
 	if err != nil {
@@ -119,6 +137,14 @@ func (e *Engine) Render(parent context.Context, r Request) (Result, error) {
 			return out, cause
 		}
 		return out, ErrUnavailable
+	}
+	loginState := ""
+	if r.Login != nil {
+		loginState, err = b.login(tab, r.Login)
+		if err != nil {
+			finishTab()
+			return out, err
+		}
 	}
 	if r.Form != nil {
 		if r.Form.Script != "" {
@@ -223,7 +249,10 @@ func (e *Engine) Render(parent context.Context, r Request) (Result, error) {
 	if cause != nil {
 		return out, cause
 	}
-	return Result{HTML: []byte(htmlText), URL: address, Cookie: cookie, UserAgent: r.UserAgent, Requests: count}, nil
+	if r.Login != nil && (!r.Login.LoggedIn([]byte(htmlText)) || cookie == "") {
+		return out, ErrLogin
+	}
+	return Result{HTML: []byte(htmlText), URL: address, Cookie: cookie, UserAgent: r.UserAgent, Requests: count, LoginState: loginState}, nil
 }
 func (b *broker) importCookies(ctx context.Context, address string) {
 	if Origin(address) != Origin(b.request.URL) {

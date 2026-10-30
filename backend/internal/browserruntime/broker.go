@@ -83,6 +83,9 @@ func (b *broker) allowed(address, method, kind string) bool {
 		return false
 	}
 	same := Origin(address) == Origin(b.request.URL)
+	if kind == "LoginImage" {
+		return b.request.Login != nil && same && method == "GET"
+	}
 	if kind == "Other" && strings.EqualFold(u.Path, "/favicon.ico") {
 		return false
 	}
@@ -190,8 +193,12 @@ func (b *broker) exchange(ctx context.Context, address, method, kind string, hea
 		return zero, ErrResponse
 	}
 	defer response.Body.Close()
-	raw, e := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
-	if e != nil || len(raw) > 8<<20 {
+	limit := 8 << 20
+	if kind == "LoginImage" {
+		limit = 2 << 20
+	}
+	raw, e := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
+	if e != nil || len(raw) > limit {
 		_ = done("uncertain", "")
 		b.fatal = ErrLimit
 		return zero, ErrLimit
