@@ -10,6 +10,9 @@ import (
 func ScanLibrary(context.Context, LibraryDefinition) (LibraryScan, error) {
 	return LibraryScan{}, ErrMode
 }
+func CaptureLibraryMedia(context.Context, LibraryDefinition, string) (LibraryMedia, error) {
+	return LibraryMedia{}, ErrMode
+}
 func VerifyLibraryMedia(context.Context, LibraryDefinition, LibraryMedia) error { return ErrMode }
 func ReadLibraryMedia(context.Context, LibraryDefinition, LibraryMedia, func(*os.File) ([]byte, error)) ([]byte, error) {
 	return nil, ErrMode

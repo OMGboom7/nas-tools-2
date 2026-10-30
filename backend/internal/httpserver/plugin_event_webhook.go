@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -396,7 +397,15 @@ func (api *eventWebhookAPI) tick(ctx context.Context) error {
 				return bus.ErrEventWebhook
 			}
 			return nil
+		}, func(tx *sql.Tx, source bus.EventWebhookSource) error {
+			return organization.SubtitleIntakeReady(ctx, tx, source.Reference, source.Ordinal, source.Origin, &source)
 		})
+		if errors.Is(err, bus.ErrEventWaiting) {
+			if e := api.queue.WaitEventWebhook(ctx, p); e != nil {
+				return e
+			}
+			continue
+		}
 		if errors.Is(err, bus.ErrEventWebhook) {
 			continue
 		}

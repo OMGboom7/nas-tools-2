@@ -263,6 +263,13 @@ func (s *Store) FinishScrape(ctx context.Context, id, state, reason string) erro
 		return err
 	}
 	defer tx.Rollback()
+	original, err := scanScrape(tx.QueryRowContext(ctx, scrapeSelect+` WHERE ID=?`, id))
+	if err != nil {
+		return err
+	}
+	if original.State != "running" {
+		return ErrState
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE GO_SCRAPE_JOBS SET STATE=?,REASON=?,UPDATED=? WHERE ID=? AND STATE='running'`, state, reason, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {
 		return err
@@ -273,6 +280,9 @@ func (s *Store) FinishScrape(ctx context.Context, id, state, reason string) erro
 	var stored string
 	if err := tx.QueryRowContext(ctx, `SELECT STATE FROM GO_SCRAPE_JOBS WHERE ID=?`, id).Scan(&stored); err != nil || stored != state {
 		return ErrState
+	}
+	if err := wakeSubtitleSource(ctx, tx, original.JobID, original.Ordinal); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

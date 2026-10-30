@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/subtitles"
 )
@@ -245,11 +247,21 @@ func (api *subtitleAPI) tick(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		pending, err := api.organizer.jobs.ScrapePending(ctx, row.JobID, row.Ordinal)
-		if err != nil {
-			return err
+		if strings.HasPrefix(row.JobID, "manual-subtitle:") {
+			id, ok := organization.SubtitleRequestSourceID(row.JobID)
+			if !ok {
+				return subtitles.ErrState
+			}
+			if err := api.runManualRequest(ctx, row, id); err != nil {
+				return err
+			}
+			continue
 		}
-		if pending {
+		prerequisite := api.organizer.jobs.SubtitleIntakeReady(ctx, row.JobID, row.Ordinal, row.OriginDigest, row.ID == subtitles.IntakeID(row.JobID, row.Ordinal))
+		if errors.Is(prerequisite, bus.ErrEventWaiting) {
+			if err := api.queue.Wait(ctx, row); err != nil {
+				return err
+			}
 			continue
 		}
 		valid := false
@@ -258,7 +270,7 @@ func (api *subtitleAPI) tick(ctx context.Context) error {
 		if errors.Is(remoteErr, organization.ErrBusy) {
 			return remoteErr
 		}
-		if err == nil && remoteErr == nil && job.State == "completed" && len(job.Items) == len(job.Definition.Entries) && row.Ordinal >= 0 && row.Ordinal < len(job.Items) {
+		if prerequisite == nil && err == nil && remoteErr == nil && job.State == "completed" && len(job.Items) == len(job.Definition.Entries) && row.Ordinal >= 0 && row.Ordinal < len(job.Items) {
 			item := job.Items[row.Ordinal]
 			valid = item.Index == row.Ordinal && item.Kind == "media" && row.Payload.Bluray == (item.Disc != nil) && item.MediaType == row.MediaType && filepath.Join(job.Definition.TargetRoot, item.Target) == row.LocalPath && organization.SubtitleOriginDigest(job, item) == row.OriginDigest
 			if valid {
@@ -266,7 +278,15 @@ func (api *subtitleAPI) tick(ctx context.Context) error {
 			}
 		}
 		closeRemote()
-		cfg, claimed, err := api.queue.Claim(ctx, row)
+		cfg, claimed, err := api.queue.Claim(ctx, row, func(tx *sql.Tx, r subtitles.Receipt) error {
+			return organization.SubtitleIntakeReady(ctx, tx, r.JobID, r.Ordinal, r.OriginDigest, nil, r.ID == subtitles.IntakeID(r.JobID, r.Ordinal))
+		})
+		if errors.Is(err, bus.ErrEventWaiting) {
+			if e := api.queue.Wait(ctx, row); e != nil {
+				return e
+			}
+			continue
+		}
 		if errors.Is(err, subtitles.ErrState) {
 			continue
 		}

@@ -22,6 +22,7 @@ const MaxEventWebhookPayload = 2 << 20
 
 var ErrEventWebhook = errors.New("event webhook scope or receipt changed")
 var ErrEventWebhookMissing = errors.New("event webhook receipt not found")
+var ErrEventWaiting = errors.New("original event prerequisite is still running")
 
 type EventWebhookSpec struct {
 	URL         string `json:"webhook_url"`
@@ -49,7 +50,17 @@ type EventWebhookDefinition struct {
 	Reference    string               `json:"reference"`
 	Control      EventWebhookControl  `json:"control"`
 	Envelope     EventWebhookEnvelope `json:"envelope"`
+	Source       *EventWebhookSource  `json:"source,omitempty"`
 }
+type EventWebhookSource struct {
+	Kind, Reference, Origin, ScraperBinding string
+	Ordinal                                 int
+}
+
+func (s EventWebhookSource) Valid() bool {
+	return s.Kind == "subtitle_intake" && eventHookHex(s.Reference, 32) && eventHookHex(s.Origin, 64) && s.Ordinal >= 0 && s.Ordinal < 100000 && (s.ScraperBinding == "" || eventHookHex(s.ScraperBinding, 64))
+}
+
 type EventWebhookReceipt struct {
 	ID          string                 `json:"id"`
 	EventID     string                 `json:"eventId"`
@@ -245,8 +256,11 @@ func canonicalSignalData(data any) (json.RawMessage, error) {
 // PublishSignal participates in the caller's actual domain transaction. It
 // never creates a sender, scans old facts, or invokes an external receiver.
 // A missing/closed grant leaves the domain operation independent of this plugin.
-func PublishSignal(ctx context.Context, tx *sql.Tx, kind, key, reference string, data any) error {
+func PublishSignal(ctx context.Context, tx *sql.Tx, kind, key, reference string, data any, source ...EventWebhookSource) error {
 	if !ValidSignalType(kind) || key == "" || len(key) > 4096 || len(reference) > 4096 {
+		return ErrEventWebhook
+	}
+	if len(source) > 1 || len(source) == 1 && (!source[0].Valid() || kind != "subtitle.download" || source[0].Reference != reference) {
 		return ErrEventWebhook
 	}
 	c, spec, active, err := eventHookSnapshot(ctx, tx)
@@ -265,6 +279,10 @@ func PublishSignal(ctx context.Context, tx *sql.Tx, kind, key, reference string,
 	}
 	eventID := Hash([]string{kind, key})
 	d := EventWebhookDefinition{Version: 1, TargetDigest: Hash(spec), EventID: eventID, Reference: reference, Control: c, Envelope: EventWebhookEnvelope{Type: kind, Data: raw}}
+	if len(source) == 1 {
+		original := source[0]
+		d.Source = &original
+	}
 	d.ID = Hash([]string{c.Epoch, eventID})
 	document, err := json.Marshal(d)
 	if err != nil || len(document) > MaxEventWebhookPayload+64<<10 {
@@ -309,6 +327,9 @@ func scanEventHook(row interface{ Scan(...any) error }) (EventWebhookReceipt, er
 		return p, err
 	}
 	if !p.Definition.Control.Authorized || !eventHookHex(p.EventID, 64) || p.ID != Hash([]string{p.Definition.Control.Epoch, p.EventID}) || p.Status < 0 || p.Status > 599 {
+		return p, ErrEventWebhook
+	}
+	if source := p.Definition.Source; source != nil && (!source.Valid() || p.Type != "subtitle.download" || source.Reference != p.Reference) {
 		return p, ErrEventWebhook
 	}
 	if _, err := time.Parse(time.RFC3339Nano, p.Created); err != nil {
@@ -359,6 +380,12 @@ func (s *Store) EventWebhooks(ctx context.Context, page int, pending bool) ([]Ev
 	query, args := eventHookSelect+` ORDER BY CREATED DESC,ID DESC LIMIT 30 OFFSET ?`, []any{(page - 1) * 30}
 	if pending {
 		query, args = eventHookSelect+` WHERE STATE='pending' ORDER BY CREATED,ID LIMIT 20`, nil
+		if waits, e := eventHookTable(ctx, s.db, "GO_EVENT_WEBHOOK_WAITS"); e != nil {
+			return nil, e
+		} else if waits {
+			query = eventHookSelect + ` WHERE STATE='pending' AND NOT EXISTS(SELECT 1 FROM GO_EVENT_WEBHOOK_WAITS w WHERE w.ID=GO_EVENT_WEBHOOK_OUTBOX.ID AND w.NEXT_CHECK>?) ORDER BY CREATED,ID LIMIT 20`
+			args = []any{time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")}
+		}
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -374,7 +401,10 @@ func (s *Store) EventWebhooks(ctx context.Context, page int, pending bool) ([]Ev
 	}
 	return out, rows.Err()
 }
-func (s *Store) ClaimEventWebhook(ctx context.Context, expected EventWebhookReceipt, authority func(EventWebhookControl) error) (EventWebhookReceipt, EventWebhookSpec, error) {
+func (s *Store) ClaimEventWebhook(ctx context.Context, expected EventWebhookReceipt, authority func(EventWebhookControl) error, source ...func(*sql.Tx, EventWebhookSource) error) (EventWebhookReceipt, EventWebhookSpec, error) {
+	if len(source) > 1 {
+		return expected, EventWebhookSpec{}, ErrEventWebhook
+	}
 	var spec EventWebhookSpec
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -392,6 +422,15 @@ func (s *Store) ClaimEventWebhook(ctx context.Context, expected EventWebhookRece
 	} else {
 		spec = current
 	}
+	if state == "intent" && p.Definition.Source != nil {
+		if len(source) != 1 || source[0] == nil {
+			state, reason = "blocked", "original source verifier unavailable; no event sent"
+		} else if e := source[0](tx, *p.Definition.Source); errors.Is(e, ErrEventWaiting) {
+			return p, spec, e
+		} else if e != nil {
+			state, reason = "blocked", "original media or metadata prerequisite changed; no event sent"
+		}
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE GO_EVENT_WEBHOOK_OUTBOX SET STATE=?,REASON=?,UPDATED=? WHERE ID=? AND STATE='pending' AND FINGERPRINT=?`, state, reason, time.Now().UTC().Format(time.RFC3339Nano), p.ID, p.Fingerprint)
 	if err != nil {
 		return p, spec, err
@@ -406,6 +445,9 @@ func (s *Store) ClaimEventWebhook(ctx context.Context, expected EventWebhookRece
 	if state == "intent" {
 		final, finalSpec, finalActive, err := eventHookSnapshot(ctx, tx)
 		if err != nil || !finalActive || final != c || Hash(finalSpec) != p.Definition.TargetDigest || authority(c) != nil {
+			return p, spec, ErrEventWebhook
+		}
+		if p.Definition.Source != nil && source[0](tx, *p.Definition.Source) != nil {
 			return p, spec, ErrEventWebhook
 		}
 	}

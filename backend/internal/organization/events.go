@@ -134,7 +134,20 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 				return err
 			}
 		}
-		if err := subtitles.Emit(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest, IsDisc(e)); err != nil {
+		source, err := freezeSubtitleSource(ctx, tx, d, id, ordinal, originDigest)
+		if err != nil {
+			return err
+		}
+		if err := subtitles.EmitIntake(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest, IsDisc(e)); err != nil {
+			return err
+		}
+		extension := filepath.Ext(e.Source)
+		if IsDisc(e) {
+			extension = ""
+		}
+		if err := emitSubtitleSignal(ctx, tx, fmt.Sprintf("intake:%s:%d", id, ordinal), id, filepath.Join(d.TargetRoot, e.Target), extension, IsDisc(e), map[string]any{
+			"title": e.Title, "year": e.Year, "type": e.MediaType, "tmdb_id": e.TMDBID, "season_episode": e.SeasonEpisode,
+		}, map[string]any{"stage": "committed", "job_id": id, "ordinal": ordinal}, source); err != nil {
 			return err
 		}
 		if err := bus.PublishSignal(ctx, tx, "transfer.finished", fmt.Sprintf("%s:%d", id, ordinal), id, map[string]any{
@@ -162,4 +175,10 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 		return err
 	}
 	return mediaserver.EnqueueTransferRefresh(ctx, tx, id, mediaRefreshItems(d))
+}
+
+func emitSubtitleSignal(ctx context.Context, tx *sql.Tx, key, reference, file, extension string, bluray bool, media, provenance map[string]any, source ...bus.EventWebhookSource) error {
+	return bus.PublishSignal(ctx, tx, "subtitle.download", key, reference, map[string]any{
+		"media_info": media, "file": file, "file_ext": extension, "bluray": bluray, "native_event": provenance,
+	}, source...)
 }

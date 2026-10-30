@@ -669,7 +669,6 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/organization/library-scraper", nativeLibrary.serveStatus)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/preview", nativeLibrary.servePreview)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/jobs", nativeLibrary.serveCreate)
-	mux.HandleFunc("POST /do", nativeLibrary.serveLegacyScrape)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/event", nativeLibrary.serveScrapeEvent)
 	mux.HandleFunc("GET /api/v1/organization/library-scraper/jobs/{id}", nativeLibrary.serveJob)
 	mux.HandleFunc("POST /api/v1/organization/library-scraper/jobs/{id}/cancel", nativeLibrary.serveCancel)
@@ -678,13 +677,19 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/organization/scraper", nativeScraper.serveStatus)
 	mux.HandleFunc("PUT /api/v1/organization/scraper/options", nativeScraper.saveOptions)
 	mux.HandleFunc("PUT /api/v1/organization/scraper/enabled", nativeScraper.setEnabled)
-	if nativeSystemConfig != nil {
-		plugins.subtitles = &subtitleAPI{organizer: &organizer, transport: transport}
-		if organizationJobs != nil {
-			plugins.subtitles.queue = organizationJobs.Subtitles()
-		}
-		rssRunner.subtitles = plugins.subtitles
+	nativeSubtitles := &subtitleAPI{organizer: &organizer, transport: transport}
+	if organizationJobs != nil {
+		nativeSubtitles.queue = organizationJobs.Subtitles()
 	}
+	if nativeSystemConfig != nil {
+		plugins.subtitles = nativeSubtitles
+		rssRunner.subtitles = nativeSubtitles
+	}
+	mux.HandleFunc("/do", nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape))
+	mux.HandleFunc("/api/v1/media/subtitle/download", nativeSubtitles.legacySubtitle)
+	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)
+	mux.HandleFunc(subtitleRequestsBase, nativeSubtitles.serveRequests)
+	mux.HandleFunc(subtitleRequestsBase+"/", nativeSubtitles.serveRequests)
 	if nativeSystemConfig != nil {
 		plugins.indexers = &nativeIndexerPlugins{system: nativeSystemConfig, transport: transport, pureGo: cfg.DisableLegacy}
 		rssRunner.indexerPlugins = plugins.indexers

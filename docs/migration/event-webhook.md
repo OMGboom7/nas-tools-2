@@ -39,12 +39,15 @@ React 插件页提供只读状态、本页最多 30 条与较早稳定编号查�
 | `sourcefile.deleted`、`libraryfile.deleted` | 已有明确删除事务中的结构化事实，不扩大后续删除权限 |
 | `emby.webhook`、`jellyfin.webhook`、`plex.webhook` | 原接收授权、密钥和实际来源核对后的原始 JSON，包含暂停等不生成通知的合法事件 |
 | `refresh.mediaserver` | [电影精选](movie-like.md) 完整移动核实后的原刷新事件，与原完成凭证和独立刷新待办同事务 |
+| `subtitle.download` | [完整原生入库及独立单文件请求](subtitle-events.md) 的实际提交事务；目标文件、原后缀、已证明的蓝光标志及实际可用媒体字段。入库来源须等待该文件原元数据账本稳定 |
 
 原始回调在原生外发授权尚开启时才进入私有队列，发送前再次核验当前管理员范围；公开通知回执仍仅规范通知字段。`GO_MEDIA_WEBHOOK_SIGNALS` 只保留原接收版本、编号、摘要与时间；显式上游编号在原版本内去重，没有编号不猜测。已接收回调不因后来启用外发而补发。旧版本仅有通知回执、尚无原始事件账本时，同一编号也不能被新外发或变化的动作接管；旧证明损坏拒绝接收。暂停／直播不生成虚构通知，也不查询服务器补全；JSON 大小、深度和重复键限制保持。
 
 下载时机明确为原生接收／核实后的 `native_event.stage=committed`；旧 Python 在 Add 前发送，前置可变参数钩子没有被冒充为已移植。只保留实际可用的旧字段，不伪造缺少的媒体信息或设置。媒体回调保留原 JSON；其余业务增加原生观察上下文。订阅结束、下载接收、文件入库和外发成功仍是不同事实。
 
-通用消费者接受旧枚举的 20 个事件名，合同测试不代表全部真实生产者已迁移。`download.fail`、`transfer.fail`、`subtitle.download`、`message.incoming`、`search.start`、`media.scrap.start`、`plugin.reload`、`douban.sync`、`autoseed.start`、`site.signin` 及其他刷新来源的独立事件与旧调用时机继续逐项接入。原生字幕／刮削／刷新执行器不证明旧钩子完整接通。[SpeedLimiter](playback-speed-limiter.md)、[MediaSyncDel](media-sync-delete.md) 与 [MovieLike](movie-like.md) 分别以自己的独立授权消费原始媒体回调；外发授权不代替限速、删除或完整目录移动授权，其他消费者不因收到回调而启动。
+2026-10-30 新字幕事件冻结原来源及元数据凭据，在原实际发送意图事务内复核；pending／running 元数据让出队列，终结时只唤醒同一原文件。单文件事件标识独立请求，不借用已完成入库编号；发送原实际识别字段，不声称已经补全旧媒体对象的全部字段。旧定义省略新可选来源字段，原回执指纹保持；新第二代原生字幕待办必须具有同事务来源证明。完整边界及当前验证见 [入库与单文件字幕触发](subtitle-events.md)。
+
+通用消费者接受旧枚举的 20 个事件名，合同测试不代表全部真实生产者已迁移。`download.fail`、`transfer.fail`、`message.incoming`、`search.start`、`media.scrap.start`、`plugin.reload`、`douban.sync`、`autoseed.start`、`site.signin` 及其他刷新来源的独立事件与旧调用时机继续逐项接入。原生刮削／刷新执行器不证明旧钩子完整接通；字幕的实际生产者已单独接入，其他字幕消费者仍各自迁移。[SpeedLimiter](playback-speed-limiter.md)、[MediaSyncDel](media-sync-delete.md) 与 [MovieLike](movie-like.md) 分别以自己的独立授权消费原始媒体回调；外发授权不代替限速、删除或完整目录移动授权，其他消费者不因收到回调而启动。
 
 ## 集中验证
 

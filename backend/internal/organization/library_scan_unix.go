@@ -101,6 +101,15 @@ func captureLibraryFile(d LibraryDefinition, path string) (LibraryMedia, error) 
 	}
 	return m, ErrPath
 }
+func CaptureLibraryMedia(ctx context.Context, d LibraryDefinition, selected string) (LibraryMedia, error) {
+	if err := ctx.Err(); err != nil {
+		return LibraryMedia{}, err
+	}
+	if d.Remote != nil {
+		return LibraryMedia{}, ErrMode
+	}
+	return captureLibraryMedia(d, selected)
+}
 func VerifyLibraryMedia(ctx context.Context, d LibraryDefinition, m LibraryMedia) error {
 	if d.Remote != nil {
 		return verifyLibraryRemoteMedia(ctx, d, m)

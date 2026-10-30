@@ -14,6 +14,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
+	"github.com/0xforee/nas-tools/backend/internal/scraper"
 )
 
 const mediaRefreshPluginEndpoint = "/api/v1/plugins/LibraryRefresh"
@@ -288,6 +289,12 @@ func TestMediaRefreshOldSuccessfulEventsNeedNewExplicitReviewAndAreNotAutomatica
 }
 func TestMediaRefreshWaitsForBoundEnrichmentWithoutStarvingOtherExplicitRequests(t *testing.T) {
 	f, _, _, input, _ := organizationCopyFixture(t)
+	if err := config.NewStore(f.path).Update(map[string]any{"media.nfo_poster": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.Exec(`INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE)VALUES('SystemConfig',?,'{}')`, scraper.ConfigKey); err != nil {
+		t.Fatal(err)
+	}
 	w := mediaRefreshWire(t, f, "emby")
 	mediaRefreshGrant(t, f, "0")
 	code, plan, body := organizationPreview(t, f, input)
@@ -295,9 +302,6 @@ func TestMediaRefreshWaitsForBoundEnrichmentWithoutStarvingOtherExplicitRequests
 		t.Fatal(code, body)
 	}
 	job := organizationCreateJob(t, f, input, plan)
-	if _, err := f.db.Exec(`CREATE TABLE GO_SCRAPE_JOBS(ID TEXT PRIMARY KEY,JOB_ID TEXT,ORDINAL INTEGER,ORIGIN TEXT,STATE TEXT,OUTPUTS TEXT);INSERT INTO GO_SCRAPE_JOBS VALUES(?,?,0,?,'pending','[]')`, strings.Repeat("e", 64), job.ID, strings.Repeat("f", 64)); err != nil {
-		t.Fatal(err)
-	}
 	code, _, body = organizationMoveRequest(t, f, job.ID, "execute")
 	if code != 200 {
 		t.Fatal(code, body)
@@ -334,6 +338,14 @@ func TestMediaRefreshClosedIntakeOrUncertainEnrichmentCannotDispatchAnOldAutomat
 	for _, changed := range []string{"intake-closed", "definition-changed", "enrichment-uncertain"} {
 		t.Run(changed, func(t *testing.T) {
 			f, _, _, input, _ := organizationCopyFixture(t)
+			if changed == "enrichment-uncertain" {
+				if err := config.NewStore(f.path).Update(map[string]any{"media.nfo_poster": true}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.db.Exec(`INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE)VALUES('SystemConfig',?,'{}')`, scraper.ConfigKey); err != nil {
+					t.Fatal(err)
+				}
+			}
 			w := mediaRefreshWire(t, f, "emby")
 			mediaRefreshGrant(t, f, "0")
 			code, plan, body := organizationPreview(t, f, input)
@@ -341,11 +353,6 @@ func TestMediaRefreshClosedIntakeOrUncertainEnrichmentCannotDispatchAnOldAutomat
 				t.Fatal(code, body)
 			}
 			job := organizationCreateJob(t, f, input, plan)
-			if changed == "enrichment-uncertain" {
-				if _, err := f.db.Exec(`CREATE TABLE GO_SCRAPE_JOBS(ID TEXT PRIMARY KEY,JOB_ID TEXT,ORDINAL INTEGER,ORIGIN TEXT,STATE TEXT,OUTPUTS TEXT);INSERT INTO GO_SCRAPE_JOBS VALUES(?,?,0,?,'pending','[]')`, strings.Repeat("e", 64), job.ID, strings.Repeat("f", 64)); err != nil {
-					t.Fatal(err)
-				}
-			}
 			code, _, body = organizationMoveRequest(t, f, job.ID, "execute")
 			if code != 200 {
 				t.Fatal(code, body)

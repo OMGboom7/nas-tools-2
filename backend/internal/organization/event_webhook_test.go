@@ -72,15 +72,31 @@ func TestEventWebhookActualTransferPublishesOriginalPathsOnceAndNoLateGrantAdopt
 				}
 				return
 			}
-			if len(rows) != 1 || rows[0].Type != "transfer.finished" || rows[0].Reference != id {
+			if len(rows) != 2 {
+				t.Fatal(rows)
+			}
+			var transfer *bus.EventWebhookReceipt
+			var subtitle *bus.EventWebhookReceipt
+			for i := range rows {
+				switch rows[i].Type {
+				case "transfer.finished":
+					transfer = &rows[i]
+				case "subtitle.download":
+					subtitle = &rows[i]
+				}
+			}
+			if transfer == nil || subtitle == nil || transfer.Reference != id || subtitle.Reference != id || subtitle.Definition.Source == nil {
 				t.Fatal(rows)
 			}
 			var payload map[string]any
-			json.Unmarshal(rows[0].Definition.Envelope.Data, &payload)
+			json.Unmarshal(transfer.Definition.Envelope.Data, &payload)
 			if payload["file"] != filepath.Join(d.SourceRoot, e.Source) || payload["dest"] != filepath.Join(d.TargetRoot, e.Target) || payload["in_path"] != d.SourceRoot || payload["target_path"] != d.TargetRoot {
 				t.Fatal(payload)
 			}
 			if payload["media_info"].(map[string]any)["title"] != e.Title {
+				t.Fatal(payload)
+			}
+			if json.Unmarshal(subtitle.Definition.Envelope.Data, &payload) != nil || payload["file"] != filepath.Join(d.TargetRoot, e.Target) || payload["file_ext"] != filepath.Ext(e.Source) || payload["bluray"] != false {
 				t.Fatal(payload)
 			}
 		})
