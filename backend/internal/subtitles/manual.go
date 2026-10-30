@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/opensubtitles"
 )
 
 var ErrMissing = errors.New("subtitle receipt not found")
@@ -64,8 +65,19 @@ func SnapshotFor(ctx context.Context, tx *sql.Tx, file, kind string, disc bool) 
 				}
 				if v, ok := values["enable"]; ok {
 					var enabled bool
-					if json.Unmarshal(v, &enabled) != nil || enabled {
+					if json.Unmarshal(v, &enabled) != nil {
 						return out, ErrConsumer
+					}
+					if enabled {
+						_, _, wanted, ready, e := opensubtitles.Current(ctx, tx)
+						if e != nil || !wanted || !ready {
+							return out, ErrConsumer
+						}
+						control, e := setting(ctx, tx, opensubtitles.ControlKey)
+						if e != nil {
+							return out, e
+						}
+						raw = append(raw, control)
 					}
 				}
 			}
@@ -95,6 +107,31 @@ func (s *Store) Snapshot(ctx context.Context, file, kind string, disc bool) (Sna
 	}
 	defer tx.Rollback()
 	return SnapshotFor(ctx, tx, file, kind, disc)
+}
+func OptionalSnapshotFor(ctx context.Context, tx *sql.Tx, file, kind string, disc bool) (Snapshot, bool, error) {
+	raw, e := setting(ctx, tx, "UserInstalledPlugins")
+	if e != nil {
+		return Snapshot{}, false, e
+	}
+	var ids []string
+	if raw != "" && json.Unmarshal([]byte(raw), &ids) != nil {
+		return Snapshot{}, false, ErrConfig
+	}
+	for _, id := range ids {
+		if id == Plugin {
+			s, e := SnapshotFor(ctx, tx, file, kind, disc)
+			return s, true, e
+		}
+	}
+	return Snapshot{}, false, nil
+}
+func (s *Store) OptionalSnapshot(ctx context.Context, file, kind string, disc bool) (Snapshot, bool, error) {
+	tx, e := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if e != nil {
+		return Snapshot{}, false, e
+	}
+	defer tx.Rollback()
+	return OptionalSnapshotFor(ctx, tx, file, kind, disc)
 }
 func Read(ctx context.Context, r Reader, id string) (Receipt, error) {
 	var exists bool

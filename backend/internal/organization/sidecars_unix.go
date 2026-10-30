@@ -85,7 +85,9 @@ func sidecarTarget(item JobItem, scope, name string) (string, error) {
 	} else if scope != "media" {
 		return "", ErrPath
 	}
-	if ext == ".nfo" {
+	if ext == ".srt" || ext == ".ass" || ext == ".ssa" {
+		valid = scope == "media" && (base == stem+".chi.zh-cn" || IsDisc(item.Entry) && base == stem+".chi")
+	} else if ext == ".nfo" {
 		valid = scope == "media" && (base == stem || tv && base == "season") || scope == "show" && base == "tvshow"
 	} else if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
 		if scope == "media" && tv {

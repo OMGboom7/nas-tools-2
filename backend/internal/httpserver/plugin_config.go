@@ -78,6 +78,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 		service.serveSubtitlePlugin(response, request, "get")
 		return
 	}
+	if service.nativeOpenSubtitles(request.PathValue("id")) {
+		service.serveOpenSubtitlePlugin(response, request, "get")
+		return
+	}
 	if service.nativeIndexer(request.PathValue("id")) {
 		service.serveIndexerPlugin(response, request, "get")
 		return
@@ -140,6 +144,10 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 	}
 	if service.nativeSubtitle(request.PathValue("id")) {
 		service.serveSubtitlePlugin(response, request, "save")
+		return
+	}
+	if service.nativeOpenSubtitles(request.PathValue("id")) {
+		service.serveOpenSubtitlePlugin(response, request, "save")
 		return
 	}
 	if service.nativeIndexer(request.PathValue("id")) {

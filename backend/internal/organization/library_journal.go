@@ -140,7 +140,7 @@ func createLibraryJob(ctx context.Context, tx *sql.Tx, fingerprint string, d Lib
 	defer stmt.Close()
 	worklistBytes := 0
 	for i, m := range files {
-		if d.Remote != nil && m.Blocked == "" && (m.Remote == nil || m.Remote.Digest != "") {
+		if d.Remote != nil && m.Blocked == "" && (m.Remote == nil || d.OpenSubtitle == nil && m.Remote.Digest != "" || d.OpenSubtitle != nil && !LibraryRemotePrepared(m)) {
 			return "", ErrState
 		}
 		if m.Disc != nil {
@@ -224,9 +224,9 @@ func (s *Store) LibraryJobs(ctx context.Context, ready bool) ([]LibraryJob, erro
 	if err != nil || !exists {
 		return result, err
 	}
-	query := `SELECT ID FROM GO_LIBRARY_SCRAPE_JOBS ORDER BY STATE NOT IN('completed','cancelled') DESC,UPDATED DESC LIMIT 50`
+	query := `SELECT ID FROM GO_LIBRARY_SCRAPE_JOBS WHERE json_type(DEFINITION,'$.openSubtitle') IS NULL ORDER BY STATE NOT IN('completed','cancelled') DESC,UPDATED DESC LIMIT 50`
 	if ready {
-		query = `SELECT ID FROM GO_LIBRARY_SCRAPE_JOBS WHERE STATE='ready' ORDER BY CREATED LIMIT 2`
+		query = `SELECT ID FROM GO_LIBRARY_SCRAPE_JOBS WHERE STATE='ready' AND json_type(DEFINITION,'$.openSubtitle') IS NULL ORDER BY CREATED LIMIT 2`
 	}
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
@@ -405,7 +405,7 @@ func (s *Store) LibraryOutputs(ctx context.Context, job string, page int) ([]Lib
 func (s *Store) FindLibraryOutput(ctx context.Context, job, target string) (LibraryOutput, error) {
 	return scanLibraryOutput(s.db.QueryRowContext(ctx, libraryOutputSelect+` WHERE JOB_ID=? AND TARGET=?`, job, target))
 }
-func (s *Store) SaveLibraryOutput(ctx context.Context, job string, root LibraryRoot, target, owner, state, reason string, proof LibraryOutputProof) error {
+func (s *Store) SaveLibraryOutput(ctx context.Context, job string, root LibraryRoot, target, owner, state, reason string, proof LibraryOutputProof, validators ...func(*sql.Tx) error) error {
 	if !validRelative(target) || len(owner) != 64 || len(reason) > 2000 {
 		return ErrState
 	}
@@ -419,6 +419,12 @@ func (s *Store) SaveLibraryOutput(ctx context.Context, job string, root LibraryR
 		return err
 	}
 	defer tx.Rollback()
+	if len(validators) > 1 {
+		return ErrState
+	}
+	if len(validators) == 1 && (validators[0] == nil || validators[0](tx) != nil) {
+		return ErrState
+	}
 	var js, definition string
 	if err := tx.QueryRowContext(ctx, `SELECT STATE,DEFINITION FROM GO_LIBRARY_SCRAPE_JOBS WHERE ID=?`, job).Scan(&js, &definition); err != nil {
 		return err
@@ -498,6 +504,13 @@ func (s *Store) SaveLibraryOutput(ctx context.Context, job string, root LibraryR
 	}
 	var savedState, savedProof string
 	if err := tx.QueryRowContext(ctx, `SELECT STATE,PROOF FROM GO_LIBRARY_SCRAPE_OUTPUTS WHERE ID=?`, id).Scan(&savedState, &savedProof); err != nil || savedState != state || savedProof != string(raw) {
+		return ErrState
+	}
+	saved, e := scanLibraryOutput(tx.QueryRowContext(ctx, libraryOutputSelect+` WHERE ID=?`, id))
+	if e != nil || saved.ID != id || saved.JobID != job || saved.Target != target || saved.Owner != owner || saved.State != state || saved.Reason != reason || Digest(saved.Proof) != Digest(proof) {
+		return ErrState
+	}
+	if len(validators) == 1 && validators[0](tx) != nil {
 		return ErrState
 	}
 	return tx.Commit()

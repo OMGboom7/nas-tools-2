@@ -127,8 +127,11 @@ func TestGoOnlyCatalogDoesNotAdvertiseUnmigratedActionsAsAvailable(t *testing.T)
 		t.Fatalf("Go-only catalog=%d %s", response.Code, response.Body.String())
 	}
 	for _, item := range payload.Data.Items {
-		if item.ActionsAvailable != (nativeMetadataPlugin(item.ID) || nativeIndexerPlugin(item.ID) || item.ID == "ChineseSubFinder" || item.ID == "LibraryScraper" || item.ID == "LibraryRefresh" || item.ID == "Webhook" || item.ID == "SpeedLimiter" || item.ID == "MediaSyncDel" || item.ID == "MovieLike") {
+		if item.ActionsAvailable != (nativeMetadataPlugin(item.ID) || nativeIndexerPlugin(item.ID) || item.ID == "ChineseSubFinder" || item.ID == "OpenSubtitles" || item.ID == "LibraryScraper" || item.ID == "LibraryRefresh" || item.ID == "Webhook" || item.ID == "SpeedLimiter" || item.ID == "MediaSyncDel" || item.ID == "MovieLike") {
 			t.Fatalf("unsupported Go-only action advertised: %+v", item)
+		}
+		if item.ID == "OpenSubtitles" && (!item.Native || !item.HasPage || item.Running || !item.StateKnown) {
+			t.Fatalf("uninstalled native subtitle consumer advertised runtime execution: %+v", item)
 		}
 	}
 }

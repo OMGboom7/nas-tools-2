@@ -20,6 +20,7 @@ type pluginService struct {
 	hosts           *nativeHostsPlugin
 	indexers        *nativeIndexerPlugins
 	subtitles       *subtitleAPI
+	openSubtitles   *openSubtitleAPI
 	library         *libraryScraper
 	mediaRefresh    *mediaRefreshAPI
 	eventWebhook    *eventWebhookAPI
@@ -134,6 +135,14 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 			action = "install"
 		}
 		service.serveSubtitlePlugin(response, request, action)
+		return
+	}
+	if service.nativeOpenSubtitles(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveOpenSubtitlePlugin(response, request, action)
 		return
 	}
 	if service.nativeIndexer(request.PathValue("id")) {

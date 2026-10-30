@@ -74,6 +74,10 @@ func (service pluginService) servePage(response http.ResponseWriter, request *ht
 		service.serveSubtitlePlugin(response, request, "page")
 		return
 	}
+	if service.nativeOpenSubtitles(request.PathValue("id")) {
+		service.serveOpenSubtitlePlugin(response, request, "page")
+		return
+	}
 	if service.nativeIndexer(request.PathValue("id")) {
 		service.serveIndexerPlugin(response, request, "page")
 		return

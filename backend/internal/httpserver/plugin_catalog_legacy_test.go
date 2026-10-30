@@ -47,6 +47,9 @@ func TestLegacyPluginMarketUsesEntireNativeCatalogWithoutPluginExecution(t *test
 	}
 	for _, entry := range entries {
 		item := objectValue(result[entry.ID])
+		if entry.ID == "OpenSubtitles" {
+			entry.Description = "使用原网页或明确配置的官方 REST 提供方，下载中文字幕并保留已有文件"
+		}
 		for key, want := range map[string]any{"id": entry.ID, "name": entry.Name, "desc": entry.Description, "version": entry.Version, "author": entry.Author, "author_url": entry.AuthorURL, "icon": entry.Icon, "color": entry.Color} {
 			if item[key] != want {
 				t.Errorf("%s.%s=%v want=%v", entry.ID, key, item[key], want)

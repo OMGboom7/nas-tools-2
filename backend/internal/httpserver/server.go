@@ -74,6 +74,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitMedia := startMediaSyncWorker(workerContext, runner.mediaSync)
 		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
 		waitSubtitles := startSubtitleWorker(workerContext, runner.subtitles)
+		waitOpenSubtitles := startOpenSubtitleWorker(workerContext, runner.openSubtitles)
 		waitScraper := startIntakeScraper(workerContext, runner.scraper)
 		waitLibrary := startLibraryScraper(workerContext, runner.library)
 		waitMediaRefresh := startMediaRefreshWorker(workerContext, runner.mediaRefresh)
@@ -90,6 +91,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitMedia()
 			waitIndexers()
 			waitSubtitles()
+			waitOpenSubtitles()
 			waitScraper()
 			waitLibrary()
 			waitMediaRefresh()
@@ -678,13 +680,18 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("PUT /api/v1/organization/scraper/options", nativeScraper.saveOptions)
 	mux.HandleFunc("PUT /api/v1/organization/scraper/enabled", nativeScraper.setEnabled)
 	nativeSubtitles := &subtitleAPI{organizer: &organizer, transport: transport}
+	nativeOpenSubtitles := &openSubtitleAPI{subtitle: nativeSubtitles, system: nativeSystemConfig, transport: transport}
 	if organizationJobs != nil {
 		nativeSubtitles.queue = organizationJobs.Subtitles()
 	}
 	if nativeSystemConfig != nil {
 		plugins.subtitles = nativeSubtitles
 		rssRunner.subtitles = nativeSubtitles
+		plugins.openSubtitles = nativeOpenSubtitles
+		rssRunner.openSubtitles = nativeOpenSubtitles
 	}
+	mux.HandleFunc("/api/v1/open-subtitles", nativeOpenSubtitles.manage)
+	mux.HandleFunc("/api/v1/open-subtitles/", nativeOpenSubtitles.manage)
 	mux.HandleFunc("/do", nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape))
 	mux.HandleFunc("/api/v1/media/subtitle/download", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)
@@ -734,7 +741,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		})
 	}
 
-	var handler http.Handler = movieLikes.reservePlugin(mediaDelete.reservePlugin(playbackLimiter.reservePlugin(nativeMediaRefresh.reservePlugin(mux))))
+	var handler http.Handler = nativeOpenSubtitles.reservePlugin(movieLikes.reservePlugin(mediaDelete.reservePlugin(playbackLimiter.reservePlugin(nativeMediaRefresh.reservePlugin(mux)))))
 	if nativeAuth != nil {
 		handler = nativeAuth.protectAPI(handler)
 	}

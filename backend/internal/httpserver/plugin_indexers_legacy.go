@@ -84,6 +84,11 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			s.serveSubtitlePlugin(w, probe, "page")
 			return
 		}
+		if s.nativeOpenSubtitles(id) {
+			probe.SetPathValue("id", id)
+			s.serveOpenSubtitlePlugin(w, probe, "page")
+			return
+		}
 		if s.nativeIndexer(id) {
 			probe.SetPathValue("id", id)
 			s.serveIndexerPlugin(w, probe, "page")

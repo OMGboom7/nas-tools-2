@@ -106,6 +106,15 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			service.serveSubtitlePlugin(response, probe, nativeAction)
 			return
 		}
+		if service.nativeOpenSubtitles(id) {
+			probe.SetPathValue("id", id)
+			nativeAction := action
+			if action == "config" {
+				nativeAction = "legacy-save"
+			}
+			service.serveOpenSubtitlePlugin(response, probe, nativeAction)
+			return
+		}
 		if !nativeMetadataPlugin(id) {
 			request.Body = io.NopCloser(bytes.NewReader(body))
 			fallback.ServeHTTP(response, request)

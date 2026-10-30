@@ -10,7 +10,11 @@ const require=createRequire(import.meta.url);
 const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
 const url=s=>"data:text/javascript;base64,"+Buffer.from(s).toString("base64");
 const clientURL=url(compile(readFileSync(new URL("../src/api/client.ts",import.meta.url),"utf8")));
-const apiURL=url(compile(readFileSync(new URL("../src/api/subtitleRequests.ts",import.meta.url),"utf8")).replace('"./client"',JSON.stringify(clientURL)));
+const openURL=url(compile(readFileSync(new URL("../src/api/openSubtitles.ts",import.meta.url),"utf8")).replace('"./client"',JSON.stringify(clientURL)));
+const apiURL=url(compile(readFileSync(new URL("../src/api/subtitleRequests.ts",import.meta.url),"utf8")).replace('"./client"',JSON.stringify(clientURL)).replace('"./openSubtitles"',JSON.stringify(openURL)));
+const componentSource=source=>compile(source).replaceAll('"react"',JSON.stringify(pathToFileURL(require.resolve("react")).href)).replaceAll('"react/jsx-runtime"',JSON.stringify(pathToFileURL(require.resolve("react/jsx-runtime")).href))
+ .replace('"../api/client"',JSON.stringify(clientURL)).replace('"../api/openSubtitles"',JSON.stringify(openURL));
+const factsURL=url(componentSource(readFileSync(new URL("../src/components/OpenSubtitleReceipts.tsx",import.meta.url),"utf8")));
 const api=await import(apiURL),now=()=>new Date().toISOString();
 const status={ready:true,reason:"",fingerprint:"a".repeat(64),service:"ChineseSubFinder",origin:"https://subtitle.test",http:false,roots:[{id:"movie-root",path:"/tmp/library",label:"Original library",type:"MOV"}],drivers:["","minio","rclone"]};
 const review=()=>({id:"b".repeat(64),state:"review",queued:false,rootId:"movie-root",driver:"",path:"Movie.2026.mkv",name:"Movie.2026.mkv",title:"Movie",year:"2026",mediaType:"电影",tmdbId:"100",service:"ChineseSubFinder",serviceOrigin:status.origin,mappedPath:"/subtitles/Movie.2026.mkv",http:false,bytes:57,created:now(),updated:now(),fingerprint:"c".repeat(64),reason:"",serviceState:"not_queued",serviceUpdated:"",externalId:"",stoppedBy:""});
@@ -100,9 +104,33 @@ test("subtitle manager starts with no scope, no consent and no automatic submiss
  let source=compile(readFileSync(new URL("../src/components/SubtitleRequestManager.tsx",import.meta.url),"utf8"));
  source=source.replace('"react"',JSON.stringify(pathToFileURL(require.resolve("react")).href))
   .replace('"react/jsx-runtime"',JSON.stringify(pathToFileURL(require.resolve("react/jsx-runtime")).href))
-  .replace('"../api/client"',JSON.stringify(clientURL)).replace('"../api/subtitleRequests"',JSON.stringify(apiURL));
+  .replace('"../api/client"',JSON.stringify(clientURL)).replace('"../api/subtitleRequests"',JSON.stringify(apiURL)).replace('"./OpenSubtitleReceipts"',JSON.stringify(factsURL));
  const {SubtitleRequestManager}=await import(url(source));
  const html=renderToStaticMarkup(createElement(SubtitleRequestManager,{token:"fixture-token",onSessionExpired(){}}));
- assert.match(html,/为一个现有视频请求字幕/);assert.match(html,/任务被接收不代表字幕已经下载/);
+ assert.match(html,/为一个现有视频请求字幕/);assert.match(html,/不代表字幕已经下载/);
  assert.doesNotMatch(html,/\schecked(?:=""|>|\s)/);assert.doesNotMatch(html,/仅提交这份原字幕请求/);assert.equal(calls.length,0);
+});
+const openReview=(service="OpenSubtitles",driver="")=>{
+ const p=review();p.service=service;p.driver=driver;
+ p.openSubtitles={id:"d".repeat(64),reference:p.id,name:p.title,state:"not_queued",provider:"org",origin:"https://www.opensubtitles.org",created:p.created,updated:"",reason:"",libraryId:"",requests:0,outputs:[]};
+ if(service==="OpenSubtitles"){p.serviceOrigin=p.openSubtitles.origin;p.mappedPath="/tmp/library/Movie.2026.chi.zh-cn"}
+ return p;
+};
+test("OpenSubtitles and combined consumers retain independent original facts and extra one-time remote write consent",async t=>{
+ const p=openReview("ChineseSubFinder+OpenSubtitles","minio");
+ assert.equal(api.validSubtitleRequest(p),true);
+ const pending={...queued(p),openSubtitles:{...p.openSubtitles,state:"pending",updated:now()}};
+ const calls=mock(t,()=>response(pending));
+ const grants={...consent,confirmRemoteRead:true,confirmOpenSubtitles:true,confirmRemoteSubtitleWrite:true};
+ for(const field of ["confirmOpenSubtitles","confirmRemoteSubtitleWrite"]){await assert.rejects(api.queueSubtitleRequest("token",p,{...grants,[field]:false}))}
+ assert.equal(calls.length,0);assert.equal((await api.queueSubtitleRequest("token",p,grants)).openSubtitles.id,p.openSubtitles.id);
+ const body=JSON.parse(calls[0].options.body);assert.equal(body.confirmOpenSubtitles,true);assert.equal(body.confirmRemoteSubtitleWrite,true);
+ assert.equal(Object.hasOwn(body,"origin"),false);assert.equal(Object.hasOwn(body,"provider"),false);
+ globalThis.fetch=async()=>response({...pending,openSubtitles:{...pending.openSubtitles,id:"e".repeat(64)}});
+ await assert.rejects(api.queueSubtitleRequest("token",p,grants),/另一份 OpenSubtitles/);
+ const only=openReview(),q={...queued(only),openSubtitles:{...only.openSubtitles,state:"not_found",updated:now(),libraryId:"f".repeat(64),requests:1},serviceState:"not_found"};
+ assert.equal(api.validSubtitleRequest(q),true);
+ assert.equal(api.validSubtitleRequest({...q,serviceState:"submitted",externalId:"invented-task"}),false);
+ assert.equal(api.validSubtitleRequest({...pending,serviceState:"completed"}),false);
+ assert.equal(api.validSubtitleRequest({...pending,openSubtitles:{...pending.openSubtitles,reference:"a".repeat(64)}}),false);
 });

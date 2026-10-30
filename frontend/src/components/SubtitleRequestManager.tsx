@@ -1,11 +1,13 @@
 import {useEffect,useRef,useState} from "react";
 import {ApiError} from "../api/client";
-import {cancelSubtitleRequest,getSubtitleRequest,getSubtitleRequestStatus,listSubtitleRequests,queueSubtitleRequest,reviewSubtitleRequest,type SubtitleDriver,type SubtitleRequest,type SubtitleRequestConsent,type SubtitleRequestIdentity,type SubtitleRequestStatus} from "../api/subtitleRequests";
+import {canStopSubtitleRequest,cancelSubtitleRequest,getSubtitleRequest,getSubtitleRequestStatus,listSubtitleRequests,queueSubtitleRequest,reviewSubtitleRequest,type SubtitleDriver,type SubtitleRequest,type SubtitleRequestConsent,type SubtitleRequestIdentity,type SubtitleRequestStatus} from "../api/subtitleRequests";
+import {OpenSubtitleFact} from "./OpenSubtitleReceipts";
 
-const emptyConsent=():SubtitleRequestConsent=>({confirm:false,confirmPath:false,confirmExternalWrite:false,confirmOldExecutorsStopped:false,http:false,confirmRemoteRead:false});
+const emptyConsent=():SubtitleRequestConsent=>({confirm:false,confirmPath:false,confirmExternalWrite:false,confirmOldExecutorsStopped:false,http:false,confirmRemoteRead:false,confirmOpenSubtitles:false,confirmRemoteSubtitleWrite:false});
 const states:Record<SubtitleRequest["serviceState"],string>={
   not_queued:"只读审核，未提交",pending:"原请求已排队，尚未发送",sending:"发送意图已保存，处理中或已中断",
-  submitted:"字幕服务已接收任务，尚不证明字幕已下载",uncertain:"服务应答不明，不会重发",blocked:"原范围已变化或已停止，未发送",
+  submitted:"字幕服务已接收任务，尚不证明字幕已下载",uncertain:"服务应答不明，不会重发",blocked:"原范围变化、服务拒绝或已停止，原回执保留",
+  completed:"本次字幕已新增或保留，详见逐文件回执",not_found:"未找到符合原条件的中文字幕",partial:"部分字幕已处理，剩余步骤不重放",
 };
 export function SubtitleRequestManager({token,onSessionExpired,enabled=true}:{token:string;onSessionExpired:()=>void;enabled?:boolean}){
   const [status,setStatus]=useState<SubtitleRequestStatus|null>(null),[receipt,setReceipt]=useState<SubtitleRequest|null>(null),[rows,setRows]=useState<SubtitleRequest[]>([]);
@@ -52,14 +54,15 @@ export function SubtitleRequestManager({token,onSessionExpired,enabled=true}:{to
     }finally{if(generation===version.current){setBusy(false);inFlight.current=false}}
   }
   function choose(p:SubtitleRequest){proofs();setReceipt(p);setLookup(p.id);setReason("");setNotice("")}
-  const confirmed=consent.confirm&&consent.confirmPath&&consent.confirmExternalWrite&&consent.confirmOldExecutorsStopped&&(!receipt?.http||consent.http)&&(!receipt?.driver||consent.confirmRemoteRead);
+  const confirmed=consent.confirm&&consent.confirmPath&&consent.confirmExternalWrite&&consent.confirmOldExecutorsStopped&&(!receipt?.http||consent.http)&&(!receipt?.driver||consent.confirmRemoteRead)&&(!receipt?.openSubtitles||consent.confirmOpenSubtitles&&(!receipt?.driver||consent.confirmRemoteSubtitleWrite));
   return <section className="notification-receipt-panel" aria-label="单文件字幕请求">
     <h2>为一个现有视频请求字幕</h2>
-    <p>读取已配置目录里的原视频，核对媒体身份后提交到原 ChineseSubFinder。此处不搬动视频、不新增整理历史；任务被接收不代表字幕已经下载。服务可能按自己的规则写入或更新字幕。</p>
+    <p>读取已配置目录里的原视频，核对媒体身份后提交给原字幕服务。ChineseSubFinder 接收任务后按自身规则处理；OpenSubtitles 由 Go 下载并只新增固定名字幕，已有内容保留。此处不搬动视频、不新增整理历史；收到任务编号不代表字幕已经下载。</p>
     <fieldset disabled={busy||!enabled}>
       <button type="button" onClick={()=>void operate("status")}>只读核对字幕服务与目录</button>
       {status&&<div>
         <p>{status.ready?`字幕服务：${status.origin}`:status.reason}</p>
+        {status.openSubtitles&&<p>OpenSubtitles 原提供方：{status.openSubtitles.origin}；会传送媒体身份并可能消耗下载配额，视频内容不上传。</p>}
         <label>原配置目录<select value={root} onChange={e=>{setRoot(e.target.value);changed()}}><option value="">请选择一个目录</option>{status.roots.map(r=><option key={r.id} value={r.id}>{r.label} · {r.path}</option>)}</select></label>
         <label>文件存储<select value={driver} onChange={e=>{setDriver(e.target.value as SubtitleDriver);changed()}}>{status.drivers.map(d=><option key={d||"local"} value={d}>{d==="rclone"?"Rclone":d==="minio"?"MinIO":"本机文件"}</option>)}</select></label>
         <label>目录内单个视频路径<input value={path} maxLength={4096} placeholder="影片/影片.2026.mkv" onChange={e=>{setPath(e.target.value);changed()}}/></label>
@@ -81,22 +84,25 @@ export function SubtitleRequestManager({token,onSessionExpired,enabled=true}:{to
       {receipt&&<article aria-label="原单文件字幕请求">
         <h3>{receipt.title} {receipt.year} · {receipt.mediaType}</h3>
         <p>原编号：{receipt.id}；TMDB {receipt.tmdbId}；原目录 {receipt.rootId} / {receipt.path}；{receipt.bytes} 字节。</p>
-        <p>原服务：{receipt.serviceOrigin}；映射后文件：{receipt.mappedPath}。{receipt.state==="cancelled"?"原尚未发送请求已停止":states[receipt.serviceState]}{receipt.externalId&&`；字幕服务任务编号 ${receipt.externalId}`}</p>
+        <p>原服务：{receipt.serviceOrigin}；{receipt.service==="OpenSubtitles"?"原字幕目标基名":"映射后文件"}：{receipt.mappedPath}。{receipt.state==="cancelled"?"原尚未发送请求已停止":states[receipt.serviceState]}{receipt.externalId&&`；字幕服务任务编号 ${receipt.externalId}`}</p>
+        {receipt.openSubtitles&&<OpenSubtitleFact receipt={receipt.openSubtitles}/>}
         {receipt.serviceUpdated&&<p>服务回执更新时间：{receipt.serviceUpdated}</p>}
         {receipt.reason&&<p>{receipt.reason} · {receipt.stoppedBy}</p>}
         {receipt.state==="review"&&<>
           <p>审核有效十分钟。仅将下面确认过的这一份原文件提交一次；应答不明和进程重启不会重发。</p>
           <label><input type="checkbox" checked={consent.confirm} onChange={e=>setConsent(v=>({...v,confirm:e.target.checked}))}/>我已核对这份原媒体身份和本次请求</label>
           <label><input type="checkbox" checked={consent.confirmPath} onChange={e=>setConsent(v=>({...v,confirmPath:e.target.checked}))}/>确认原视频路径及原服务路径映射，不扩大到其他文件</label>
-          <label><input type="checkbox" checked={consent.confirmExternalWrite} onChange={e=>setConsent(v=>({...v,confirmExternalWrite:e.target.checked}))}/>允许原字幕服务按其自身规则下载、写入或更新这个视频的字幕</label>
+          <label><input type="checkbox" checked={consent.confirmExternalWrite} onChange={e=>setConsent(v=>({...v,confirmExternalWrite:e.target.checked}))}/>允许所展示的原字幕服务处理这次请求；ChineseSubFinder 可能更新字幕，Go 下载的 OpenSubtitles 字幕仅补缺失</label>
           <label><input type="checkbox" checked={consent.confirmOldExecutorsStopped} onChange={e=>setConsent(v=>({...v,confirmOldExecutorsStopped:e.target.checked}))}/>原字幕执行器和其他重复提交器已实际停止</label>
           {receipt.http&&<label><input type="checkbox" checked={consent.http} onChange={e=>setConsent(v=>({...v,http:e.target.checked}))}/>允许向原明文 HTTP 字幕服务传送已有凭据与这个文件路径</label>}
           {receipt.driver&&<label><input type="checkbox" checked={consent.confirmRemoteRead} onChange={e=>setConsent(v=>({...v,confirmRemoteRead:e.target.checked}))}/>允许提交前及后台发送前重新完整读取原远程视频以核对摘要</label>}
+          {receipt.openSubtitles&&<label><input type="checkbox" checked={!!consent.confirmOpenSubtitles} onChange={e=>setConsent(v=>({...v,confirmOpenSubtitles:e.target.checked}))}/>另外允许向 {receipt.openSubtitles.origin} 传送这份媒体身份、使用其下载配额，并仅在原视频旁新增 .srt／.ass／.ssa 字幕；已有文件保留</label>}
+          {receipt.openSubtitles&&receipt.driver&&<label><input type="checkbox" checked={!!consent.confirmRemoteSubtitleWrite} onChange={e=>setConsent(v=>({...v,confirmRemoteSubtitleWrite:e.target.checked}))}/>另外允许本次原远程命名空间新增字幕和持久恢复副本；已独占该范围，接受完整读取及副本的流量／存储费用，远程没有通用原子发布</label>}
           <button type="button" disabled={!confirmed} onClick={()=>void operate("queue")}>仅提交这份原字幕请求</button>
         </>}
-        {receipt.state!=="cancelled"&&(!receipt.queued||receipt.serviceState==="pending")&&<>
+        {canStopSubtitleRequest(receipt)&&<>
           <label>停止原请求的原因<input value={reason} maxLength={300} onChange={e=>{setReason(e.target.value);setCancelOK(false)}}/></label>
-          <label><input type="checkbox" checked={cancelOK} onChange={e=>setCancelOK(e.target.checked)}/>确认仅停止 ChineseSubFinder 尚未发送的原请求；独立事件外发及服务已接收的任务保留</label>
+          <label><input type="checkbox" checked={cancelOK} onChange={e=>setCancelOK(e.target.checked)}/>确认仅停止本次尚未发送的原字幕项；独立事件外发、已经开始的任务及已有文件保留</label>
           <button type="button" disabled={!cancelOK||!reason.trim()} onClick={()=>void operate("cancel")}>停止原尚未发送的字幕请求</button>
         </>}
       </article>}

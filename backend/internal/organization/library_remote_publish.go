@@ -41,6 +41,17 @@ func libraryRemoteOutputValid(d LibraryDefinition, p LibraryOutputProof) bool {
 	}
 	switch strings.ToLower(path.Ext(p.Target)) {
 	case ".nfo", ".jpg", ".jpeg", ".png":
+	case ".srt", ".ass", ".ssa":
+		if d.OpenSubtitle == nil || !d.OpenSubtitle.Query.Valid() || d.Mode != "no_force" || d.Count != 1 {
+			return false
+		}
+		extension := path.Ext(p.Target)
+		stem := strings.TrimSuffix(path.Base(d.Selection), path.Ext(d.Selection))
+		file := path.Join(path.Dir(d.Selection), stem+".chi.zh-cn"+extension)
+		disc := path.Join(d.Selection, path.Base(d.Selection)+".chi"+extension)
+		if p.Target != file && p.Target != disc {
+			return false
+		}
 	default:
 		return false
 	}

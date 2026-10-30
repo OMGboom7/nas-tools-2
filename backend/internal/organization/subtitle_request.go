@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/0xforee/nas-tools/backend/internal/opensubtitles"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/0xforee/nas-tools/backend/internal/subtitles"
 )
@@ -25,6 +26,7 @@ const manualSubtitlePrefix = "manual-subtitle:"
 // A manual request adopts a reviewed existing video. It never fabricates an
 // intake job, transfer history, successful download, or a completed subtitle.
 type SubtitleRequestDefinition struct {
+	OpenSubtitles                                                             *opensubtitles.Snapshot `json:",omitempty"`
 	Version                                                                   int
 	Actor, Authority, RequestID, Created                                      string
 	Scope                                                                     RecoveryScope
@@ -36,6 +38,7 @@ type SubtitleRequestDefinition struct {
 	Plugin                                                                    subtitles.Snapshot
 }
 type SubtitleRequest struct {
+	OpenSubtitles  *OpenSubtitleReceipt      `json:"openSubtitles,omitempty"`
 	ID             string                    `json:"id"`
 	State          string                    `json:"state"`
 	Queued         bool                      `json:"queued"`
@@ -89,7 +92,7 @@ func subtitleRequestLibrary(d SubtitleRequestDefinition) LibraryDefinition {
 	return LibraryDefinition{Root: d.Scope.Root, Allowed: d.Allowed, Selection: d.Selection, Mode: "no_force", Actor: d.Actor, RequestID: d.RequestID, ConfigDigest: d.Scope.ConfigDigest}
 }
 func subtitleRequestValid(d SubtitleRequestDefinition) bool {
-	if d.Version != 1 || !subtitleRequestText(d.Actor, 256) || !recoveryHex(d.Authority, 64) || !recoveryHex(d.RequestID, 32) || !recoveryScopeValid(d.Scope) || !SubtitleRequestPath(d.Selection) || !subtitleRequestText(d.Name, 600) || !subtitleRequestText(d.Title, 600) || !recoveryHex(d.ContentDigest, 64) || !recoveryHex(d.Plugin.Basis, 64) || !recoveryHex(d.Plugin.ConfigDigest, 64) || len(d.Allowed) > 256 || len(d.MediaInfo) > 1000 {
+	if d.Version != 1 && d.Version != 2 || d.Version == 1 && d.OpenSubtitles != nil || d.Version == 2 && (d.OpenSubtitles == nil || !d.OpenSubtitles.Valid() || d.OpenSubtitles.Actor != d.Actor || d.OpenSubtitles.Authority != d.Authority) || !subtitleRequestText(d.Actor, 256) || !recoveryHex(d.Authority, 64) || !recoveryHex(d.RequestID, 32) || !recoveryScopeValid(d.Scope) || !SubtitleRequestPath(d.Selection) || !subtitleRequestText(d.Name, 600) || !subtitleRequestText(d.Title, 600) || !recoveryHex(d.ContentDigest, 64) || len(d.Allowed) > 256 || len(d.MediaInfo) > 1000 {
 		return false
 	}
 	if _, e := time.Parse(time.RFC3339Nano, d.Created); e != nil {
@@ -112,7 +115,11 @@ func subtitleRequestValid(d SubtitleRequestDefinition) bool {
 	if d.MediaType == "电影" {
 		videoType = 0
 	}
-	if d.Plugin.Payload.Bluray || d.Plugin.Payload.Path == "" || d.Plugin.Payload.Priority != 3 || d.Plugin.Payload.MediaID != "" || d.Plugin.Payload.VideoType != videoType {
+	if d.Plugin.Basis == "" {
+		if d.Version != 2 || Digest(d.Plugin) != Digest(subtitles.Snapshot{}) {
+			return false
+		}
+	} else if !recoveryHex(d.Plugin.Basis, 64) || !recoveryHex(d.Plugin.ConfigDigest, 64) || d.Plugin.Payload.Bluray || d.Plugin.Payload.Path == "" || d.Plugin.Payload.Priority != 3 || d.Plugin.Payload.MediaID != "" || d.Plugin.Payload.VideoType != videoType {
 		return false
 	}
 	if d.Scope.Remote == nil {
@@ -251,6 +258,43 @@ func subtitleRequestRead(ctx context.Context, r recoveryReader, id string) (Subt
 	p.ServiceOrigin = d.Plugin.Origin
 	p.MappedPath = d.Plugin.Payload.Path
 	p.HTTP = d.Plugin.HTTP
+	if d.OpenSubtitles != nil {
+		open := OpenSubtitleReceipt{ID: OpenSubtitleID("manual", id, 0), Reference: id, Name: d.Title, Provider: d.OpenSubtitles.Provider, Origin: d.OpenSubtitles.Origin, State: "not_queued", Created: d.Created, Outputs: []LibraryOutput{}}
+		if p.Queued {
+			saved, e := openSubtitleRead(ctx, r, open.ID)
+			if e != nil || saved.Definition.Kind != "manual" || saved.Reference != id || saved.Definition.Origin != fp || Digest(saved.Definition.Provider) != Digest(*d.OpenSubtitles) || saved.Definition.File != path.Join(d.Scope.Root.Path, d.Selection) {
+				return p, ErrState
+			}
+			open = saved
+			if open.LibraryID != "" {
+				rows, e := r.QueryContext(ctx, libraryOutputSelect+` WHERE JOB_ID=? ORDER BY TARGET LIMIT 4`, open.LibraryID)
+				if e != nil {
+					return p, e
+				}
+				for rows.Next() {
+					out, e := scanLibraryOutput(rows)
+					if e != nil {
+						rows.Close()
+						return p, e
+					}
+					open.Outputs = append(open.Outputs, out)
+				}
+				e = rows.Err()
+				rows.Close()
+				if e != nil || len(open.Outputs) > 3 {
+					return p, ErrState
+				}
+			}
+		}
+		p.OpenSubtitles = &open
+		if d.Plugin.Basis == "" {
+			p.Service = opensubtitles.Plugin
+			p.ServiceOrigin = d.OpenSubtitles.Origin
+			p.MappedPath = strings.TrimSuffix(path.Join(d.Scope.Root.Path, d.Selection), path.Ext(d.Selection)) + ".chi.zh-cn"
+		} else {
+			p.Service = subtitles.Plugin + "+" + opensubtitles.Plugin
+		}
+	}
 	if d.Scope.Remote != nil {
 		p.Driver = d.Scope.Remote.Driver
 		p.Bytes = d.RemoteNodes[0].Node.Size
@@ -258,7 +302,7 @@ func subtitleRequestRead(ctx context.Context, r recoveryReader, id string) (Subt
 		p.Bytes = d.Local.Input.Size
 	}
 	p.ServiceState = "not_queued"
-	if p.Queued {
+	if p.Queued && d.Plugin.Basis != "" {
 		q, e := subtitles.Read(ctx, r, Digest([]string{SubtitleRequestSource(id), "0"}))
 		if e != nil || q.JobID != SubtitleRequestSource(id) || q.Ordinal != 0 || q.Name != d.Name || q.LocalPath != path.Join(d.Scope.Root.Path, d.Selection) || q.MediaType != d.MediaType || q.OriginDigest != fp || q.ConfigDigest != d.Plugin.ConfigDigest || Digest(q.Payload) != Digest(d.Plugin.Payload) {
 			return p, ErrState
@@ -267,6 +311,20 @@ func subtitleRequestRead(ctx context.Context, r recoveryReader, id string) (Subt
 		p.ServiceUpdated = q.Updated
 		p.ExternalID = q.ExternalID
 		if p.State == "cancelled" && q.State != "blocked" {
+			return p, ErrState
+		}
+	}
+	if p.Queued && d.Plugin.Basis == "" && p.OpenSubtitles != nil {
+		p.ServiceUpdated = p.OpenSubtitles.Updated
+		switch p.OpenSubtitles.State {
+		case "running":
+			p.ServiceState = "sending"
+		case "stopped":
+			p.ServiceState = "blocked"
+		default:
+			p.ServiceState = p.OpenSubtitles.State
+		}
+		if p.State == "cancelled" && p.ServiceState != "blocked" {
 			return p, ErrState
 		}
 	}
@@ -319,11 +377,22 @@ func subtitleRequestCurrent(ctx context.Context, tx *sql.Tx, d SubtitleRequestDe
 	if validate == nil || validate() != nil {
 		return ErrState
 	}
-	snap, e := subtitles.SnapshotFor(ctx, tx, path.Join(d.Scope.Root.Path, d.Selection), d.MediaType, false)
+	snap, wanted, e := subtitles.OptionalSnapshotFor(ctx, tx, path.Join(d.Scope.Root.Path, d.Selection), d.MediaType, false)
 	if e != nil {
 		return e
 	}
-	if Digest(snap) != Digest(d.Plugin) {
+	if wanted != (d.Plugin.Basis != "") || Digest(snap) != Digest(d.Plugin) {
+		return ErrState
+	}
+	_, open, wanted, ready, e := opensubtitles.Current(ctx, tx)
+	if e != nil {
+		return e
+	}
+	if d.OpenSubtitles == nil {
+		if wanted {
+			return ErrState
+		}
+	} else if !wanted || !ready || Digest(open) != Digest(*d.OpenSubtitles) {
 		return ErrState
 	}
 	return nil
@@ -367,7 +436,7 @@ func (s *Store) SaveSubtitleReview(ctx context.Context, d SubtitleRequestDefinit
 	}
 	return p, nil
 }
-func (s *Store) QueueSubtitleRequest(ctx context.Context, id, actor, fingerprint string, validate func() error) (SubtitleRequest, error) {
+func (s *Store) QueueSubtitleRequest(ctx context.Context, id, actor, fingerprint string, validate func() error, openRemote ...bool) (SubtitleRequest, error) {
 	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
 		return SubtitleRequest{}, e
@@ -388,12 +457,22 @@ func (s *Store) QueueSubtitleRequest(ctx context.Context, id, actor, fingerprint
 		return p, ErrState
 	}
 	d := p.Definition
+	if len(openRemote) > 1 || d.OpenSubtitles != nil && d.Scope.Remote != nil && (len(openRemote) != 1 || !openRemote[0]) {
+		return p, ErrState
+	}
 	if e = subtitleRequestCurrent(ctx, tx, d, validate); e != nil {
 		return p, e
 	}
 	source, file := SubtitleRequestSource(id), path.Join(d.Scope.Root.Path, d.Selection)
-	if e = subtitles.Emit(ctx, tx, source, 0, d.Name, file, d.MediaType, p.Fingerprint, false); e != nil {
-		return p, e
+	if d.Plugin.Basis != "" {
+		if e = subtitles.Emit(ctx, tx, source, 0, d.Name, file, d.MediaType, p.Fingerprint, false); e != nil {
+			return p, e
+		}
+	}
+	if d.OpenSubtitles != nil {
+		if e = emitOpenSubtitle(ctx, tx, OpenSubtitleDefinition{Kind: "manual", Reference: id, Origin: p.Fingerprint, File: file, Extension: path.Ext(d.Selection), Media: d.MediaInfo, RemoteWrite: d.Scope.Remote != nil}, d.OpenSubtitles); e != nil {
+			return p, e
+		}
 	}
 	if e = emitSubtitleSignal(ctx, tx, "manual:"+id, id, file, path.Ext(d.Selection), false, d.MediaInfo, map[string]any{"stage": "queued", "request_id": id}); e != nil {
 		return p, e
@@ -436,20 +515,27 @@ func (s *Store) CancelSubtitleRequest(ctx context.Context, id, actor, reason str
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if p.Queued {
-		if p.ServiceState != "pending" {
+		if p.ServiceState != "pending" || p.OpenSubtitles != nil && p.OpenSubtitles.State != "pending" && p.OpenSubtitles.State != "stopped" {
 			return p, ErrState
 		}
-		qid := Digest([]string{SubtitleRequestSource(id), "0"})
-		res, e := tx.ExecContext(ctx, `UPDATE GO_SUBTITLE_JOBS SET STATE='blocked',REASON='original manual request explicitly stopped; no replay',UPDATED=? WHERE ID=? AND STATE='pending'`, now, qid)
-		if e != nil {
-			return p, e
+		if p.OpenSubtitles != nil && p.OpenSubtitles.State == "pending" {
+			if _, e := stopOpenSubtitle(ctx, tx, p.OpenSubtitles.ID, actor, reason); e != nil {
+				return p, e
+			}
 		}
-		if n, e := res.RowsAffected(); e != nil || n != 1 {
-			return p, ErrState
-		}
-		q, e := subtitles.Read(ctx, tx, qid)
-		if e != nil || q.State != "blocked" || q.Updated != now || q.Reason != "original manual request explicitly stopped; no replay" {
-			return p, ErrState
+		if p.Definition.Plugin.Basis != "" {
+			qid := Digest([]string{SubtitleRequestSource(id), "0"})
+			res, e := tx.ExecContext(ctx, `UPDATE GO_SUBTITLE_JOBS SET STATE='blocked',REASON='original manual request explicitly stopped; no replay',UPDATED=? WHERE ID=? AND STATE='pending'`, now, qid)
+			if e != nil {
+				return p, e
+			}
+			if n, e := res.RowsAffected(); e != nil || n != 1 {
+				return p, ErrState
+			}
+			q, e := subtitles.Read(ctx, tx, qid)
+			if e != nil || q.State != "blocked" || q.Updated != now || q.Reason != "original manual request explicitly stopped; no replay" {
+				return p, ErrState
+			}
 		}
 	}
 	res, e := tx.ExecContext(ctx, `UPDATE GO_MANUAL_SUBTITLE_REQUESTS SET STATE='cancelled',UPDATED=?,REASON=?,STOPPED_BY=? WHERE ID=? AND STATE=? AND UPDATED=?`, now, reason, actor, id, p.State, p.Updated)

@@ -133,6 +133,9 @@ func discMetadataName(stem, name string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	if ext == ".srt" || ext == ".ass" || ext == ".ssa" {
+		return base == stem+".chi" || base == stem+".chi.zh-cn"
+	}
 	if ext == ".nfo" {
 		return base == stem || base == "movie" || base == "tvshow" || base == "season"
 	}

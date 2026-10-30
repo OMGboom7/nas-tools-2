@@ -141,6 +141,14 @@ func emitOrganizationEvent(ctx context.Context, tx *sql.Tx, id string) error {
 		if err := subtitles.EmitIntake(ctx, tx, id, ordinal, e.Title+" "+e.SeasonEpisode, filepath.Join(d.TargetRoot, e.Target), e.MediaType, originDigest, IsDisc(e)); err != nil {
 			return err
 		}
+		if err := emitOpenSubtitle(ctx, tx, OpenSubtitleDefinition{Kind: "intake", Reference: id, Ordinal: ordinal, Origin: originDigest, File: filepath.Join(d.TargetRoot, e.Target), Extension: func() string {
+			if IsDisc(e) {
+				return ""
+			}
+			return filepath.Ext(e.Source)
+		}(), Bluray: IsDisc(e), RemoteWrite: d.Remote != nil, Media: map[string]any{"title": e.Title, "year": e.Year, "type": e.MediaType, "tmdb_id": e.TMDBID, "season_episode": e.SeasonEpisode}, Source: &source}, nil); err != nil {
+			return err
+		}
 		extension := filepath.Ext(e.Source)
 		if IsDisc(e) {
 			extension = ""

@@ -316,6 +316,9 @@ func (api *libraryScraper) tick(ctx context.Context) error {
 	return nil
 }
 func (api *libraryScraper) runJob(ctx context.Context, job organization.LibraryJob) error {
+	if job.Definition.OpenSubtitle != nil {
+		return organization.ErrState
+	}
 	store := api.intake.organizer.jobs
 	if ctx.Err() != nil {
 		return ctx.Err()

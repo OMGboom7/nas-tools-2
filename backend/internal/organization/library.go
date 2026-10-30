@@ -28,6 +28,7 @@ type LibraryMedia struct {
 	Input     LibraryNode
 }
 type LibraryDefinition struct {
+	OpenSubtitle                                        *OpenSubtitleLibrary `json:"openSubtitle,omitempty"`
 	Remote                                              *remotestore.Binding `json:",omitempty"`
 	RemoteApproval                                      *RemoteApproval      `json:",omitempty"`
 	AllowDiscExpansion                                  bool                 `json:",omitempty"`

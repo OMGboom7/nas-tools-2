@@ -190,6 +190,9 @@ func (s *Store) SubtitleIntakeReady(ctx context.Context, job string, ordinal int
 	return SubtitleIntakeReady(ctx, tx, job, ordinal, origin, nil, required...)
 }
 func wakeSubtitleSource(ctx context.Context, tx *sql.Tx, job string, ordinal int) error {
+	if e := wakeOpenSubtitle(ctx, tx, job, ordinal); e != nil {
+		return e
+	}
 	for _, name := range []string{"GO_SUBTITLE_WAITS", "GO_EVENT_WEBHOOK_WAITS"} {
 		yes, e := recoveryTable(ctx, tx, name)
 		if e != nil {

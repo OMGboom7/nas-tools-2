@@ -1,6 +1,6 @@
 # Go 业务事件与通知
 
-2026-10-30：[入库与单文件字幕触发](subtitle-events.md) 接通实际 `subtitle.download`。完整入库事务冻结每个媒体的原来源，ChineseSubFinder 和独立 Webhook 分别等待该文件原 NFO／图片账本稳定，再在实际发送意图事务复核。单文件旧入口及 React 使用独立审核／原编号，不伪造入库、历史或字幕已下载。后启用授权不补发，应答不明和重启不重发；OpenSubtitles 独立消费者仍待迁移。
+2026-10-30：[入库与单文件字幕触发](subtitle-events.md) 接通实际 `subtitle.download`。完整入库事务冻结每个媒体的原来源，ChineseSubFinder、后续 [OpenSubtitles](opensubtitles.md) 和独立 Webhook 分别等待该文件原 NFO／图片账本稳定，再在实际发送意图事务复核。单文件旧入口及 React 使用独立审核／原编号，不伪造入库或历史；服务接收、字幕文件新增／保留与事件发送分别留痕。后启用授权不补发，应答不明和重启不重发；旧 OpenSubtitles 浏览器验证能力及真实服务仍保留明确边界。
 
 2026-10-29：[电影精选](movie-like.md) 以独立授权消费原 Emby 电影 `item.rate`，完整目录移动核实后，将原完成回执、`refresh.mediaserver` 及有效刷新插件的新待办同事务提交。原整理历史不改，不新增虚构 `transfer_finished` 或来源删除成功。精选完成、媒体扫描和通知送达分别留痕；未完成移动与未知扫描响应不因重启重放。以下保留前序批次当时的消费者范围。
 

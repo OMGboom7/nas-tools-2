@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/0xforee/nas-tools/backend/internal/opensubtitles"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
 	"github.com/0xforee/nas-tools/backend/internal/subtitles"
@@ -23,15 +24,16 @@ import (
 const subtitleRequestsBase = "/api/v1/organization/subtitles"
 
 type subtitleRequestStatus struct {
-	Ready       bool               `json:"ready"`
-	Reason      string             `json:"reason"`
-	Fingerprint string             `json:"fingerprint"`
-	Service     string             `json:"service"`
-	Origin      string             `json:"origin"`
-	HTTP        bool               `json:"http"`
-	Roots       []organizationRoot `json:"roots"`
-	Drivers     []string           `json:"drivers"`
-	failure     error
+	OpenSubtitles *openSubtitleService `json:"openSubtitles,omitempty"`
+	Ready         bool                 `json:"ready"`
+	Reason        string               `json:"reason"`
+	Fingerprint   string               `json:"fingerprint"`
+	Service       string               `json:"service"`
+	Origin        string               `json:"origin"`
+	HTTP          bool                 `json:"http"`
+	Roots         []organizationRoot   `json:"roots"`
+	Drivers       []string             `json:"drivers"`
+	failure       error
 }
 type subtitleRequestIdentity struct {
 	Kind       string `json:"kind"`
@@ -41,6 +43,8 @@ type subtitleRequestIdentity struct {
 	EndEpisode *int   `json:"endEpisode,omitempty"`
 }
 type subtitleRequestInput struct {
+	ConfirmOpenSubtitles       bool                     `json:"confirmOpenSubtitles"`
+	ConfirmRemoteSubtitleWrite bool                     `json:"confirmRemoteSubtitleWrite"`
 	RootID                     string                   `json:"rootId"`
 	Driver                     string                   `json:"driver"`
 	Path                       string                   `json:"path"`
@@ -142,7 +146,7 @@ func decodeSubtitleJSON(w http.ResponseWriter, r *http.Request, target any) bool
 func subtitleRequestError(w http.ResponseWriter, e error) {
 	switch {
 	case errors.Is(e, subtitles.ErrConsumer):
-		writeAPIError(w, 501, 501, "已启用的 OpenSubtitles 消费者尚未迁移，未提交字幕请求")
+		writeAPIError(w, 409, 409, "原 OpenSubtitles 消费者需要有效配置及独立原生授权，未提交部分字幕请求")
 	case errors.Is(e, subtitles.ErrConfig):
 		writeAPIError(w, 409, 409, "先安装并保存有效 ChineseSubFinder 原配置，再重新审核")
 	case errors.Is(e, subtitles.ErrState):
@@ -203,19 +207,42 @@ func (api *subtitleAPI) requestStatus(ctx context.Context, actor string) (subtit
 	if e != nil {
 		return out, e
 	}
-	provider, e := api.queue.Snapshot(ctx, "/native-subtitle-readonly.mkv", "电影", false)
-	out.Fingerprint = organization.Digest([]any{authority, config, provider.Basis})
-	if e != nil {
-		out.failure = e
-		out.Reason = "先安装并保存有效 ChineseSubFinder 原配置；旧配置不会提交文件请求。"
-		if errors.Is(e, subtitles.ErrConsumer) {
-			out.Reason = "已启用的 OpenSubtitles 消费者尚未迁移；本次不会绕过它只运行部分消费者。"
+	provider, csf, e := api.queue.OptionalSnapshot(ctx, "/native-subtitle-readonly.mkv", "电影", false)
+	_, open, wanted, ready, openErr := api.organizer.jobs.OpenSubtitleProvider(ctx)
+	if wanted && ready && openErr == nil {
+		denied, err := api.organizer.jobs.OpenSubtitleDenied(ctx, open.Epoch)
+		if err != nil {
+			openErr = err
 		}
+		if denied {
+			ready = false
+		}
+	}
+	out.Fingerprint = organization.Digest([]any{authority, config, provider.Basis, open.Basis})
+	if e != nil || openErr != nil || wanted && (!ready || open.Actor != actor || open.Authority != authority) || !csf && !wanted {
+		out.failure = e
+		if out.failure == nil {
+			out.failure = openErr
+		}
+		if out.failure == nil {
+			out.failure = subtitles.ErrConsumer
+		}
+		out.Reason = "先安装并保存有效字幕配置；已启用的 OpenSubtitles 还须在插件管理中单独授权 Go。未审核的消费者不会被跳过。"
 		return out, nil
 	}
 	out.Ready = true
 	out.Origin = provider.Origin
 	out.HTTP = provider.HTTP
+	if wanted {
+		out.OpenSubtitles = &openSubtitleService{Provider: open.Provider, Origin: open.Origin, Remote: open.Remote}
+		if csf {
+			out.Service = subtitles.Plugin + "+" + opensubtitles.Plugin
+		} else {
+			out.Service = opensubtitles.Plugin
+			out.Origin = open.Origin
+			out.HTTP = false
+		}
+	}
 	return out, nil
 }
 func (api *subtitleAPI) requestGuards(ctx context.Context, worker bool) (func(), error) {
@@ -422,9 +449,20 @@ func (api *subtitleAPI) reviewRequest(ctx context.Context, actor string, in subt
 	if imdb, ok := recognized.detail.Attributes["imdb_id"].(string); ok && imdb != "" {
 		d.MediaInfo["imdb_id"] = imdb
 	}
-	d.Plugin, e = api.queue.Snapshot(ctx, path.Join(scope.Root.Path, in.Path), d.MediaType, false)
+	d.Plugin, _, e = api.queue.OptionalSnapshot(ctx, path.Join(scope.Root.Path, in.Path), d.MediaType, false)
 	if e != nil {
 		return zero, e
+	}
+	_, open, wanted, ready, e := api.organizer.jobs.OpenSubtitleProvider(ctx)
+	if e != nil {
+		return zero, e
+	}
+	if wanted {
+		if !ready || open.Actor != actor || open.Authority != authority {
+			return zero, subtitles.ErrConsumer
+		}
+		d.Version = 2
+		d.OpenSubtitles = &open
 	}
 	d.Created = time.Now().UTC().Format(time.RFC3339Nano)
 	return api.organizer.jobs.SaveSubtitleReview(ctx, d, func() error { return api.requestCurrent(ctx, d) })
@@ -439,6 +477,9 @@ func (api *subtitleAPI) queueRequest(ctx context.Context, actor string, in subti
 		return p, e
 	}
 	if p.Definition.Actor != actor || p.Fingerprint != in.Fingerprint || !in.Confirm || !in.ConfirmPath || !in.ConfirmExternalWrite || !in.ConfirmOldExecutorsStopped || p.HTTP && !in.HTTP || p.Driver != "" && !in.ConfirmRemoteRead {
+		return p, organization.ErrState
+	}
+	if p.Definition.OpenSubtitles != nil && (!in.ConfirmOpenSubtitles || p.Driver != "" && !in.ConfirmRemoteSubtitleWrite) {
 		return p, organization.ErrState
 	}
 	if in.RootID != "" && in.RootID != p.RootID || in.Driver != "" && in.Driver != p.Driver || in.Name != "" && in.Name != p.Name || in.Identity != nil || in.Review || in.Path != "" && in.Path != p.Path && in.Path != p.Definition.InputPath && in.Path != path.Join(p.Definition.Scope.Root.Path, p.Path) {
@@ -462,7 +503,7 @@ func (api *subtitleAPI) queueRequest(ctx context.Context, actor string, in subti
 	if e = organization.VerifySubtitleRequestSource(ctx, p.Definition, c); e != nil {
 		return p, e
 	}
-	return api.organizer.jobs.QueueSubtitleRequest(ctx, p.ID, actor, p.Fingerprint, func() error { return api.requestCurrent(ctx, p.Definition) })
+	return api.organizer.jobs.QueueSubtitleRequest(ctx, p.ID, actor, p.Fingerprint, func() error { return api.requestCurrent(ctx, p.Definition) }, in.ConfirmRemoteSubtitleWrite)
 }
 func (api *subtitleAPI) serveRequests(w http.ResponseWriter, r *http.Request) {
 	actor, ok := api.authorizeRequest(w, r)
@@ -617,6 +658,8 @@ func (api *subtitleAPI) legacySubtitle(w http.ResponseWriter, r *http.Request) {
 	in := subtitleRequestInput{}
 	texts := map[string]*string{"rootId": &in.RootID, "driver": &in.Driver, "path": &in.Path, "name": &in.Name, "fingerprint": &in.Fingerprint, "reviewId": &in.ReviewID}
 	flags := map[string]*bool{"review": &in.Review, "confirmRead": &in.ConfirmRead, "confirmRemoteRead": &in.ConfirmRemoteRead, "confirm": &in.Confirm, "confirmPath": &in.ConfirmPath, "confirmExternalWrite": &in.ConfirmExternalWrite, "confirmOldExecutorsStopped": &in.ConfirmOldExecutorsStopped, "http": &in.HTTP}
+	flags["confirmOpenSubtitles"] = &in.ConfirmOpenSubtitles
+	flags["confirmRemoteSubtitleWrite"] = &in.ConfirmRemoteSubtitleWrite
 	for key, values := range r.PostForm {
 		if len(values) != 1 {
 			writeAPIError(w, 400, 400, "重复字幕表单字段")

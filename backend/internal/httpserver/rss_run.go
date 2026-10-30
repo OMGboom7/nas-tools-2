@@ -28,6 +28,7 @@ type rssRunAPI struct {
 	movieLike       *movieLikeAPI
 	scraper         *intakeScraper
 	subtitles       *subtitleAPI
+	openSubtitles   *openSubtitleAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI
 	notifications   *businessNotifications

@@ -1,6 +1,6 @@
 # 入库与单文件字幕触发
 
-2026-10-30。本批接通旧 `SubtitleDownload` 的实际入库生产者，以及原 `/api/v1/media/subtitle/download`、`/do download_subtitle` 的单文件操作。沿用原 ChineseSubFinder 协议与配置，不把收到任务编号说成字幕已经下载；OpenSubtitles 的独立检索／下载实现仍在整体迁移目标内。
+2026-10-30。本批接通旧 `SubtitleDownload` 的实际入库生产者，以及原 `/api/v1/media/subtitle/download`、`/do download_subtitle` 的单文件操作。沿用原 ChineseSubFinder 协议与配置，不把收到任务编号说成字幕已经下载。后续 [OpenSubtitles](opensubtitles.md) 批次已接通独立检索／下载及固定名补写、单用或双消费者、逐文件回执；其旧浏览器验证能力及真实服务仍有明确验收边界。以下保留原触发批次的验证记录。
 
 ## 实际事件与元数据前置条件
 
@@ -24,7 +24,7 @@ React 整理页提供原配置目录选择、单个相对视频路径、可选�
 
 只读回执区分审核、排队、服务接收、应答不明与阻止，并单独显示服务回执更新时间。原编号可在目录／配置变化或页面刷新后查询，每页三十条。未知修改结果仅查回，不自动再次提交。仅尚未发送的 ChineseSubFinder 项可明确注明原因后停止；独立事件外发和服务已接收的任务保留，不将停止本地请求冒充取消远端任务。
 
-安装列表及未知配置继续保留；原配置的大整数变化按原始文本区分。若另有已启用、尚未迁移的 OpenSubtitles，单文件入口明确返回未迁移，不默默执行部分消费者或删除其配置。未启用的原 OpenSubtitles 不阻止 ChineseSubFinder。
+安装列表及未知配置继续保留；原配置的大整数变化按原始文本区分。后续原生 OpenSubtitles 需要独立的原配置／媒体外传／只补缺失授权；任何已启用消费者授权未就绪时拒绝整次提交，不默默执行部分消费者或删除其配置。未启用的原 OpenSubtitles 不阻止 ChineseSubFinder。
 
 ## 接口与验证范围
 
