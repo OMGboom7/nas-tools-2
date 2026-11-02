@@ -146,6 +146,14 @@ func (e *Engine) Render(parent context.Context, r Request) (Result, error) {
 			return out, err
 		}
 	}
+	checkinState := ""
+	if r.Checkin != nil {
+		checkinState, err = b.checkin(tab, r.Checkin)
+		if err != nil {
+			finishTab()
+			return out, err
+		}
+	}
 	if r.Form != nil {
 		if r.Form.Script != "" {
 			// Only a previously validated catalog script reaches here. It has the
@@ -252,7 +260,7 @@ func (e *Engine) Render(parent context.Context, r Request) (Result, error) {
 	if r.Login != nil && (!r.Login.LoggedIn([]byte(htmlText)) || cookie == "") {
 		return out, ErrLogin
 	}
-	return Result{HTML: []byte(htmlText), URL: address, Cookie: cookie, UserAgent: r.UserAgent, Requests: count, LoginState: loginState}, nil
+	return Result{HTML: []byte(htmlText), URL: address, Cookie: cookie, UserAgent: r.UserAgent, Requests: count, LoginState: loginState, CheckinState: checkinState}, nil
 }
 func (b *broker) importCookies(ctx context.Context, address string) {
 	if Origin(address) != Origin(b.request.URL) {

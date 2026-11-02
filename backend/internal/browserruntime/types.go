@@ -41,7 +41,8 @@ type Before func(context.Context, Exchange) (func(state, digest string) error, e
 type Request struct {
 	URL, Cookie, UserAgent, Proxy string
 	Form                          *Form
-	Login                         *Login `json:"-"`
+	Login                         *Login   `json:"-"`
+	Checkin                       *Checkin `json:"-"`
 	// Selectors are from the original trusted catalog, never supplied by page text.
 	ReadySelector, EmptySelector string
 	ReadOnly                     bool
@@ -57,6 +58,7 @@ type Result struct {
 	URL, Cookie, UserAgent string
 	Requests               int
 	LoginState             string
+	CheckinState           string
 }
 type Renderer interface {
 	Available() bool
@@ -154,6 +156,9 @@ func validate(r Request) error {
 		}
 	}
 	if r.Login != nil && (r.Form != nil || r.ReadOnly || !r.Login.valid()) {
+		return ErrScope
+	}
+	if r.Checkin != nil && (r.Form != nil || r.ReadOnly || !r.Checkin.valid()) {
 		return ErrScope
 	}
 	return nil
