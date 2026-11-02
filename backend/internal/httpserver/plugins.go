@@ -27,6 +27,7 @@ type pluginService struct {
 	speedLimiter    *speedLimiterAPI
 	mediaSyncDelete *mediaSyncDeleteAPI
 	movieLike       *movieLikeAPI
+	siteSignin      *siteSigninAPI
 }
 
 type pluginSummary struct {
@@ -81,6 +82,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeSignin(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveSigninPlugin(response, request, action)
+		return
+	}
 	if service.nativeMovieLike(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

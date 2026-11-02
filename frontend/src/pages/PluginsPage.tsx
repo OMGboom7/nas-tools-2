@@ -7,6 +7,7 @@ import { EventWebhookReceipts } from "../components/EventWebhookReceipts";
 import { SpeedLimiterManager } from "../components/SpeedLimiterManager";
 import { MovieLikeManager } from "../components/MovieLikeManager";
 import { MediaSyncDeleteManager } from "../components/MediaSyncDeleteManager";
+import { SiteSigninManager } from "../components/SiteSigninManager";
 
 type PluginsPageProps = {
   session: AuthSession;
@@ -110,6 +111,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
       {data?.items.some(p=>p.id==="SpeedLimiter"&&p.native&&p.actionsAvailable)&&<SpeedLimiterManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="MovieLike"&&p.native&&p.actionsAvailable)&&<MovieLikeManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="MediaSyncDel"&&p.native&&p.actionsAvailable)&&<MediaSyncDeleteManager token={session.token} onSessionExpired={onSessionExpired}/>}
+	  {data?.items.some(p=>p.id==="AutoSignIn"&&p.native&&p.installed)&&<SiteSigninManager key={session.token} session={session} onSessionExpired={onSessionExpired}/>}
       {viewing && <PluginPageViewer session={session} plugin={viewing} onClose={() => setViewing(undefined)} onSessionExpired={onSessionExpired} />}
       {editing && <PluginConfigEditor session={session} plugin={editing} onClose={() => setEditing(undefined)} onSaved={() => void configured(editing)} onSessionExpired={onSessionExpired} />}
       {removing && <UninstallDialog plugin={removing} value={confirmation} busy={Boolean(busy[removing.id])} onChange={setConfirmation} onClose={() => setRemoving(undefined)} onConfirm={() => void confirmUninstall()} />}

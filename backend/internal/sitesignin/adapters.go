@@ -68,8 +68,13 @@ func (s *session) simple(ctx context.Context, method, path string, data url.Valu
 	if expired(page) {
 		return failed("站点 Cookie 已失效", false), nil
 	}
-	if Adapter(s.Target.URL)=="haidan" { if len(nodes(page,`input[value="已经打卡"]`))>0{return already(),nil};return unknown(),nil }
-	visible:=pageText(page)
+	if Adapter(s.Target.URL) == "haidan" {
+		if len(nodes(page, `input[value="已经打卡"]`)) > 0 {
+			return already(), nil
+		}
+		return unknown(), nil
+	}
+	visible := pageText(page)
 	if matches(visible, repeat...) {
 		return already(), nil
 	}

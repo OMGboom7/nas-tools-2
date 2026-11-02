@@ -36,10 +36,25 @@ func nodeText(n *html.Node) string {
 	if n.Type == html.TextNode {
 		return n.Data
 	}
-	if n.Type == html.CommentNode { return "" }
+	if n.Type == html.CommentNode {
+		return ""
+	}
 	if n.Type == html.ElementNode {
-		switch n.Data { case "script", "style", "template", "noscript", "head": return "" }
-		for _,a:=range n.Attr { if a.Key=="hidden" {return ""};if a.Key=="style" {style:=strings.ToLower(strings.Join(strings.Fields(a.Val),""));if strings.Contains(style,"display:none")||strings.Contains(style,"visibility:hidden"){return ""}} }
+		switch n.Data {
+		case "script", "style", "template", "noscript", "head":
+			return ""
+		}
+		for _, a := range n.Attr {
+			if a.Key == "hidden" {
+				return ""
+			}
+			if a.Key == "style" {
+				style := strings.ToLower(strings.Join(strings.Fields(a.Val), ""))
+				if strings.Contains(style, "display:none") || strings.Contains(style, "visibility:hidden") {
+					return ""
+				}
+			}
+		}
 	}
 	var b strings.Builder
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -47,7 +62,13 @@ func nodeText(n *html.Node) string {
 	}
 	return b.String()
 }
-func pageText(page string) string { doc,err:=html.Parse(strings.NewReader(page));if err!=nil{return ""};return nodeText(doc) }
+func pageText(page string) string {
+	doc, err := html.Parse(strings.NewReader(page))
+	if err != nil {
+		return ""
+	}
+	return nodeText(doc)
+}
 func firstAttr(page, selector, key string) string {
 	v := nodes(page, selector)
 	if len(v) == 0 {

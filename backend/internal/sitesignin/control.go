@@ -55,6 +55,15 @@ func controlMatches(ctx context.Context, q queryRow, b Batch) error {
 // SetControl requires the exact previous document. Old enabled/onlyonce flags
 // are not consulted at startup; only this explicitly saved Go control runs.
 func (s *Store) SetControl(ctx context.Context, previous Control, next Control, guard func(context.Context) error) error {
+	return s.setControl(ctx, previous, next, "", "", false, guard)
+}
+
+// Activate consumes the original one-shot flags in the same transaction as Go
+// takeover. Unknown original plugin fields are retained by MergeSettings.
+func (s *Store) Activate(ctx context.Context, previous, next Control, before, after string, guard func(context.Context) error) error {
+	return s.setControl(ctx, previous, next, before, after, true, guard)
+}
+func (s *Store) setControl(ctx context.Context, previous Control, next Control, before, after string, consume bool, guard func(context.Context) error) error {
 	if !next.Scope.Valid() || guard == nil || guard(ctx) != nil {
 		return ErrScope
 	}
@@ -66,6 +75,17 @@ func (s *Store) SetControl(ctx context.Context, previous Control, next Control, 
 	actual, err := readControl(ctx, tx)
 	if err != nil || sitelogin.Hash(actual) != sitelogin.Hash(previous) {
 		return ErrState
+	}
+	if consume {
+		if err = reviewCurrent(ctx, tx, next.Scope); err != nil {
+			return err
+		}
+		if sitelogin.Hash(after) != next.Scope.PluginDigest {
+			return ErrScope
+		}
+		if err = replaceSetting(ctx, tx, "plugin."+Plugin, before, after); err != nil {
+			return err
+		}
 	}
 	for _, source := range next.Scope.Sources {
 		if err = sourceCurrent(ctx, tx, source); err != nil {

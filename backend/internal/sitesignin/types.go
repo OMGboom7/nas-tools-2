@@ -53,6 +53,7 @@ type Options struct {
 	Lens       bool `json:"lens"`
 	AI         bool `json:"ai"`
 	SavedLogin bool `json:"savedLogin"`
+	Remote     bool `json:"remote"`
 }
 
 type Exchange struct {
@@ -159,7 +160,9 @@ func (e Executor) Run(ctx context.Context) Outcome {
 	if errors.Is(err, ErrInput) || errors.Is(err, browserruntime.ErrInput) {
 		return Outcome{State: "blocked", Reason: "未收到有效的单次输入"}
 	}
-	s.mu.Lock();uncertain,action:=s.uncertain,s.action;s.mu.Unlock()
+	s.mu.Lock()
+	uncertain, action := s.uncertain, s.action
+	s.mu.Unlock()
 	if uncertain || action {
 		return unknown()
 	}

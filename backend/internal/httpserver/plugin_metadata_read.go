@@ -84,7 +84,7 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) {
 				for _, other := range installed {
 					if service.nativeOpenSubtitles(other) {
 						writeAPIError(response, 501, 501, "mixed plugin configuration list cannot forward native subtitle credentials; use the individual native pages")
@@ -97,6 +97,20 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeSignin(id) {
+				actor, ok := service.siteSignin.actor(response, request, false)
+				if !ok {
+					return
+				}
+				detail, err := service.siteSignin.detail(request.Context(), actor)
+				if err != nil {
+					signinError(response, err)
+					return
+				}
+				running, known := service.signinSummary(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeOpenSubtitles(id) {
 				actor, ok := service.openSubtitles.actor(response, request, false)
 				if !ok {

@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSignin(request.PathValue("id")) {
+		service.serveSigninPlugin(response, request, "page")
+		return
+	}
 	if service.nativeMovieLike(request.PathValue("id")) {
 		service.serveMovieLikePlugin(response, request, "page")
 		return

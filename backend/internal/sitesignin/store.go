@@ -129,6 +129,14 @@ func (s *Store) Create(ctx context.Context, b Batch, records []Job, guard func(c
 	if err = controlMatches(ctx, tx, b); err != nil {
 		return nil, false, err
 	}
+	if b.Trigger == "manual" {
+		if b.ID != b.Scope.ID {
+			return nil, false, ErrScope
+		}
+		if err = reviewCurrent(ctx, tx, b.Scope); err != nil {
+			return nil, false, err
+		}
+	}
 	seen := map[int64]bool{}
 	for i, r := range records {
 		if !r.Valid() || r.State != "queued" || len(r.Operations) > 0 || r.ID != b.Jobs[i] || r.Batch != b.ID || r.ScopeID != b.Scope.ID || r.Actor != b.Scope.Actor || seen[r.Source.SiteID] {

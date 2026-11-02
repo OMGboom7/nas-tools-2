@@ -27,6 +27,7 @@ import (
 type loginFixture struct {
 	handler     http.Handler
 	api         *siteLoginAPI
+	signin      *siteSigninAPI
 	token, path string
 	site        siteconfig.Site
 	configPath  string
@@ -64,7 +65,7 @@ func newLoginFixture(t *testing.T, renderer browserruntime.Renderer) *loginFixtu
 	ctx, cancel := context.WithCancel(context.Background())
 	wait := startSiteLoginWorker(ctx, api)
 	t.Cleanup(func() { cancel(); wait(); api.store.Close() })
-	return &loginFixture{handler: handler, api: api, token: loginForTest(t, handler, "admin", "password"), path: filepath.Join(dir, "user.db"), configPath: path, site: site}
+	return &loginFixture{handler: handler, api: api, signin: runner.siteSignin, token: loginForTest(t, handler, "admin", "password"), path: filepath.Join(dir, "user.db"), configPath: path, site: site}
 }
 func (f *loginFixture) request(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()

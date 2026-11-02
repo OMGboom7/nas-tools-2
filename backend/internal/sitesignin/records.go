@@ -18,6 +18,8 @@ type Scope struct {
 	Sources                                                       []Source
 	Options                                                       Options
 	Notify                                                        bool
+	Settings                                                      Settings
+	CommandDigest                                                 string
 }
 type Operation struct {
 	Kind, Signature, State, Digest string
@@ -60,6 +62,9 @@ func validSource(s Source) bool {
 	return s.SiteID > 0 && sitelogin.Hex(s.SiteDigest, 64) && sitelogin.Text(s.Name, 512) && browserruntime.Origin(s.URL) != "" && sitelogin.Text(s.URL, 16000) && sitelogin.Text(s.UserAgent, 512) && s.UserAgent != ""
 }
 func (s Scope) Valid() bool {
+	if s.Settings.Concurrency < 1 || s.Settings.Concurrency > 1000 || s.Options.Remote && !sitelogin.Hex(s.CommandDigest, 64) {
+		return false
+	}
 	if !sitelogin.Hex(s.ID, 64) || !sitelogin.Text(s.Actor, 128) || s.Actor == "" || !sitelogin.Hex(s.Authority, 64) || !sitelogin.Hex(s.ConfigDigest, 64) || !sitelogin.Hex(s.PluginDigest, 64) || len(s.Sources) == 0 || len(s.Sources) > MaxSites || s.Options.SavedLogin && !sitelogin.Hex(s.SavedDigest, 64) {
 		return false
 	}

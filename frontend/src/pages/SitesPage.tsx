@@ -3,6 +3,7 @@ import { ApiError, deleteSite, getSites, testSiteConnection, type AuthSession, t
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { SiteEditor } from "../components/SiteEditor";
 import { SiteLoginPanel } from "../components/SiteLoginPanel";
+import { SiteSigninManager } from "../components/SiteSigninManager";
 
 type SitesPageProps = {
   session: AuthSession;
@@ -28,6 +29,7 @@ export function SitesPage({ session, currentPath, onNavigate, onLogout, onSessio
   const [actionMessage, setActionMessage] = useState("");
   const [editing, setEditing] = useState<SiteSummary | null | undefined>(undefined);
   const [loggingIn,setLoggingIn]=useState<SiteSummary[]>();
+	const [signingIn,setSigningIn]=useState(false);
   const [batchTesting, setBatchTesting] = useState(false);
   const [deleting, setDeleting] = useState<SiteSummary | undefined>();
   const [deleteText, setDeleteText] = useState("");
@@ -146,6 +148,8 @@ export function SitesPage({ session, currentPath, onNavigate, onLogout, onSessio
 
         {actionError && <div className="data-warning" role="alert">{actionError}</div>}
         {actionMessage && <div className="data-success" role="status">{actionMessage}</div>}
+		<div className="sites-heading__actions"><button type="button" className="secondary-button" onClick={()=>setSigningIn(v=>!v)}>签到设置与历史</button></div>
+		{signingIn&&<SiteSigninManager key={session.token} session={session} onSessionExpired={onSessionExpired} onClose={()=>setSigningIn(false)}/>}
         {state.kind === "loading" && <div className="site-skeleton"><span /><span /><span /></div>}
         {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>站点数据暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></section>}
         {state.kind === "ready" && <>

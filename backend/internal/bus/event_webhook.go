@@ -263,6 +263,9 @@ func PublishSignal(ctx context.Context, tx *sql.Tx, kind, key, reference string,
 	if len(source) > 1 || len(source) == 1 && (!source[0].Valid() || kind != "subtitle.download" || source[0].Reference != reference) {
 		return ErrEventWebhook
 	}
+	if err := captureNativeSignal(ctx, tx, kind, key, reference, data); err != nil {
+		return err
+	}
 	c, spec, active, err := eventHookSnapshot(ctx, tx)
 	if errors.Is(err, ErrEventWebhook) {
 		return nil

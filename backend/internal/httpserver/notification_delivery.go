@@ -529,6 +529,9 @@ func (service notificationService) sendNativeWebhook(ctx context.Context, config
 }
 
 func (service notificationService) sendNativeWeChat(ctx context.Context, config map[string]any, title, message, image, clickURL string) (bool, error) {
+	return service.sendNativeWeChatTo(ctx, config, title, message, image, clickURL, "@all")
+}
+func (service notificationService) sendNativeWeChatTo(ctx context.Context, config map[string]any, title, message, image, clickURL, recipient string) (bool, error) {
 	corpID := strings.TrimSpace(text(config["corpid"]))
 	corpSecret := strings.TrimSpace(text(config["corpsecret"]))
 	agentID := strings.TrimSpace(text(config["agentid"]))
@@ -574,7 +577,7 @@ func (service notificationService) sendNativeWeChat(ctx context.Context, config 
 		var payload map[string]any
 		if image != "" {
 			payload = map[string]any{
-				"touser": "@all", "msgtype": "news", "agentid": agentID,
+				"touser": recipient, "msgtype": "news", "agentid": agentID,
 				"news": map[string]any{"articles": []any{map[string]any{
 					"title": chunkTitle, "description": strings.ReplaceAll(chunk, "\n\n", "\n"), "picurl": image, "url": clickURL,
 				}}},
@@ -591,7 +594,7 @@ func (service notificationService) sendNativeWeChat(ctx context.Context, config 
 				content += "\n\n<a href='" + clickURL + "'>查看详情</a>"
 			}
 			payload = map[string]any{
-				"touser": "@all", "msgtype": "text", "agentid": agentID,
+				"touser": recipient, "msgtype": "text", "agentid": agentID,
 				"text": map[string]any{"content": content}, "safe": 0,
 				"enable_id_trans": 0, "enable_duplicate_check": 0,
 			}
@@ -643,6 +646,9 @@ func splitNotificationText(value string, maxBytes int) []string {
 }
 
 func (service notificationService) sendNativeSlack(ctx context.Context, config map[string]any, title, message, image, clickURL string) (bool, error) {
+	return service.sendNativeSlackTo(ctx, config, title, message, image, clickURL, "")
+}
+func (service notificationService) sendNativeSlackTo(ctx context.Context, config map[string]any, title, message, image, clickURL, user string) (bool, error) {
 	token := strings.TrimSpace(text(config["bot_token"]))
 	channelName := strings.TrimSpace(text(config["channel"]))
 	if channelName == "" {
@@ -652,7 +658,12 @@ func (service notificationService) sendNativeSlack(ctx context.Context, config m
 		return false, errors.New("notification channel is not configured")
 	}
 	client := service.notificationHTTPClient()
-	channelID, err := service.findSlackChannel(ctx, &client, token, channelName)
+	channelID, err := "", error(nil)
+	if user == "" {
+		channelID, err = service.findSlackChannel(ctx, &client, token, channelName)
+	} else {
+		channelID, err = service.openSlackDirect(ctx, &client, token, user)
+	}
 	if err != nil || channelID == "" {
 		return false, err
 	}

@@ -127,7 +127,20 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 				}
 			}
 		}
-		if err == nil && nativeNotificationDeliveryEligible(c.Type, objectValue(record["config"])) {
+		if err == nil && e.Kind == "site_signin_ack" {
+			var original struct {
+				User string `json:"user_id"`
+			}
+			if json.Unmarshal(e.Data, &original) != nil {
+				err = bus.ErrState
+			} else {
+				sent, sendErr := api.service.sendNativeReply(ctx, c.Type, objectValue(record["config"]), original.User, e.Title, e.Text)
+				state, reason = "uncertain", "原接收确认的应答未确认，不自动重发"
+				if sendErr == nil && sent {
+					state, reason = "sent", ""
+				}
+			}
+		} else if err == nil && nativeNotificationDeliveryEligible(c.Type, objectValue(record["config"])) {
 			sent, sendErr := api.service.sendNativeNotification(ctx, c.Type, objectValue(record["config"]), e.Title, e.Text, image, link)
 			state, reason = "uncertain", "notification response not positively acknowledged; do not retry automatically"
 			if sendErr == nil && sent {

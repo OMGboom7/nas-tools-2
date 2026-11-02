@@ -178,7 +178,9 @@ func (s *session) request(ctx context.Context, x Exchange, content string, heade
 		return zero, ErrScope
 	}
 	if x.Action {
-		s.mu.Lock();s.action = true;s.mu.Unlock()
+		s.mu.Lock()
+		s.action = true
+		s.mu.Unlock()
 	}
 	client := s.client
 	if aux {
@@ -186,14 +188,18 @@ func (s *session) request(ctx context.Context, x Exchange, content string, heade
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		s.mu.Lock();s.uncertain = true;s.mu.Unlock()
+		s.mu.Lock()
+		s.uncertain = true
+		s.mu.Unlock()
 		_ = finish("uncertain", "")
 		return zero, ErrUnknown
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil || len(raw) > 4<<20 {
-		s.mu.Lock();s.uncertain = true;s.mu.Unlock()
+		s.mu.Lock()
+		s.uncertain = true
+		s.mu.Unlock()
 		_ = finish("uncertain", "")
 		return zero, ErrUnknown
 	}
@@ -202,7 +208,9 @@ func (s *session) request(ctx context.Context, x Exchange, content string, heade
 		state = "denied"
 	}
 	if err = finish(state, sitelogin.Hash([]any{response.StatusCode, raw})); err != nil {
-		s.mu.Lock();s.uncertain = true;s.mu.Unlock()
+		s.mu.Lock()
+		s.uncertain = true
+		s.mu.Unlock()
 		return zero, ErrUnknown
 	}
 	if !aux {
@@ -257,8 +265,22 @@ func authenticated(page string) bool {
 	if expired(page) {
 		return false
 	}
-	for _,n:=range nodes(page,"a[href]"){value:=attr(n,"href");u,err:=url.Parse(value);if err!=nil{continue};path:=strings.ToLower(u.Path);if strings.HasSuffix(path,"logout.php")||strings.HasSuffix(path,"/logout")||strings.HasSuffix(path,"userdetails.php")&&u.Query().Get("id")!=""{return true}}
-	visible:=pageText(page)
-	for _,marker:=range []string{"退出登录","登出","魔力值"}{if strings.Contains(visible,marker){return true}}
+	for _, n := range nodes(page, "a[href]") {
+		value := attr(n, "href")
+		u, err := url.Parse(value)
+		if err != nil {
+			continue
+		}
+		path := strings.ToLower(u.Path)
+		if strings.HasSuffix(path, "logout.php") || strings.HasSuffix(path, "/logout") || strings.HasSuffix(path, "userdetails.php") && u.Query().Get("id") != "" {
+			return true
+		}
+	}
+	visible := pageText(page)
+	for _, marker := range []string{"退出登录", "登出", "魔力值"} {
+		if strings.Contains(visible, marker) {
+			return true
+		}
+	}
 	return false
 }

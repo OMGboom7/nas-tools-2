@@ -29,6 +29,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
+	"github.com/0xforee/nas-tools/backend/internal/sitesignin"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 	"github.com/0xforee/nas-tools/backend/internal/wordconfig"
 )
@@ -86,6 +87,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitFavorites := startMovieLikeWorker(workerContext, runner.movieLike)
 		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
 		waitSiteLogin := startSiteLoginWorker(workerContext, runner.siteLogin)
+		waitSiteSignin := startSiteSigninWorker(workerContext, runner.siteSignin)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -104,6 +106,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitFavorites()
 			waitFuzzy()
 			waitSiteLogin()
+			waitSiteSignin()
 		}
 	}
 	return handler, wait, nil
@@ -148,6 +151,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	var nativeDownloaders *downloaderconfig.Store
 	var nativeSites *siteconfig.Store
 	var nativeSiteLogins *sitelogin.Store
+	var nativeSiteSignins *sitesignin.Store
 	var nativeFilters *filterconfig.Store
 	var nativeNotifications *notificationconfig.Store
 	var nativeRSSParsers *rssparserconfig.Store
@@ -186,6 +190,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeSiteLogins, err = sitelogin.Open(application.UserDatabasePath())
 		if err != nil {
 			return nil, fmt.Errorf("open native site login receipts: %w", err)
+		}
+		nativeSiteSignins, err = sitesignin.Open(application.UserDatabasePath())
+		if err != nil {
+			return nil, fmt.Errorf("open native site sign-in receipts: %w", err)
 		}
 		nativeFilters, err = filterconfig.OpenWritable(application.UserDatabasePath())
 		if err != nil {
@@ -548,6 +556,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	sites := siteService{client: &http.Client{Transport: transport}, downloaders: nativeDownloaders, store: nativeSites, filters: nativeFilters, configStore: nativeConfig, catalogPath: cfg.SiteCatalogPath, siteLimits: siteLimits, browser: nativeBrowser}
 	nativeSiteLogin := &siteLoginAPI{store: nativeSiteLogins, sites: nativeSites, config: nativeConfig, auth: nativeAuth, browser: nativeBrowser, transport: transport, catalogPath: cfg.SiteCatalogPath, limits: siteLimits, guards: &organizationJobs, pureGo: cfg.DisableLegacy}
 	rssRunner.siteLogin = nativeSiteLogin
+	nativeSiteSignin := &siteSigninAPI{store: nativeSiteSignins, login: nativeSiteLogin, system: nativeSystemConfig, channels: nativeNotifications, cache: &sitesignin.FileCache{Directory: filepath.Dir(cfg.ApplicationConfigPath)}}
+	rssRunner.siteSignin = nativeSiteSignin
+	mux.HandleFunc("/api/v1/site-signin", nativeSiteSignin.manage)
+	mux.HandleFunc("/api/v1/site-signin/", nativeSiteSignin.manage)
+	for _, path := range []string{"/telegram", "/synology", "/slack", "/wechat"} {
+		mux.HandleFunc(path, nativeSiteSignin.remoteHTTP)
+	}
 	mux.HandleFunc("GET /api/v1/site-login", nativeSiteLogin.status)
 	mux.HandleFunc("POST /api/v1/site-login/review", nativeSiteLogin.serveReview)
 	mux.HandleFunc("POST /api/v1/site-login/requests", nativeSiteLogin.serveStart)
@@ -621,7 +636,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/{id}/test", notifications.test)
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
-	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth}
+	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	if organizationJobs != nil {
 		movieLikes.queue = organizationJobs.MovieLike()

@@ -30,6 +30,7 @@ type rssRunAPI struct {
 	subtitles       *subtitleAPI
 	openSubtitles   *openSubtitleAPI
 	siteLogin       *siteLoginAPI
+	siteSignin      *siteSigninAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI
 	notifications   *businessNotifications
