@@ -9,10 +9,64 @@ import (
 	"testing"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
+
+func TestSigninCompletionPreservesBothOriginalNotificationConsumers(t *testing.T) {
+	s, scope, guard := signinRecordFixture(t)
+	scope.Notify = true
+	scope.ID = sitelogin.Random()
+	signinSaveReview(t, s, scope, guard)
+	var path string
+	if e := s.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); e != nil {
+		t.Fatal(e)
+	}
+	channels, e := notificationconfig.Open(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer channels.Close()
+	for _, c := range []notificationconfig.Channel{
+		{Name: "details", Type: "webhook", Enabled: 1, Config: `{"url":"https://details.fixture.test/"}`, Switches: `["site_signin"]`},
+		{Name: "plugin-summary", Type: "webhook", Enabled: 1, Config: `{"url":"https://summary.fixture.test/"}`, Switches: `["custom_message"]`},
+	} {
+		if _, e = channels.Save(t.Context(), c); e != nil {
+			t.Fatal(e)
+		}
+	}
+	b, r := signinCreateFixture(t, s, scope, guard)
+	if e = s.Start(t.Context(), r.ID, guard); e != nil {
+		t.Fatal(e)
+	}
+	index, e := s.Step(t.Context(), r.ID, Operation{Kind: "site:GET", Signature: sitelogin.Hash("fixture-signin"), State: "intent", Action: true}, guard)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Acknowledge(t.Context(), r.ID, index, "received", sitelogin.Hash("fixture-signed")); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.Finish(t.Context(), r.ID, signed("fixture successful sign-in")); e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < 2; i++ {
+		if e = s.Notify(t.Context(), b.ID, "fixture details"); e != nil {
+			t.Fatal(e)
+		}
+	}
+	var details, summaries int
+	if e = s.db.QueryRow(`SELECT COUNT(*) FROM GO_NOTIFICATION_DELIVERIES d JOIN GO_BUSINESS_EVENTS e ON e.ID=d.EVENT_ID WHERE e.KIND='site_signin'`).Scan(&details); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.db.QueryRow(`SELECT COUNT(*) FROM GO_NOTIFICATION_DELIVERIES d JOIN GO_BUSINESS_EVENTS e ON e.ID=d.EVENT_ID WHERE e.KIND='plugin_message'`).Scan(&summaries); e != nil {
+		t.Fatal(e)
+	}
+	if details != 1 || summaries != 1 {
+		t.Fatalf("original consumers lost or duplicated: details=%d plugin summaries=%d", details, summaries)
+	}
+}
 
 func signinRecordFixture(t *testing.T) (*Store, Scope, func(context.Context) error) {
 	t.Helper()

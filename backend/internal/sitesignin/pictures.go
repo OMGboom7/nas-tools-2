@@ -187,9 +187,17 @@ func (s *session) tjupt(ctx context.Context) (Outcome, error) {
 	answer := ""
 	if values := cache[hash]; len(values) == 1 {
 		for _, o := range options {
-			if o.Text == values[0] {
+			if o.Value == values[0] {
 				answer = o.Value
 				break
+			}
+		}
+		if answer == "" {
+			for _, o := range options {
+				if o.Text == values[0] {
+					answer = o.Value
+					break
+				}
 			}
 		}
 	}
@@ -228,11 +236,7 @@ func (s *session) tjupt(ctx context.Context) (Outcome, error) {
 			out.CacheState = "preserved"
 			return out, nil
 		}
-		for _, o := range options {
-			if o.Value == answer {
-				return s.cacheSuccess(ctx, out, "tjupt", token, hash, []string{o.Text}), nil
-			}
-		}
+		return s.cacheSuccess(ctx, out, "tjupt", token, hash, []string{answer}), nil
 	}
 	if matches(r.text(), `答案错误|回答错误|答错`) {
 		return failed("站点明确返回图片答案错误", true), nil

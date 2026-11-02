@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
@@ -89,41 +88,36 @@ func (api *siteSigninAPI) pollTelegram(ctx context.Context, c sitesignin.Control
 	}
 	api.ensureSlack(ctx, c, sources, now)
 	for _, source := range sources {
-		if source.channel.Type != "telegram" || source.mode != "poll" {
+		if source.channel.Type != "telegram" {
 			continue
 		}
 		state, e := api.store.Remote(ctx, source.digest)
 		if e != nil {
 			return e
 		}
-		if state.Scope == c.Scope.ID && state.State == "blocked" {
+		if state.Scope == c.Scope.ID && (state.State == "blocked" || state.State == "unknown") {
 			continue
 		}
 		if updated, e := time.Parse(time.RFC3339Nano, state.Updated); e == nil && now.Sub(updated) < 5*time.Second {
 			continue
 		}
-		cfg, e := api.login.config.Snapshot()
-		if e != nil {
-			return e
+		readyState := "polling"
+		if source.mode == "webhook" {
+			readyState = "webhook"
 		}
-		base := "https://api.telegram.org"
-		if custom := text(objectValue(cfg["laboratory"])["telegram_domain"]); custom != "" {
-			base = strings.TrimRight(custom, "/")
-		}
-		address := base + "/bot" + text(source.config["token"]) + "/getUpdates?" + url.Values{"offset": {strconv.FormatInt(state.Offset, 10)}, "limit": {"100"}, "timeout": {"0"}, "allowed_updates": {`["message"]`}}.Encode()
-		transport := api.login.transport
-		u, _ := url.Parse(base)
-		if text(objectValue(objectValue(cfg["app"])["proxies"])[u.Scheme]) != "" {
-			transport, e = siteProxyTransport(transport, objectValue(objectValue(cfg["app"])["proxies"]), u.Scheme)
+		if state.Scope != c.Scope.ID || state.State != readyState {
+			ready, e := api.syncTelegramMode(ctx, c, source, &state)
 			if e != nil {
 				return e
 			}
+			if !ready {
+				continue
+			}
 		}
-		request, e := http.NewRequestWithContext(ctx, "GET", address, nil)
-		if e != nil {
-			return e
+		if source.mode == "webhook" {
+			continue
 		}
-		raw, status, e := api.remoteCall(ctx, c, source, "telegram-poll", request, transport)
+		raw, status, e := api.telegramCall(ctx, c, source, "getUpdates", url.Values{"offset": {strconv.FormatInt(state.Offset, 10)}, "limit": {"100"}, "timeout": {"0"}, "allowed_updates": {`["message"]`}})
 		state.Scope = c.Scope.ID
 		state.State = "waiting"
 		state.Reason = "读取消息未确认，将按原编号核对输入；不会直接重复签到"

@@ -117,6 +117,26 @@ func (s signinSchedule) next(after time.Time) (time.Time, error) {
 	}
 	return time.Time{}, sitesignin.ErrState
 }
+
+// Periodic intervals retain the original phase even when execution is slow or
+// the process missed occurrences. A random daily window has one occurrence per
+// local date; completing it must not draw another time in the same window.
+func (s signinSchedule) following(previous, completed time.Time) (time.Time, error) {
+	if completed.Before(previous) {
+		completed = previous
+	}
+	if s.interval > 0 {
+		return completed.Add(s.interval - completed.Sub(previous)%s.interval), nil
+	}
+	if s.window {
+		local := previous.In(s.location)
+		tomorrow := time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, s.location)
+		if completed.Before(tomorrow) {
+			completed = tomorrow.Add(-time.Nanosecond)
+		}
+	}
+	return s.next(completed)
+}
 func signinRandom(size int) (int, error) {
 	if size <= 0 {
 		return 0, sitesignin.ErrState
@@ -169,9 +189,7 @@ func signinNext(settings sitesignin.Settings, location *time.Location, now time.
 		return "", "", e
 	}
 	run, missed := "", ""
-	if settings.Once {
-		run = now.Add(3 * time.Second).UTC().Format(time.RFC3339Nano)
-	} else if settings.Enabled {
+	if settings.Enabled {
 		next, e := cron.next(now)
 		if e != nil {
 			return "", "", e
@@ -230,16 +248,25 @@ func (api *siteSigninAPI) tick(ctx context.Context, now time.Time) error {
 		return e
 	}
 	control, e := api.store.Control(ctx)
-	if e != nil || !control.Enabled {
+	if e != nil {
 		return e
 	}
+	if !control.Enabled {
+		return api.reconcileSummaries(ctx)
+	}
 	if e = api.base(control.Scope, "", control.Scope.PluginDigest)(ctx); e != nil {
-		return api.store.StopControl(ctx, control.Scope.ID, "原配置或管理员执行权限已变化，需要重新核对")
+		if e = api.store.StopControl(ctx, control.Scope.ID, "原配置或管理员执行权限已变化，需要重新核对"); e != nil {
+			return e
+		}
+		return api.reconcileSummaries(ctx)
 	}
 	for _, source := range control.Scope.Sources {
 		site, e := api.login.sites.Get(ctx, source.SiteID)
 		if e != nil || sitelogin.Hash(site) != source.SiteDigest {
-			return api.store.StopControl(ctx, control.Scope.ID, "原站点记录已变化，需要重新核对")
+			if e = api.store.StopControl(ctx, control.Scope.ID, "原站点记录已变化，需要重新核对"); e != nil {
+				return e
+			}
+			return api.reconcileSummaries(ctx)
 		}
 	}
 	signals, e := api.store.Signals(ctx, true)
@@ -265,9 +292,11 @@ func (api *siteSigninAPI) tick(ctx context.Context, now time.Time) error {
 			return e
 		}
 	}
-	for _, kind := range []string{"cron", "missed"} {
+	for _, kind := range []string{"once", "cron", "missed"} {
 		due := control.NextRun
-		if kind == "missed" {
+		if kind == "once" {
+			due = control.NextOnce
+		} else if kind == "missed" {
 			due = control.NextMissed
 		}
 		if due == "" {
@@ -294,7 +323,12 @@ func (api *siteSigninAPI) tick(ctx context.Context, now time.Time) error {
 			return e
 		}
 		completed := time.Now()
-		if kind == "missed" {
+		if completed.Before(at) {
+			completed = at
+		}
+		if kind == "once" {
+			next.NextOnce = ""
+		} else if kind == "missed" {
 			at, e = signinMissedNext(control.Scope.Settings.MissedWindow, location, completed)
 			if e != nil {
 				return e
@@ -307,7 +341,7 @@ func (api *siteSigninAPI) tick(ctx context.Context, now time.Time) error {
 				if e != nil {
 					return e
 				}
-				at, e = cron.next(completed)
+				at, e = cron.following(at, completed)
 				if e != nil {
 					return e
 				}
@@ -321,8 +355,13 @@ func (api *siteSigninAPI) tick(ctx context.Context, now time.Time) error {
 		}
 		control = next
 	}
-	if control.NextRun == "" && control.NextMissed == "" && !control.Scope.Options.Remote {
-		return api.store.StopControl(ctx, control.Scope.ID, "一次签到已完成，未保留周期执行")
+	if control.NextRun == "" && control.NextMissed == "" && control.NextOnce == "" && !control.Scope.Options.Remote {
+		if e = api.store.StopControl(ctx, control.Scope.ID, "一次签到已完成，未保留周期执行"); e != nil {
+			return e
+		}
+	}
+	if e = api.reconcileSummaries(ctx); e != nil {
+		return e
 	}
 	return api.pollTelegram(ctx, control, now)
 }
@@ -351,13 +390,18 @@ func (api *siteSigninAPI) activate(ctx context.Context, p sitesignin.Review) err
 	if e != nil {
 		return e
 	}
-	run, missed, e := signinNext(p.Scope.Settings, location, time.Now())
+	now := time.Now()
+	run, missed, e := signinNext(p.Scope.Settings, location, now)
 	if e != nil {
 		return e
 	}
-	if run == "" && missed == "" && !p.Scope.Options.Remote {
+	once := ""
+	if p.Scope.Settings.Once {
+		once = now.Add(3 * time.Second).UTC().Format(time.RFC3339Nano)
+	}
+	if run == "" && missed == "" && once == "" && !p.Scope.Options.Remote {
 		return fmt.Errorf("no sign-in consumer is configured")
 	}
-	next := sitesignin.Control{Scope: p.Scope, Enabled: true, NextRun: run, NextMissed: missed}
+	next := sitesignin.Control{Scope: p.Scope, Enabled: true, NextRun: run, NextMissed: missed, NextOnce: once}
 	return api.store.Activate(ctx, previous, next, raw, after, api.base(p.Scope, "", p.BeforePluginDigest))
 }

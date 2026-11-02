@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,6 +34,9 @@ func (service notificationService) sendNativeReply(ctx context.Context, kind str
 		}
 		return service.sendNativeWeChatTo(ctx, config, title, message, "", "", user)
 	case "slack":
+		if !regexp.MustCompile(`^[UW][A-Z0-9]+$`).MatchString(user) {
+			return false, errors.New("invalid original Slack recipient")
+		}
 		return service.sendNativeSlackTo(ctx, config, title, message, "", "", user)
 	case "synologychat":
 		id, e := strconv.ParseInt(user, 10, 64)
@@ -68,31 +70,4 @@ func (service notificationService) sendNativeReply(ctx context.Context, kind str
 		return result.Success, nil
 	}
 	return false, errors.New("unsupported original reply channel")
-}
-func (service notificationService) openSlackDirect(ctx context.Context, client *http.Client, token, user string) (string, error) {
-	if !regexp.MustCompile(`^[UW][A-Z0-9]+$`).MatchString(user) {
-		return "", errors.New("invalid original Slack recipient")
-	}
-	raw, _ := json.Marshal(map[string]string{"users": user})
-	request, e := http.NewRequestWithContext(ctx, "POST", "https://slack.com/api/conversations.open", bytes.NewReader(raw))
-	if e != nil {
-		return "", e
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Authorization", "Bearer "+token)
-	response, e := client.Do(request)
-	if e != nil {
-		return "", e
-	}
-	defer response.Body.Close()
-	var result struct {
-		OK      bool `json:"ok"`
-		Channel struct {
-			ID string `json:"id"`
-		} `json:"channel"`
-	}
-	if response.StatusCode != 200 || json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&result) != nil || !result.OK || result.Channel.ID == "" {
-		return "", errors.New("original Slack direct channel not confirmed")
-	}
-	return result.Channel.ID, nil
 }

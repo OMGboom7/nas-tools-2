@@ -17,6 +17,13 @@ import (
 )
 
 func newSigninHTTPFixture(t *testing.T) (*loginFixture, *siteSigninAPI) {
+	f, api := newSigninQuietFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	wait := startSiteSigninWorker(ctx, api)
+	t.Cleanup(func() { cancel(); wait() })
+	return f, api
+}
+func newSigninQuietFixture(t *testing.T) (*loginFixture, *siteSigninAPI) {
 	t.Helper()
 	f := newLoginFixture(t, nil)
 	api := f.signin
@@ -34,9 +41,7 @@ func newSigninHTTPFixture(t *testing.T) (*loginFixture, *siteSigninAPI) {
 	if e = api.system.Set(t.Context(), "plugin.AutoSignIn", raw); e != nil {
 		t.Fatal(e)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	wait := startSiteSigninWorker(ctx, api)
-	t.Cleanup(func() { cancel(); wait(); api.store.Close() })
+	t.Cleanup(func() { api.wait.Wait(); api.store.Close() })
 	return f, api
 }
 func signinTestReview(t *testing.T, f *loginFixture, mode string) siteSigninReviewView {
@@ -177,7 +182,7 @@ func TestSiteSigninUnknownResponseIsNotRetriedByOnceSchedule(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		if control.NextRun == "" {
+		if control.NextRun == "" && control.NextOnce == "" && !control.Enabled {
 			break
 		}
 		if time.Now().After(end) {

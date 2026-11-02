@@ -61,3 +61,15 @@ func (s *Store) RemoteReceived(ctx context.Context, id, state string, status int
 	}
 	return nil
 }
+
+// Mode changes are attempted at most once under a source grant. A later
+// getWebhookInfo can confirm an uncertain change without issuing it again.
+func (s *Store) RemoteAttempted(ctx context.Context, scope, source, kind string) (bool, error) {
+	exists, e := tableExists(ctx, s.db, "GO_SITE_SIGNIN_REMOTE_REQUESTS")
+	if e != nil || !exists {
+		return false, e
+	}
+	var count int
+	e = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM GO_SITE_SIGNIN_REMOTE_REQUESTS WHERE SCOPE_ID=? AND SOURCE=? AND KIND=?`, scope, source, kind).Scan(&count)
+	return count > 0, e
+}

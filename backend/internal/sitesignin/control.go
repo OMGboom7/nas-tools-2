@@ -14,6 +14,7 @@ type Control struct {
 	Scope               Scope
 	Enabled             bool
 	NextRun, NextMissed string
+	NextOnce            string `json:",omitempty"`
 	Reason              string
 }
 
@@ -31,7 +32,7 @@ func readControl(ctx context.Context, q queryRow) (Control, error) {
 	if len(raw) > 512<<10 || json.Unmarshal([]byte(raw), &c) != nil || !c.Scope.Valid() || c.Enabled != enabled || c.NextRun != run || c.NextMissed != missed || !sitelogin.Text(c.Reason, 800) {
 		return c, ErrState
 	}
-	for _, value := range []string{run, missed} {
+	for _, value := range []string{run, missed, c.NextOnce} {
 		if value != "" {
 			if _, err = time.Parse(time.RFC3339Nano, value); err != nil {
 				return c, ErrState

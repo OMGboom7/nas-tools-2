@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -447,8 +448,30 @@ func (s *Store) Daily(ctx context.Context, day string) (map[int64]Job, error) {
 	}
 	return out, nil
 }
-func (s *Store) Notify(ctx context.Context, id, summary string) error {
-	if len(summary) > 10000 {
+
+// PendingSummaries lists completion work only; it never selects tracker work.
+func (s *Store) PendingSummaries(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ID FROM GO_SITE_SIGNIN_BATCHES b WHERE json_extract(b.DOCUMENT,'$.Notified')=0 AND NOT EXISTS(SELECT 1 FROM GO_SITE_SIGNIN_JOBS j WHERE j.BATCH_ID=b.ID AND j.STATE IN('queued','running','waiting_input')) ORDER BY ID LIMIT 30`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if !sitelogin.Hex(id, 64) {
+			return nil, ErrState
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Store) Notify(ctx context.Context, id, summary string, pluginSummary ...string) error {
+	if len(summary) > 10000 || len(pluginSummary) > 1 || len(pluginSummary) == 1 && len(pluginSummary[0]) > 10000 {
 		return ErrState
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -471,6 +494,13 @@ func (s *Store) Notify(ctx context.Context, id, summary string) error {
 	}
 	if b.Scope.Notify {
 		if err = bus.Emit(ctx, tx, "site_signin", b.ID, b.ID, "站点签到任务完成", summary); err != nil {
+			return err
+		}
+		body := fmt.Sprintf("本次签到数量: %d\n详见签到消息与本批次记录", len(b.Jobs))
+		if len(pluginSummary) == 1 {
+			body = pluginSummary[0]
+		}
+		if err = bus.EmitData(ctx, tx, "plugin_message", b.ID, b.ID, "【自动签到任务完成】", body, map[string]string{"plugin": Plugin}); err != nil {
 			return err
 		}
 	}

@@ -12,7 +12,7 @@ func isAlready(page []byte) bool {
 	if !authenticated(text) {
 		return false
 	}
-	return matches(pageText(text), `今日已签到|今天已经签到|今日已簽到|今天已经签过到了|请不要重复签到`)
+	return matches(pageText(text), `今日已签到|今天已经签到|今日已簽到|今天已经签过到了|请不要重复签到|签到已得\s*[0-9]+`)
 }
 func (s *session) browserCheckin(ctx context.Context, path string, login bool) (Outcome, error) {
 	if s.Browser == nil || !s.Browser.Available() {
@@ -28,7 +28,7 @@ func (s *session) browserCheckin(ctx context.Context, path string, login bool) (
 		if Adapter(s.Target.URL) == "btschool" {
 			return strings.Contains(string(before), "每日签到") && !strings.Contains(string(after), "每日签到")
 		}
-		return matches(pageText(string(after)), `签到成功|此次签到您获得|本次签到获得`) && !matches(pageText(string(before)), `签到成功|此次签到您获得|本次签到获得`)
+		return matches(pageText(string(after)), `签到成功|此次签到您获得|本次签到获得|签到已得\s*[0-9]+`) && !matches(pageText(string(before)), `签到成功|此次签到您获得|本次签到获得|签到已得\s*[0-9]+`)
 	}, Action: func(ctx context.Context, kind string) (func(string, string) error, error) {
 		return s.Before(ctx, Exchange{Kind: "action:" + kind, Method: "DOM", URL: s.address(path), Action: true})
 	}}

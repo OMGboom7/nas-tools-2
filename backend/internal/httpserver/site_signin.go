@@ -48,6 +48,7 @@ type siteSigninControlView struct {
 	Current    bool   `json:"current"`
 	Reason     string `json:"reason"`
 	NextRun    string `json:"nextRun"`
+	NextOnce   string `json:"nextOnce"`
 	NextMissed string `json:"nextMissed"`
 	Location   string `json:"location"`
 	Remote     bool   `json:"remote"`
@@ -167,7 +168,7 @@ func (api *siteSigninAPI) status(ctx context.Context, actor, token string, page 
 			}
 		}
 	}
-	out.Control = siteSigninControlView{control.Scope.ID, control.Enabled, current, control.Reason, control.NextRun, control.NextMissed, control.Scope.Location, control.Scope.Options.Remote}
+	out.Control = siteSigninControlView{ID: control.Scope.ID, Enabled: control.Enabled, Current: current, Reason: control.Reason, NextRun: control.NextRun, NextOnce: control.NextOnce, NextMissed: control.NextMissed, Location: control.Scope.Location, Remote: control.Scope.Options.Remote}
 	if sources, _, e := api.remoteSources(ctx); e == nil {
 		for _, s := range sources {
 			view := s.public()

@@ -662,7 +662,7 @@ func (service notificationService) sendNativeSlackTo(ctx context.Context, config
 	if user == "" {
 		channelID, err = service.findSlackChannel(ctx, &client, token, channelName)
 	} else {
-		channelID, err = service.openSlackDirect(ctx, &client, token, user)
+		channelID = user
 	}
 	if err != nil || channelID == "" {
 		return false, err

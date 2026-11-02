@@ -162,27 +162,12 @@ func (api *siteSigninAPI) launch(ctx context.Context, b sitesignin.Batch, source
 		group.Wait()
 		book, done := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 		defer done()
-		_, saved, e := api.store.Batch(book, b.ID)
-		if e != nil {
-			return
-		}
-		var summary strings.Builder
-		summary.WriteString("批次 " + b.ID + "\n")
-		failures := 0
-		for _, r := range saved {
-			fmt.Fprintf(&summary, "【%s】%s：%s\n", r.Source.Name, r.Outcome.State, r.Outcome.Reason)
-			if r.Outcome.State == "failed" && r.Outcome.Retryable {
-				failures++
+		// Scheduled batches are completed after their durable next occurrence is
+		// advanced. Manual batches complete here while still holding the guard.
+		if !synchronous {
+			if e = api.complete(book, b.ID); e != nil {
+				slog.Warn("native site sign-in summary remains pending; provider actions will not be replayed")
 			}
-		}
-		if b.Scope.Settings.AutoCF > 0 && failures >= b.Scope.Settings.AutoCF {
-			original, e := api.system.ReadMany(book, []string{"plugin.CustomHosts", "plugin.CloudflareSpeedTest"})
-			if e == nil && truthy(objectSigninRaw(original["plugin.CustomHosts"])["enable"]) && configuredPluginValue(objectSigninRaw(original["plugin.CloudflareSpeedTest"])["cf_ip"]) {
-				_ = api.store.Dependency(book, b.ID, "CloudflareSpeedTest", "blocked", "命中原 CF 优选阈值且原 Hosts／CF 配置已启用；该执行器尚未迁移，未调用 Python")
-			}
-		}
-		if e = api.store.Notify(book, b.ID, boundedSigninSummary(summary.String())); e != nil {
-			slog.Warn("native site sign-in summary remains pending; provider actions will not be replayed")
 		}
 	}
 	if synchronous {
@@ -191,6 +176,91 @@ func (api *siteSigninAPI) launch(ctx context.Context, b sitesignin.Batch, source
 		go run()
 	}
 	return rows, nil
+}
+
+func (api *siteSigninAPI) complete(ctx context.Context, id string) error {
+	b, saved, e := api.store.Batch(ctx, id)
+	if e != nil || b.Notified {
+		return e
+	}
+	var summary strings.Builder
+	summary.WriteString("批次 " + b.ID + "\n")
+	failures, retries := 0, 0
+	for _, r := range saved {
+		if sitesignin.Active(r.State) {
+			return sitesignin.ErrState
+		}
+		fmt.Fprintf(&summary, "【%s】%s：%s\n", r.Source.Name, r.Outcome.State, r.Outcome.Reason)
+		if r.Outcome.State == "failed" && r.Outcome.Retryable {
+			failures++
+		}
+		out := r.Outcome
+		out.Reason = "【" + r.Source.Name + "】" + out.Reason
+		if b.Scope.Settings.Retry(out) {
+			retries++
+		}
+	}
+	if b.Scope.Settings.AutoCF > 0 && failures >= b.Scope.Settings.AutoCF {
+		original, e := api.system.ReadMany(ctx, []string{"plugin.CustomHosts", "plugin.CloudflareSpeedTest"})
+		if e != nil {
+			return e
+		}
+		if truthy(objectSigninRaw(original["plugin.CustomHosts"])["enable"]) && configuredPluginValue(objectSigninRaw(original["plugin.CloudflareSpeedTest"])["cf_ip"]) {
+			if e = api.store.Dependency(ctx, b.ID, "CloudflareSpeedTest", "blocked", "命中原 CF 优选阈值且原 Hosts／CF 配置已启用；该执行器尚未迁移，未调用 Python"); e != nil {
+				return e
+			}
+		}
+	}
+	nextTime := "未安排"
+	nextCount := 0
+	control, e := api.store.Control(ctx)
+	if e != nil {
+		return e
+	}
+	if control.Enabled && sitelogin.Hash(control.Scope) == sitelogin.Hash(b.Scope) {
+		var next time.Time
+		for _, raw := range []string{control.NextOnce, control.NextRun, control.NextMissed} {
+			if raw == "" {
+				continue
+			}
+			at, e := time.Parse(time.RFC3339Nano, raw)
+			if e != nil {
+				return e
+			}
+			if next.IsZero() || at.Before(next) {
+				next = at
+			}
+		}
+		if !next.IsZero() {
+			location, e := time.LoadLocation(b.Scope.Location)
+			if e != nil {
+				return e
+			}
+			nextTime = next.In(location).Format("2006-01-02 15:04:05 MST")
+			pending, e := api.selected(ctx, b.Scope, false)
+			if e != nil {
+				return e
+			}
+			nextCount = len(pending)
+		} else if b.Scope.Options.Remote {
+			nextTime = "等待原渠道命令"
+		}
+	}
+	plugin := fmt.Sprintf("本次签到数量: %d\n命中重试数量: %d\n强制签到数量: %d\n下次签到数量: %d\n下次签到时间: %s\n详见签到消息与本批次记录", len(saved), retries, len(b.Scope.Settings.Special), nextCount, nextTime)
+	return api.store.Notify(ctx, b.ID, boundedSigninSummary(summary.String()), plugin)
+}
+
+func (api *siteSigninAPI) reconcileSummaries(ctx context.Context) error {
+	ids, e := api.store.PendingSummaries(ctx)
+	if e != nil {
+		return e
+	}
+	for _, id := range ids {
+		if e = api.complete(ctx, id); e != nil {
+			return e
+		}
+	}
+	return nil
 }
 func boundedSigninSummary(raw string) string {
 	if len(raw) <= 10000 {

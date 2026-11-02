@@ -25,6 +25,7 @@ type siteSigninRemoteSource struct {
 	channel                notificationconfig.Channel
 	config                 map[string]any
 	digest, mode, receiver string
+	callback               string
 }
 type siteSigninRemoteView struct {
 	ID         string `json:"id"`
@@ -88,7 +89,17 @@ func (api *siteSigninAPI) remoteSources(ctx context.Context) ([]siteSigninRemote
 				s.mode = "poll"
 				s.receiver = base + "/bot[原机器人]/getUpdates"
 			} else {
-				s.receiver = "原 /telegram 回调、API key 与 IP 范围"
+				domain := strings.TrimRight(text(objectValue(cfg["app"])["domain"]), "/")
+				if domain != "" && !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
+					domain = "http://" + domain
+				}
+				u, e := url.Parse(domain)
+				key := text(objectValue(cfg["security"])["api_key"])
+				if e != nil || browserruntime.Origin(domain) == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || key == "" {
+					return nil, "", sitesignin.ErrScope
+				}
+				s.callback = domain + "/telegram?" + url.Values{"apikey": {key}}.Encode()
+				s.receiver = domain + "/telegram（原 API key 与 IP 范围）"
 			}
 		case "slack":
 			s.mode = "socket"
