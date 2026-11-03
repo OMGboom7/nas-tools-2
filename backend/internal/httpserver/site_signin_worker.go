@@ -49,6 +49,7 @@ type siteSigninAPI struct {
 	lifecycle  context.Context
 	closed     bool
 	cloudflare *cloudflareAPI
+	statistics *siteStatisticsAPI
 	wait       sync.WaitGroup
 }
 

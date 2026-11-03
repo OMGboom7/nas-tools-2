@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 	"github.com/0xforee/nas-tools/backend/internal/sitesignin"
+	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
 type siteSigninRemoteSource struct {
@@ -129,9 +131,15 @@ func (api *siteSigninAPI) remoteSources(ctx context.Context) ([]siteSigninRemote
 func (api *siteSigninAPI) remoteControl(ctx context.Context) (sitesignin.Control, []siteSigninRemoteSource, error) {
 	c, e := api.store.Control(ctx)
 	if e != nil || !c.Enabled || !c.Scope.Options.Remote {
+		if api.statistics != nil {
+			return api.statistics.remoteScope(ctx)
+		}
 		return c, nil, sitesignin.ErrScope
 	}
 	if e = api.base(c.Scope, "", c.Scope.PluginDigest)(ctx); e != nil {
+		if api.statistics != nil {
+			return api.statistics.remoteScope(ctx)
+		}
 		return c, nil, e
 	}
 	sources, _, e := api.remoteSources(ctx)
@@ -189,6 +197,16 @@ func (api *siteSigninAPI) incoming(ctx context.Context, c sitesignin.Control, s 
 		return e
 	}
 	if id == "" || len(id) > 1000 || !sitelogin.Text(user, 512) || len(username) > 1000 || len(body) > 32000 || at.IsZero() || at.Before(created.Truncate(time.Second)) || at.After(time.Now().Add(2*time.Minute)) || !s.allowed(user, body) {
+		return sitesignin.ErrScope
+	}
+	if body == "/sta" && api.statistics != nil {
+		err := api.statistics.remoteLaunch(ctx, s, id, user, at)
+		if errors.Is(err, sitestats.ErrState) {
+			return sitesignin.ErrScope
+		}
+		return err
+	}
+	if c.Scope.PluginDigest == "native-site-statistics" {
 		return sitesignin.ErrScope
 	}
 	channel := map[string]string{"telegram": "Telegram", "wechat": "微信", "synologychat": "Synology Chat", "slack": "Slack"}[s.channel.Type]

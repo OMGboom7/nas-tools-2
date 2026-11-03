@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import ts from "typescript";
+const compile=s=>ts.transpileModule(s,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const url=s=>"data:text/javascript;base64,"+Buffer.from(s).toString("base64");
+const client=url(compile(readFileSync(new URL("../src/api/client.ts",import.meta.url),"utf8")));
+const api=await import(url(compile(readFileSync(new URL("../src/api/siteStatistics.ts",import.meta.url),"utf8")).replace('"./client"',JSON.stringify(client))));
+const job={id:"a".repeat(64),origin:"fixture",actor:"fixture-admin",state:"unknown",created:"fixture",updated:"fixture",requests:2,messageRequests:0,readMessages:false,results:[]};
+const status={fingerprint:"b".repeat(64),goOnly:true,cron:"",current:false,control:{enabled:false,epoch:"",actor:"",fingerprint:"",cron:"",location:"",readMessages:false,remote:false,nextRun:"",created:""},targets:[],items:[],jobs:[job]};
+const response=data=>({ok:true,status:200,json:async()=>({code:0,success:true,data})});
+test("statistics status keeps interrupted jobs and rejects invented states",()=>{assert.equal(api.statsStatusValid(status),true);assert.equal(api.statsStatusValid({...status,jobs:[{...job,state:"invented_success"}]}),false);assert.equal(api.statsStatusValid({...status,control:{...status.control,readMessages:"yes"}}),false);});
+test("statistics byte counters and seed sizes preserve decimal precision",()=>{const detail={siteId:"42",history:[{date:"2026-11-03",upload:"9007199254740993",download:"1",seedingSize:"9007199254740993",bonus:0,seeding:1}],seedingInfo:[["3","9007199254740993"]]};assert.equal(api.statsDetailValid(detail),true);assert.equal(api.statsDetailValid({...detail,seedingInfo:[[3,9007199254740993]]}),false);assert.equal(api.statsDetailValid({...detail,history:[{...detail.history[0],upload:"9223372036854775808"}]}),false);});
+test("statistics detail cannot query an unrelated site or accept mismatched receipt",async t=>{let calls=0;t.mock.method(globalThis,"fetch",async(path,options)=>{calls++;assert.equal(path,"/api/v1/site-statistics/detail/42");assert.equal(options.method,"GET");return response({siteId:"43",history:[],seedingInfo:[]});});assert.throws(()=>api.getStatsDetail("fixture","../other"));await assert.rejects(()=>api.getStatsDetail("fixture","42"));assert.equal(calls,1);});
+test("statistics refresh sends explicit message scope and preserves original request ID without retry",async t=>{let calls=0;t.mock.method(globalThis,"fetch",async(path,options)=>{calls++;assert.equal(path,"/api/v1/site-statistics/refresh");const body=JSON.parse(options.body);assert.equal(body.requestId,"c".repeat(64));assert.equal(body.readMessages,false);assert.deepEqual(body.siteIds,["42"]);return {ok:true,status:200,json:async()=>{throw new Error("lost fixture reply")}};});await assert.rejects(()=>api.refreshStatistics("fixture",status.fingerprint,"c".repeat(64),["42"],false));assert.equal(calls,1);});

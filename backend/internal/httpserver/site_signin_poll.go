@@ -17,6 +17,9 @@ import (
 )
 
 func (api *siteSigninAPI) remoteCurrent(ctx context.Context, c sitesignin.Control) error {
+	if c.Scope.PluginDigest == "native-site-statistics" && api.statistics != nil {
+		return api.statistics.remoteCurrent(ctx, c)
+	}
 	if e := api.base(c.Scope, "", c.Scope.PluginDigest)(ctx); e != nil {
 		return e
 	}
@@ -30,7 +33,13 @@ func (api *siteSigninAPI) remoteCall(ctx context.Context, c sitesignin.Control, 
 	if e := api.remoteCurrent(ctx, c); e != nil {
 		return nil, 0, e
 	}
-	id, e := api.store.RemoteIntent(ctx, c.Scope, s.digest, kind, api.base(c.Scope, "", c.Scope.PluginDigest))
+	intent := api.store.RemoteIntent
+	guard := api.base(c.Scope, "", c.Scope.PluginDigest)
+	if c.Scope.PluginDigest == "native-site-statistics" {
+		intent = api.store.RemoteIntentExternal
+		guard = func(ctx context.Context) error { return api.remoteCurrent(ctx, c) }
+	}
+	id, e := intent(ctx, c.Scope, s.digest, kind, guard)
 	if e != nil {
 		return nil, 0, e
 	}

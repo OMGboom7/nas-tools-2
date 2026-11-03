@@ -31,6 +31,7 @@ type rssRunAPI struct {
 	openSubtitles   *openSubtitleAPI
 	siteLogin       *siteLoginAPI
 	siteSignin      *siteSigninAPI
+	siteStatistics  *siteStatisticsAPI
 	cloudflare      *cloudflareAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI

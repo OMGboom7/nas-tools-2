@@ -105,7 +105,7 @@ func Emit(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body str
 }
 func emitBusiness(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string, data json.RawMessage) error {
 	switch kind {
-	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted", "mediaserver_message", "plugin_message", "site_signin":
+	case "transfer_finished", "download_start", "rss_added", "rss_finished", "source_file_deleted", "library_file_deleted", "mediaserver_message", "plugin_message", "site_signin", "site_message", "ptrefresh_date_message":
 	default:
 		return ErrState
 	}

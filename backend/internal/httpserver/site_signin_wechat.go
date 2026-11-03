@@ -99,7 +99,7 @@ func (api *siteSigninAPI) wechatHTTP(w http.ResponseWriter, r *http.Request, c s
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	if r.Method == "GET" {
-		if api.base(c.Scope, "", c.Scope.PluginDigest)(r.Context()) != nil {
+		if api.remoteCurrent(r.Context(), c) != nil {
 			signinError(w, sitesignin.ErrScope)
 			return
 		}

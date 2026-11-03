@@ -32,6 +32,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 	"github.com/0xforee/nas-tools/backend/internal/sitesignin"
+	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 	"github.com/0xforee/nas-tools/backend/internal/wordconfig"
 )
@@ -91,6 +92,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSiteLogin := startSiteLoginWorker(workerContext, runner.siteLogin)
 		waitSiteSignin := startSiteSigninWorker(workerContext, runner.siteSignin)
 		waitCloudflare := startCloudflareWorker(workerContext, runner.cloudflare)
+		waitStatistics := startSiteStatisticsWorker(workerContext, runner.siteStatistics)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -111,6 +113,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitSiteLogin()
 			waitSiteSignin()
 			waitCloudflare()
+			waitStatistics()
 		}
 	}
 	return handler, wait, nil
@@ -157,6 +160,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	var nativeSiteLogins *sitelogin.Store
 	var nativeSiteSignins *sitesignin.Store
 	var nativeCloudflare *cloudflare.Store
+	var nativeStatistics *sitestats.Store
 	var nativeFilters *filterconfig.Store
 	var nativeNotifications *notificationconfig.Store
 	var nativeRSSParsers *rssparserconfig.Store
@@ -203,6 +207,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeCloudflare, err = cloudflare.Open(application.UserDatabasePath())
 		if err != nil {
 			return nil, fmt.Errorf("open native CF receipts: %w", err)
+		}
+		nativeStatistics, err = sitestats.Open(application.UserDatabasePath())
+		if err != nil {
+			return nil, fmt.Errorf("open native site statistics: %w", err)
 		}
 		nativeFilters, err = filterconfig.OpenWritable(application.UserDatabasePath())
 		if err != nil {
@@ -567,6 +575,15 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.siteLogin = nativeSiteLogin
 	nativeSiteSignin := &siteSigninAPI{store: nativeSiteSignins, login: nativeSiteLogin, system: nativeSystemConfig, channels: nativeNotifications, cache: &sitesignin.FileCache{Directory: filepath.Dir(cfg.ApplicationConfigPath)}}
 	rssRunner.siteSignin = nativeSiteSignin
+	nativeStats := &siteStatisticsAPI{store: nativeStatistics, login: nativeSiteLogin, signin: nativeSiteSignin}
+	nativeSiteSignin.statistics = nativeStats
+	rssRunner.siteStatistics = nativeStats
+	mux.HandleFunc("/api/v1/site-statistics", nativeStats.manage)
+	mux.HandleFunc("/api/v1/site-statistics/", nativeStats.manage)
+	mux.HandleFunc("GET /api/v1/site/statistics", nativeStats.compat)
+	for _, suffix := range []string{"activity", "history", "seedinfo"} {
+		mux.HandleFunc("POST /api/v1/site/statistics/"+suffix, nativeStats.compat)
+	}
 	mux.HandleFunc("/api/v1/site-signin", nativeSiteSignin.manage)
 	mux.HandleFunc("/api/v1/site-signin/", nativeSiteSignin.manage)
 	for _, path := range []string{"/telegram", "/synology", "/slack", "/wechat"} {
