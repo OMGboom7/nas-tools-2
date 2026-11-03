@@ -49,6 +49,6 @@
 **Files:** Create `frontend/src/api/cloudflare.ts`, `frontend/src/components/CloudflareManager.tsx`; modify plugin page and tests; update migration records.
 
 - [x] 原配置编辑、核对接管、启停、历史及原回执只读核对。
-- [ ] 已通过核心／HTTP／前端集中回归、自建 Go 程序及处理器启动恢复；真实页面、物理中断及完整通知模拟仍待验收。
+- [x] 核心／HTTP／前端集中回归、真实 React 页面、正常 Go 进程中断／重启、官方程序本机 IPv4／IPv6 协议及 Webhook 完整通知链通过；单次计划与真实签到失败消费者贯通。
 - [x] 一位独立审查者核对完整调用链，集中处理发现，再验证受影响范围。
-- [ ] 记录真实结果和剩余限制，提交推送并核对远端提交。
+- [x] 真实结果、早期失败轮与部署／镜像等全项目剩余限制已记录；各代码批次提交推送，最终记录随本批提交核对远端。

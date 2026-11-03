@@ -1,0 +1,43 @@
+.cf-manager {
+  min-width: 0;
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  border: 1px solid #26384e;
+  border-radius: 14px;
+  background: #101c2d;
+  color: #e0e9f4;
+}
+.cf-manager > header { gap: 1rem; align-items: flex-start; }
+.cf-manager h2 { margin: 0 0 .6rem; }
+.cf-manager h3 { margin: 1.25rem 0 .75rem; }
+.cf-manager p { line-height: 1.6; overflow-wrap: anywhere; }
+.cf-manager button {
+  margin: .3rem .4rem .3rem 0;
+  padding: .65rem .85rem;
+  border: 1px solid #3b536e;
+  border-radius: 8px;
+  background: #162940;
+  color: #e0e9f4;
+  font: inherit;
+  cursor: pointer;
+}
+.cf-manager button:hover:not(:disabled) { border-color: #70dbbd; }
+.cf-manager button:disabled { opacity: .5; cursor: default; }
+.cf-manager .services-heading__actions { display: flex; flex-wrap: wrap; gap: .35rem; }
+.cf-manager label { display: flex; align-items: flex-start; gap: .55rem; margin: .85rem 0; line-height: 1.6; }
+.cf-manager input[type="checkbox"] { flex-shrink: 0; margin-top: .35rem; }
+.cf-manager .table-scroll { width: 100%; max-width: 100%; overflow-x: auto; }
+.cf-manager table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+.cf-manager th, .cf-manager td { padding: .75rem .5rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid #26384e; }
+.cf-manager th { color: #aebed2; font-weight: 500; }
+.cf-manager th:nth-child(1) { width: 24%; }
+.cf-manager th:nth-child(2) { width: 28%; }
+.cf-manager th:nth-child(3) { width: 20%; }
+.cf-manager th:nth-child(4) { width: 28%; }
+.cf-manager td p { margin: .4rem 0 0; }
+.cf-manager code { font-size: .8rem; white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
+@media (max-width: 640px) {
+  .cf-manager { padding: 1rem; }
+  .cf-manager > header { flex-direction: column; }
+  .cf-manager th, .cf-manager td { padding: .65rem .35rem; }
+}

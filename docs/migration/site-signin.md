@@ -24,9 +24,9 @@ Slack 另以不修改产品文件的临时 Go 测试覆盖层完成竞态贯通�
 
 原调度起点语义参照 [APScheduler interval 文档](https://apscheduler.readthedocs.io/en/3.x/modules/triggers/interval.html)，Telegram 两种接收方式核对 [Bot API](https://core.telegram.org/bots/api#getupdates)，Slack 原用户回复核对 [chat.postMessage](https://docs.slack.dev/reference/methods/chat.postMessage/)；未额外要求 `conversations.open` 的权限。
 
-2026-11-03，CF 优选依赖的 Go／React、持久执行／Hosts 更新核对、周期与单次及原签到批次触发已接通，接管还需明确允许签到入口。整条调用链接通后集中回归通过，完整范围与剩余验收见 [CF 优选记录](cloudflare-speedtest.md)。
+2026-11-03，CF 优选依赖的 Go／React、持久执行／Hosts 更新核对、周期与单次及原签到批次触发已接通，接管还需明确允许签到入口。集中回归后已补齐真实页面、正常进程重启与实际强制中断、官方程序本机双地址族、原 Webhook 通知和真实签到失败触发验收；完整范围与证据见 [CF 优选记录](cloudflare-speedtest.md)。
 
-仍未完成：React 挑战输入、海报／Lens／AI／原保存账户登录的完整调用链验收，CF 的真实页面／物理中断及辅助协议验收，真实站点与消息账号、存量升级／回滚，以及候选镜像实际启动。普通通用站点页面成功不代替这些分支。Python 继续保留，整体退出指标仍为 360/8/87/45，整体粗估 50–60%。
+仍未完成：React 挑战输入、海报／Lens／AI／原保存账户登录的完整调用链验收，真实站点与消息账号、存量升级／回滚，以及候选镜像实际启动。普通通用站点页面成功不代替这些分支。Python 继续保留，整体退出指标仍为 360/8/87/45，整体粗估 50–60%。
 
 ## 前一批：配置、调度、消息入口与 React 接通
 

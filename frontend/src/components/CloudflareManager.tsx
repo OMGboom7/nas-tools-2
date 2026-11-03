@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../api/client";
 import { activateCF, closeCF, getCF, getCFJob, reconcileCF, reviewCF, runCF, stopCF, type CFStatus } from "../api/cloudflare";
+import "./CloudflareManager.css";
 
 type Props={token:string;onSessionExpired:()=>void};
 const labels:Record<string,string>={queued:"已排队",running:"测速中",applying:"核对 Hosts 更新",complete:"已确认完成",failed:"未完成",blocked:"原设置已变化",unknown:"结果待核对",closed:"本地占用已关闭"};
@@ -12,7 +13,7 @@ export function CloudflareManager({token,onSessionExpired}:Props){
  const action=async(fn:()=>Promise<unknown>)=>{setBusy(true);setMessage("");try{await fn();await load();}catch(e){error(e);}finally{setBusy(false);}};
  const prepare=(kind:"activate"|"run")=>action(async()=>{const id=crypto.randomUUID();const value=await reviewCF(token,id);setReview(value);setMode(kind);setNonce(id);setAllowSignin(value.fromSignin);setConfirm(false);});
  const execute=()=>action(async()=>{if(!review||!confirm)return;if(mode==="activate"){await activateCF(token,review.fingerprint,allowSignin);setMessage("已接管此配置，请查看下次运行时间。");}else{if(!review.requestID)throw new Error("原请求编号缺失，请重新核对");setPending(review.requestID);const job=await runCF(token,review.fingerprint,nonce);if(job.id!==review.requestID)throw new Error("应答不是原优选任务");setMessage("原优选任务已排队。");}setReview(undefined);setConfirm(false);});
- return <section className="settings-panel" aria-label="Cloudflare IP 优选管理">
+ return <section className="settings-panel cf-manager" aria-label="Cloudflare IP 优选管理">
   <header className="services-heading"><div><h2>Cloudflare IP 优选</h2><p>按当前配置测速，核对结果后更新自定义 Hosts。</p></div><button type="button" className="secondary-button" disabled={busy} onClick={()=>void load()}>刷新回执</button></header>
   {message&&<p role="status">{message}</p>}
   {!status?<p>正在读取优选配置…</p>:<>
