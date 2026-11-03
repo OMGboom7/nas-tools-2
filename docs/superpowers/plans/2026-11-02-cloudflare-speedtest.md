@@ -34,21 +34,21 @@
 - [x] 保留配置并实现参数数组、Hosts 精确替换和自动校准。
 - [x] 支持官方新旧资产、归档限制、原子安装和离线回退。
 - [x] 独立运行目录、合并输入、可取消执行和本次 CSV 核对；本机／Linux amd64 无 CGO 整库编译实际通过。
-- [x] 已编写集中验收场景，尚未编译／运行模块测试；在 Task 3 完成之前不运行模块测试。
+- [x] 首批只编译、不运行测试；运行时及 React 接通后进入 Task 3 集中验证，结果见模块实施记录。
 
 ### Task 2: 持久运行时与原插件生命周期
 
 **Files:** Create `backend/internal/cloudflare/store*.go`, `backend/internal/httpserver/cloudflare*.go`; modify existing server/plugin/worker integration and `site_signin_worker.go`.
 
-- [ ] 原配置、管理员／Hosts 路径、未来执行授权、调度时间与逐动作意图持久化。
-- [ ] 使用跨进程锁执行，未知结果不重发；Hosts 前后快照核对和完成事务。
-- [ ] 接通现代／旧插件配置、安装卸载、周期／单次、签到触发和完成通知。
+- [x] 原配置、管理员／Hosts 路径、代理范围、未来执行授权、调度时间与逐动作意图持久化。
+- [x] 使用跨进程锁执行，未知结果不重发；Hosts 完整前后快照核对和完成事务。
+- [x] 接通现代／旧插件配置、安装卸载、周期／单次、签到触发和完成通知。
 
 ### Task 3: React 与整模块集中验收
 
 **Files:** Create `frontend/src/api/cloudflare.ts`, `frontend/src/components/CloudflareManager.tsx`; modify plugin page and tests; update migration records.
 
-- [ ] 原配置编辑、核对接管、启停、历史及原回执只读核对。
-- [ ] 完成核心、HTTP、React 与隔离原生程序／真实页面验收，再做相关静态和平台构建检查。
-- [ ] 一位独立审查者核对完整调用链，集中处理发现，再验证受影响范围。
+- [x] 原配置编辑、核对接管、启停、历史及原回执只读核对。
+- [ ] 已通过核心／HTTP／前端集中回归、自建 Go 程序及处理器启动恢复；真实页面、物理中断及完整通知模拟仍待验收。
+- [x] 一位独立审查者核对完整调用链，集中处理发现，再验证受影响范围。
 - [ ] 记录真实结果和剩余限制，提交推送并核对远端提交。

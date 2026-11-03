@@ -48,6 +48,7 @@ type siteSigninAPI struct {
 	socketDial func(context.Context, string) (net.Conn, *bufio.Reader, error)
 	lifecycle  context.Context
 	closed     bool
+	cloudflare *cloudflareAPI
 	wait       sync.WaitGroup
 }
 
@@ -206,7 +207,17 @@ func (api *siteSigninAPI) complete(ctx context.Context, id string) error {
 			return e
 		}
 		if truthy(objectSigninRaw(original["plugin.CustomHosts"])["enable"]) && configuredPluginValue(objectSigninRaw(original["plugin.CloudflareSpeedTest"])["cf_ip"]) {
-			if e = api.store.Dependency(ctx, b.ID, "CloudflareSpeedTest", "blocked", "命中原 CF 优选阈值且原 Hosts／CF 配置已启用；该执行器尚未迁移，未调用 Python"); e != nil {
+			state, reason := "blocked", "CF 优选尚未接管或未允许签到触发"
+			if api.cloudflare != nil && api.cloudflare.store != nil {
+				control, err := api.cloudflare.store.Control(ctx)
+				if err == nil && control.FromSignin && api.cloudflare.validate(ctx, control) == nil {
+					job, err := api.cloudflare.store.Queue(ctx, "signin:"+b.ID, true)
+					if err == nil {
+						state, reason = job.State, "原签到批次关联优选任务："+job.ID
+					}
+				}
+			}
+			if e = api.store.Dependency(ctx, b.ID, "CloudflareSpeedTest", state, reason); e != nil {
 				return e
 			}
 		}

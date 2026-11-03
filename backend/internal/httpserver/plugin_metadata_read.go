@@ -84,7 +84,7 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) {
 				for _, other := range installed {
 					if service.nativeOpenSubtitles(other) {
 						writeAPIError(response, 501, 501, "mixed plugin configuration list cannot forward native subtitle credentials; use the individual native pages")
@@ -97,6 +97,24 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeCloudflare(id) {
+				actor, ok := service.cloudflare.actor(response, request, false)
+				if !ok {
+					return
+				}
+				detail, err := service.cloudflare.detail(request.Context(), actor)
+				if err != nil {
+					cfError(response, err)
+					return
+				}
+				c, err := service.cloudflare.store.Control(request.Context())
+				if err != nil {
+					cfError(response, err)
+					return
+				}
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "state": service.cloudflare.validate(request.Context(), c) == nil, "stateKnown": true, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeSignin(id) {
 				actor, ok := service.siteSignin.actor(response, request, false)
 				if !ok {

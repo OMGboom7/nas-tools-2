@@ -58,8 +58,12 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		item.Installed = installedSet[item.ID]
 		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeOpenSubtitles(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID) || service.nativeEventWebhook(item.ID) || service.nativeSpeedLimiter(item.ID) || service.nativeMovieLike(item.ID) || service.nativeMediaSyncDelete(item.ID)
 		item.Native = item.Native || service.nativeSignin(item.ID)
+		item.Native = item.Native || service.nativeCloudflare(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
+		if service.nativeCloudflare(item.ID) {
+			item.ActionsAvailable = service.cloudflare.organizer.pureGo
+		}
 		if service.nativeSignin(item.ID) {
 			item.ActionsAvailable = service.siteSignin.login.pureGo
 			item.HasPage = true
@@ -102,6 +106,13 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
+			if service.nativeCloudflare(item.ID) {
+				c, err := service.cloudflare.store.Control(ctx)
+				item.Running = err == nil && service.cloudflare.validate(ctx, c) == nil
+				item.StateKnown = err == nil
+				data.Items = append(data.Items, item)
+				continue
+			}
 			if service.nativeSignin(item.ID) {
 				item.Running, item.StateKnown = service.signinSummary(ctx)
 				data.Items = append(data.Items, item)

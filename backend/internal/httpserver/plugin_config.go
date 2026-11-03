@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeCloudflare(request.PathValue("id")) {
+		service.serveCloudflarePlugin(response, request, "get")
+		return
+	}
 	if service.nativeSignin(request.PathValue("id")) {
 		service.serveSigninPlugin(response, request, "get")
 		return
@@ -122,6 +126,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeCloudflare(request.PathValue("id")) {
+		service.serveCloudflarePlugin(response, request, "save")
+		return
+	}
 	if service.nativeSignin(request.PathValue("id")) {
 		service.serveSigninPlugin(response, request, "save")
 		return

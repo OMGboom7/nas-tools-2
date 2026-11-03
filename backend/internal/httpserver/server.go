@@ -16,7 +16,9 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/auth"
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
+	"github.com/0xforee/nas-tools/backend/internal/cloudflare"
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/customhosts"
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
@@ -88,6 +90,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitFuzzy := startFuzzySubscriptionWorker(workerContext, runner.search.fuzzy)
 		waitSiteLogin := startSiteLoginWorker(workerContext, runner.siteLogin)
 		waitSiteSignin := startSiteSigninWorker(workerContext, runner.siteSignin)
+		waitCloudflare := startCloudflareWorker(workerContext, runner.cloudflare)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -107,6 +110,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitFuzzy()
 			waitSiteLogin()
 			waitSiteSignin()
+			waitCloudflare()
 		}
 	}
 	return handler, wait, nil
@@ -152,6 +156,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	var nativeSites *siteconfig.Store
 	var nativeSiteLogins *sitelogin.Store
 	var nativeSiteSignins *sitesignin.Store
+	var nativeCloudflare *cloudflare.Store
 	var nativeFilters *filterconfig.Store
 	var nativeNotifications *notificationconfig.Store
 	var nativeRSSParsers *rssparserconfig.Store
@@ -194,6 +199,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeSiteSignins, err = sitesignin.Open(application.UserDatabasePath())
 		if err != nil {
 			return nil, fmt.Errorf("open native site sign-in receipts: %w", err)
+		}
+		nativeCloudflare, err = cloudflare.Open(application.UserDatabasePath())
+		if err != nil {
+			return nil, fmt.Errorf("open native CF receipts: %w", err)
 		}
 		nativeFilters, err = filterconfig.OpenWritable(application.UserDatabasePath())
 		if err != nil {
@@ -744,6 +753,14 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	if cfg.HostsPath != "" {
 		plugins.hosts = &nativeHostsPlugin{path: cfg.HostsPath}
 	}
+	nativeCF := &cloudflareAPI{store: nativeCloudflare, organizer: &organizer, hosts: plugins.hosts, root: cfRoot(cfg.ApplicationConfigPath), transport: transport}
+	if nativeCloudflare != nil {
+		plugins.cloudflare = nativeCF
+		rssRunner.cloudflare = nativeCF
+		nativeSiteSignin.cloudflare = nativeCF
+	}
+	mux.HandleFunc("/api/v1/cloudflare", nativeCF.manage)
+	mux.HandleFunc("/api/v1/cloudflare/", nativeCF.manage)
 	if nativeSystemConfig != nil {
 		mux.HandleFunc("POST /api/v1/plugin/apps", plugins.serveNativeLegacyPluginApps)
 		for _, action := range []string{"install", "uninstall", "config", "status"} {
@@ -787,7 +804,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	if cfg.HostsPath != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		result, err := restoreNativeHosts(ctx, nativeSystemConfig, cfg.HostsPath)
+		var result customhosts.Result
+		var err error
+		if nativeCF.store != nil {
+			result, err = nativeCF.restoreHosts(ctx, nativeSystemConfig)
+		} else {
+			result, err = restoreNativeHosts(ctx, nativeSystemConfig, cfg.HostsPath)
+		}
 		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("restore native CustomHosts: %w", err)

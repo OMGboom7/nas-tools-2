@@ -8,6 +8,7 @@ import { SpeedLimiterManager } from "../components/SpeedLimiterManager";
 import { MovieLikeManager } from "../components/MovieLikeManager";
 import { MediaSyncDeleteManager } from "../components/MediaSyncDeleteManager";
 import { SiteSigninManager } from "../components/SiteSigninManager";
+import { CloudflareManager } from "../components/CloudflareManager";
 
 type PluginsPageProps = {
   session: AuthSession;
@@ -108,6 +109,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
         {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的插件。</div> : <section className="plugin-grid" aria-label="插件列表">{filtered.map((plugin) => <PluginCard key={plugin.id} plugin={plugin} busy={Boolean(busy[plugin.id])} onView={() => setViewing(plugin)} onConfigure={() => setEditing(plugin)} onInstall={() => void install(plugin)} onUninstall={() => { setConfirmation(""); setRemoving(plugin); }} />)}</section>}
       </>}
       {data?.items.some(p=>p.id==="Webhook"&&p.native&&p.actionsAvailable)&&<EventWebhookReceipts token={session.token} onSessionExpired={onSessionExpired}/>}
+      {data?.items.some(p=>p.id==="CloudflareSpeedTest"&&p.native&&p.installed)&&<CloudflareManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="SpeedLimiter"&&p.native&&p.actionsAvailable)&&<SpeedLimiterManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="MovieLike"&&p.native&&p.actionsAvailable)&&<MovieLikeManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="MediaSyncDel"&&p.native&&p.actionsAvailable)&&<MediaSyncDeleteManager token={session.token} onSessionExpired={onSessionExpired}/>}

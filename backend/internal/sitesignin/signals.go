@@ -90,7 +90,12 @@ func (s *Store) ResolveSignal(ctx context.Context, original Signal, state, reaso
 	return nil
 }
 func (s *Store) Dependency(ctx context.Context, batch, plugin, state, reason string) error {
-	if !sitelogin.Hex(batch, 64) || plugin != "CloudflareSpeedTest" || state != "blocked" || !sitelogin.Text(reason, 800) {
+	validState := false
+	switch state {
+	case "queued", "running", "applying", "complete", "failed", "blocked", "unknown", "closed":
+		validState = true
+	}
+	if !sitelogin.Hex(batch, 64) || plugin != "CloudflareSpeedTest" || !validState || !sitelogin.Text(reason, 800) {
 		return ErrState
 	}
 	_, e := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS GO_SITE_SIGNIN_DEPENDENCIES(BATCH_ID TEXT PRIMARY KEY,PLUGIN TEXT NOT NULL,STATE TEXT NOT NULL,REASON TEXT NOT NULL,CREATED TEXT NOT NULL)`)

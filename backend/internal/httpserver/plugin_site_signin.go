@@ -34,7 +34,7 @@ func (api *siteSigninAPI) detail(ctx context.Context, actor string) (pluginConfi
 	for _, v := range []struct{ key, title string }{{"enabled", "准备启用周期签到"}, {"notify", "签到汇总通知"}, {"onlyonce", "接管后运行一次"}, {"clean", "接管后重新核对今日已确认的站点"}, {"missed_detection", "漏签检测"}} {
 		fields = append(fields, pluginConfigField{Key: v.key, Title: v.title, Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "保存不会直接访问站点，请在签到管理中核对后执行。未知动作不会自动重做。"})
 	}
-	for _, v := range []struct{ key, title, tip string }{{"cron", "签到时间或周期", "保留原格式：五段 cron、08:00、08:00-09:00，或小时数（例如 23.5）。"}, {"retry_keyword", "已确认失败的重试关键词", "只对可重试失败和延后任务生效；不明结果、停止和中断任务不自动重做。"}, {"queue_cnt", "原配置并发数", "保留原值；Go 同时处理最多 32 个站点，其余站点排队执行。"}, {"auto_cf", "CF 优选失败阈值", "保留原配置；CF 优选执行器尚未迁移，触发时保留依赖状态，不调用 Python。"}, {"missed_schedule", "漏签检测时间段", "例如 09:00-23:59；按原时区每小时核对未完成站点。"}} {
+	for _, v := range []struct{ key, title, tip string }{{"cron", "签到时间或周期", "保留原格式：五段 cron、08:00、08:00-09:00，或小时数（例如 23.5）。"}, {"retry_keyword", "已确认失败的重试关键词", "只对可重试失败和延后任务生效；不明结果、停止和中断任务不自动重做。"}, {"queue_cnt", "原配置并发数", "保留原值；Go 同时处理最多 32 个站点，其余站点排队执行。"}, {"auto_cf", "CF 优选失败阈值", "达到阈值后，使用已接管且允许签到触发的 CF 优选设置；同一签到批次只排入一次。"}, {"missed_schedule", "漏签检测时间段", "例如 09:00-23:59；按原时区每小时核对未完成站点。"}} {
 		fields = append(fields, pluginConfigField{Key: v.key, Title: v.title, Type: "text", WriteOnly: true, Configured: configuredPluginValue(objectSigninRaw(raw)[v.key]), Options: []pluginConfigChoice{}, Tooltip: v.tip})
 	}
 	all, e := api.login.sites.List(ctx)

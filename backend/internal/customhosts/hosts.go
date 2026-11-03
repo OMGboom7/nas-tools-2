@@ -146,6 +146,16 @@ func Rewrite(original string, mappings []string) (string, bool, error) {
 // It never creates a target or follows symlinks. Failed writes attempt to restore
 // the original bytes; callers must surface an error, not report active state.
 func Apply(ctx context.Context, path, input string) (Result, error) {
+	return apply(ctx, path, input, nil)
+}
+
+// ApplyExact checks the complete expected file under the same file lock as the
+// write. It cannot overwrite an intervening edit with an earlier CF plan.
+func ApplyExact(ctx context.Context, path, input, expected string) (Result, error) {
+	return apply(ctx, path, input, &expected)
+}
+
+func apply(ctx context.Context, path, input string, expected *string) (Result, error) {
 	mappings, invalid, err := Parse(ctx, input)
 	result := Result{Invalid: invalid}
 	if err != nil || len(mappings) == 0 {
@@ -179,6 +189,9 @@ func Apply(ctx context.Context, path, input string) (Result, error) {
 	defer unlockFile(file)
 	contents, err := io.ReadAll(io.LimitReader(file, maxFile+1))
 	if err != nil || len(contents) > maxFile {
+		return result, ErrFile
+	}
+	if expected != nil && string(contents) != *expected {
 		return result, ErrFile
 	}
 	next, legacy, err := Rewrite(string(contents), mappings)

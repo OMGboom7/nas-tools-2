@@ -25,6 +25,15 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if service.nativeCloudflare(id) {
+			probe.SetPathValue("id", id)
+			nativeAction := action
+			if action == "config" {
+				nativeAction = "legacy-save"
+			}
+			service.serveCloudflarePlugin(response, probe, nativeAction)
+			return
+		}
 		if !pluginIDPattern.MatchString(id) {
 			writeAPIError(response, 400, 400, "invalid plugin id")
 			return

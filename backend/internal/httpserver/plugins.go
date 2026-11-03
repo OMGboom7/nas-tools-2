@@ -28,6 +28,7 @@ type pluginService struct {
 	mediaSyncDelete *mediaSyncDeleteAPI
 	movieLike       *movieLikeAPI
 	siteSignin      *siteSigninAPI
+	cloudflare      *cloudflareAPI
 }
 
 type pluginSummary struct {
@@ -82,6 +83,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeCloudflare(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveCloudflarePlugin(response, request, action)
+		return
+	}
 	if service.nativeSignin(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

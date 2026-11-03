@@ -98,6 +98,9 @@ func (i Installer) fetch(ctx context.Context, target string, limit int64, before
 	if i.Client != nil {
 		client = *i.Client
 	}
+	if client.Timeout == 0 {
+		client.Timeout = 90 * time.Second
+	}
 	previous := client.CheckRedirect
 	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || !allowedDownload(r.URL) {
@@ -405,6 +408,11 @@ func (i Installer) Ensure(ctx context.Context, s Settings, before Before) (Insta
 		if version == "" {
 			version = "v2.2.2"
 		}
+		if local, localErr := i.cachedArchive(ctx, s, version, osName, arch, before); localErr == nil {
+			return local, nil
+		} else if errors.Is(localErr, ErrDispatch) {
+			return Installation{}, localErr
+		}
 		r, err = i.latest(ctx, "tags/"+version, before)
 		if err != nil {
 			return fallback(err)
@@ -416,6 +424,11 @@ func (i Installer) Ensure(ctx context.Context, s Settings, before Before) (Insta
 	asset, err := selectAsset(r, osName, arch)
 	if err != nil {
 		return fallback(err)
+	}
+	if local, localErr := i.cachedArchive(ctx, s, r.Version, osName, arch, before, asset.Digest); localErr == nil {
+		return local, nil
+	} else if errors.Is(localErr, ErrDispatch) {
+		return Installation{}, localErr
 	}
 	data, err := i.fetch(ctx, asset.URL, 32<<20, before)
 	if err != nil {
@@ -434,3 +447,33 @@ func (i Installer) Ensure(ctx context.Context, s Settings, before Before) (Insta
 	}
 	return installed, nil
 }
+
+func (i Installer) cachedArchive(ctx context.Context, s Settings, version, osName, arch string, before Before, expected ...string) (Installation, error) {
+	if arch == "arm" {
+		arch = "armv7"
+	}
+	extension := ".tar.gz"
+	if osName == "darwin" {
+		extension = ".zip"
+	}
+	for _, prefix := range []string{"CloudflareST_", "cfst_"} {
+		name := prefix + osName + "_" + arch + extension
+		data, err := regular(filepath.Join(i.Root, name), 32<<20)
+		if err != nil {
+			continue
+		}
+		if len(expected) > 0 && expected[0] != "" && !strings.EqualFold(expected[0], "sha256:"+sum(data)) {
+			continue
+		}
+		files, err := unpack(name, data, osName, iArch(i))
+		if err != nil {
+			continue
+		}
+		if err = permit(ctx, before, Operation{Kind: "local_archive", Target: name, Digest: sum(data)}); err != nil {
+			return Installation{}, err
+		}
+		return i.publish(ctx, s, release{Version: version}, files, before)
+	}
+	return Installation{}, ErrState
+}
+func iArch(i Installer) string { _, arch, _ := i.platform(); return arch }
