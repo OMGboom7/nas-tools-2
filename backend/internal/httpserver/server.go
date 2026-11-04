@@ -581,6 +581,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("/api/v1/site-statistics", nativeStats.manage)
 	mux.HandleFunc("/api/v1/site-statistics/", nativeStats.manage)
 	mux.HandleFunc("GET /api/v1/site-statistics/overview", nativeStats.serveStatsRead)
+	mux.HandleFunc("GET /api/v1/site-statistics/traffic", nativeStats.serveStatsTraffic)
 	mux.HandleFunc("GET /api/v1/site-statistics/detail/{id}", nativeStats.serveStatsRead)
 	mux.HandleFunc("GET /api/v1/site-statistics/ranking/{id}", nativeStats.serveStatsRead)
 	mux.HandleFunc("GET /api/v1/site/statistics", nativeStats.compat)

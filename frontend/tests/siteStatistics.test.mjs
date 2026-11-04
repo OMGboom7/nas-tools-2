@@ -57,6 +57,99 @@ test("old statistics page can load the independent viewer overview",async t=>{
   assert.equal(api.statsStatusValid(overview),false);
 });
 
+test("traffic reads retain exact byte counts and validate the returned date and range",async t=>{
+  const original={
+    days:7,endDay:"2026-11-03",today:"2026-11-04",items:[
+      {siteId:"9007199254740993",name:"Fixture",host:"one.fixture.test",upload:"9007199254740993",download:"4"},
+      {siteId:"9007199254740995",name:"Fixture",host:"two.fixture.test",upload:"9007199254740992",download:"10"},
+    ],
+  };
+  let data=original,calls=0;
+  t.mock.method(globalThis,"fetch",async(path,options)=>{
+    calls++;
+    assert.equal(path,"/api/v1/site-statistics/traffic?days=7&endDay=2026-11-03");
+    assert.equal(options.method,"GET");
+    assert.equal(options.body,undefined);
+    return response(data);
+  });
+  assert.deepEqual(await api.getStatsTraffic("viewer",7,"2026-11-03"),original);
+  data={...original,endDay:"2026-11-02"};
+  await assert.rejects(api.getStatsTraffic("viewer",7,"2026-11-03"));
+  assert.equal(api.statsTrafficValid({...original,items:[original.items[0],original.items[0]]}),false);
+  assert.equal(api.statsTrafficValid({...original,items:[{...original.items[0],upload:9007199254740992}]}),false);
+  assert.throws(()=>api.getStatsTraffic("viewer",7,"2026-02-30"));
+  assert.throws(()=>api.getStatsTraffic("viewer",2,"2026-11-03"));
+  assert.equal(calls,2);
+});
+
+const viewURL=url(compile(readFileSync(new URL("../src/utils/statisticsView.ts",import.meta.url),"utf8")));
+const view=await import(viewURL);
+const png=await import(url(compile(readFileSync(new URL("../src/utils/statisticsPng.ts",import.meta.url),"utf8"))
+  .replace('"./statisticsView"',JSON.stringify(viewURL))));
+const makeItem=(url,username,upload)=>({
+  site:"Original name",url,username,upload,download:"2",seedingSize:"3",seeding:1,ratio:1,bonus:0,
+});
+const first=makeItem("https://first.fixture.test","first-fixture-user","9007199254740993");
+const second=makeItem("https://second.fixture.test","second-fixture-user","9007199254740992");
+const rows=view.statsRows({items:[second,first],targets:[
+  {id:"9007199254740995",name:"Same name",host:"second.fixture.test",url:second.url},
+  {id:"9007199254740993",name:"Same name",host:"first.fixture.test",url:first.url},
+  {id:"42",name:"Original name"},
+]});
+test("statistics charts and share sorting distinguish same-name origins and sum exact counters",()=>{
+  assert.equal(rows[0].item.username,"second-fixture-user");
+  assert.equal(rows[1].item.username,"first-fixture-user");
+  assert.equal(rows[2].item,undefined);
+  assert.deepEqual(view.statsTotals(rows),{upload:18014398509481985n,download:4n,seeding:2n,seedingSize:6n});
+  const selected=new Set(rows.map(row=>row.id));
+  const opts={...view.shareDefaults,hideSite:false,hideUser:false};
+  const descending=view.shareProjection(rows,selected,opts);
+  assert.deepEqual(descending.rows.map(row=>row[1]),["first-fixture-user","second-fixture-user"]);
+  const ascending=view.shareProjection(rows,selected,{...opts,direction:"asc"});
+  assert.deepEqual(ascending.rows.map(row=>row[1]),["second-fixture-user","first-fixture-user"]);
+  assert.equal(view.shareProjection(rows,new Set(),opts).rows.length,0);
+});
+
+test("masked share projects only selected public text into the PNG drawing surface",()=>{
+  const report=view.shareProjection(rows,new Set([rows[1].id]),view.shareDefaults);
+  const drawn=[];
+  const canvas={
+    getContext:()=>({
+      fillRect(){},fillText(text){drawn.push(text);},measureText(value){return {width:value.length*6};},
+    }),
+  };
+  png.drawStatisticsPng(canvas,report);
+  assert.equal(canvas.width,1080);
+  assert.equal(canvas.height,260);
+  assert.equal(report.totals.upload,9007199254740993n);
+  assert.ok(drawn.includes("站点 1"));
+  assert.ok(drawn.includes("已隐藏"));
+  assert.doesNotMatch(drawn.join(" "),/fixture|Same name|站点 2/);
+  assert.throws(()=>png.drawStatisticsPng(canvas,{...report,rows:[]}));
+});
+
+test("PNG export includes a selected origin only once",()=>{
+  const aliases=[rows[1],{...rows[1],id:"44",name:"Alternate name"}];
+  const report=view.shareProjection(aliases,new Set(aliases.map(row=>row.id)),view.shareDefaults);
+  assert.deepEqual(view.shareCandidates(aliases).map(row=>row.id),[rows[1].id]);
+  assert.equal(report.rows.length,1);
+  assert.equal(report.totals.upload,9007199254740993n);
+});
+
+test("scatter sampling keeps both extrema and the final observed point",()=>{
+  const seeds=Array.from({length:1501},()=>["1","1"]);
+  seeds[749]=["9223372036854775807","2"];
+  seeds[1100]=["2","9007199254740993"];
+  seeds[1500]=["4","5"];
+  const sample=view.scatterSample(seeds);
+  assert.equal(sample.points.length,1500);
+  assert.equal(sample.maxCount,9223372036854775807n);
+  assert.equal(sample.maxBytes,9007199254740993n);
+  assert.ok(sample.points.includes(seeds[749]));
+  assert.ok(sample.points.includes(seeds[1100]));
+  assert.deepEqual(sample.points.at(-1),["4","5"]);
+});
+
 test("ranking rejects invalid links, percentages and level steps",()=>{
   assert.equal(api.statsRankingValid(rankReceipt),true);
   for(const invalid of [
