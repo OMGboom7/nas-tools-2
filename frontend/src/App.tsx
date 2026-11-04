@@ -12,6 +12,8 @@ import { SearchPage } from "./pages/SearchPage";
 import { SitesPage } from "./pages/SitesPage";
 import { ServicesPage } from "./pages/ServicesPage";
 import { SubscriptionsPage } from "./pages/SubscriptionsPage";
+import { SiteStatisticsPanel } from "./components/SiteStatisticsPanel";
+import { WorkspaceLayout } from "./components/WorkspaceLayout";
 import { parseMediaDetailPath } from "./utils/mediaDetail";
 
 const MediaDetailPage = lazy(() => import("./pages/MediaDetailPage").then((module) => ({ default: module.MediaDetailPage })));
@@ -78,6 +80,12 @@ export function App() {
   if (path === "/subscriptions" && session.user.userpris.includes("订阅管理")) {
     return <SubscriptionsPage session={session} currentPath="/subscriptions" onNavigate={handleNavigate}
       onLogout={handleLogout} onSessionExpired={handleSessionExpired} />;
+  }
+  if (path === "/statistics") {
+    return <WorkspaceLayout user={session.user} currentPath={path} section="站点" page="用户统计"
+      onNavigate={handleNavigate} onLogout={handleLogout}>
+      <SiteStatisticsPanel key={session.token} session={session} onSessionExpired={handleSessionExpired} readOnly />
+    </WorkspaceLayout>;
   }
   if (path === "/sites" && session.user.userpris.includes("站点管理")) {
     return <SitesPage session={session} currentPath="/sites" onNavigate={handleNavigate}

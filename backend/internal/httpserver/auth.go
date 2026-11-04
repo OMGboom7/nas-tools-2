@@ -184,7 +184,8 @@ func (authentication nativeAuthentication) protectAPI(next http.Handler) http.Ha
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		// Public integration routes apply their own original API-key policy,
 		// including keys containing dots. A JWT never substitutes for that key.
-		if request.URL.Path == "/api/v1/service/mediainfo" || mediaWebhookPath(request.URL.Path) {
+		if request.URL.Path == "/api/v1/service/mediainfo" || mediaWebhookPath(request.URL.Path) ||
+			request.Method == http.MethodGet && request.URL.Path == "/api/v1/site/statistics" {
 			next.ServeHTTP(response, request)
 			return
 		}

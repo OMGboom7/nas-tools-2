@@ -23,6 +23,7 @@ type Definition struct {
 	Category json.RawMessage `json:"category"`
 	Torrents json.RawMessage `json:"torrents"`
 	Browse   json.RawMessage `json:"browse"`
+	Ranking  json.RawMessage `json:"user_ranking_info,omitempty"`
 }
 
 type Catalog struct {
@@ -70,6 +71,30 @@ func Domain(raw string) string {
 		return ""
 	}
 	return strings.ReplaceAll(strings.ToLower(parsed.Host), "www.", "")
+}
+
+// RankingRules resolves an installed tracker's domain before using its display
+// name. The catalog contains multiple trackers with the same display name.
+func (catalog Catalog) RankingRules(name, address string) json.RawMessage {
+	if address != "" && !strings.Contains(address, "://") {
+		address = "http://" + address
+	}
+	domain := Domain(address)
+	name = strings.TrimSpace(name)
+	var nameMatch *Definition
+	for i := range catalog.Indexers {
+		item := &catalog.Indexers[i]
+		if domain != "" && Domain(item.Domain) == domain {
+			return item.Ranking
+		}
+		if nameMatch == nil && name != "" && strings.EqualFold(strings.TrimSpace(item.Name), name) {
+			nameMatch = item
+		}
+	}
+	if nameMatch != nil {
+		return nameMatch.Ranking
+	}
+	return nil
 }
 
 // HasTrackerRule reports whether the bundled site definition contains at

@@ -34,17 +34,22 @@ type statsTarget struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	Host           string `json:"host"`
+	URL            string `json:"url"`
 	MessageEnabled bool   `json:"messageEnabled"`
 }
 type statsStatus struct {
-	Fingerprint string               `json:"fingerprint"`
-	GoOnly      bool                 `json:"goOnly"`
-	Cron        string               `json:"cron"`
-	Control     sitestats.Control    `json:"control"`
-	Current     bool                 `json:"current"`
-	Targets     []statsTarget        `json:"targets"`
-	Items       []sitestats.Snapshot `json:"items"`
-	Jobs        []sitestats.Job      `json:"jobs"`
+	Fingerprint string            `json:"fingerprint"`
+	GoOnly      bool              `json:"goOnly"`
+	Cron        string            `json:"cron"`
+	Control     sitestats.Control `json:"control"`
+	Current     bool              `json:"current"`
+	statsOverview
+	Jobs []sitestats.Job `json:"jobs"`
+}
+
+type statsOverview struct {
+	Targets []statsTarget        `json:"targets"`
+	Items   []sitestats.Snapshot `json:"items"`
 }
 
 func statsURLs(sites []siteconfig.Site) []string {
@@ -76,7 +81,7 @@ func (api *siteStatisticsAPI) manage(w http.ResponseWriter, r *http.Request) {
 			statsError(w, e)
 			return
 		}
-		items, e := api.store.List(r.Context(), statsURLs(sites))
+		overview, e := api.statsOverview(r.Context(), sites)
 		if e != nil {
 			statsError(w, e)
 			return
@@ -86,37 +91,10 @@ func (api *siteStatisticsAPI) manage(w http.ResponseWriter, r *http.Request) {
 			statsError(w, e)
 			return
 		}
-		targets := []statsTarget{}
-		for _, s := range sites {
-			v, _ := nativeSiteRecord(s)
-			targets = append(targets, statsTarget{strconv.FormatInt(s.ID, 10), s.Name, safeSiteHost(text(v["strict_url"])), truthy(v["unread_msg_notify"])})
-		}
-		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": statsStatus{fp, api.login.pureGo, text(objectValue(cfg["pt"])["ptrefresh_date_cron"]), c, c.Enabled && c.Fingerprint == fp && c.Authority == authority, targets, items, jobs}})
-		return
-	}
-	if r.Method == "GET" && strings.HasPrefix(path, "/detail/") {
-		id := strings.TrimPrefix(path, "/detail/")
-		address := ""
-		for _, s := range sites {
-			if strconv.FormatInt(s.ID, 10) == id {
-				address = safeSiteOrigin(defaultString(s.SignURL, s.RSSURL))
-			}
-		}
-		if address == "" {
-			writeAPIError(w, 404, 404, "未找到参与统计的站点")
-			return
-		}
-		history, e := api.store.History(r.Context(), address, 730)
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		seeds, e := api.store.Seeds(r.Context(), address)
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"siteId": id, "history": history, "seedingInfo": sitestats.SeedStrings(seeds)}})
+		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": statsStatus{
+			Fingerprint: fp, GoOnly: api.login.pureGo, Cron: text(objectValue(cfg["pt"])["ptrefresh_date_cron"]),
+			Control: c, Current: c.Enabled && c.Fingerprint == fp && c.Authority == authority, statsOverview: overview, Jobs: jobs,
+		}})
 		return
 	}
 	if r.Method != "POST" {
@@ -220,9 +198,29 @@ func (api *siteStatisticsAPI) manage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (api *siteStatisticsAPI) compat(w http.ResponseWriter, r *http.Request) {
-	if api == nil || api.store == nil || api.login == nil {
+func (api *siteStatisticsAPI) readyForStatsRead(w http.ResponseWriter) bool {
+	if api == nil || api.store == nil || api.login == nil || api.login.sites == nil || api.login.auth == nil {
 		writeAPIError(w, 503, 503, "统计服务不可用")
+		return false
+	}
+	return true
+}
+
+func (api *siteStatisticsAPI) authorizeStatsRead(w http.ResponseWriter, r *http.Request) bool {
+	claims, err := api.login.auth.service.VerifyToken(r.Header.Get("Authorization"))
+	if err != nil {
+		writeAPIError(w, 401, 401, "请重新登录")
+		return false
+	}
+	if _, err = api.login.auth.service.FindUser(r.Context(), claims.Username); err != nil {
+		writeAPIError(w, 401, 401, "当前账户不可用")
+		return false
+	}
+	return true
+}
+
+func (api *siteStatisticsAPI) compat(w http.ResponseWriter, r *http.Request) {
+	if !api.readyForStatsRead(w) {
 		return
 	}
 	if r.Method == "GET" {
@@ -230,122 +228,54 @@ func (api *siteStatisticsAPI) compat(w http.ResponseWriter, r *http.Request) {
 		if !service.requireSiteAPIKey(w, r) {
 			return
 		}
-	} else {
-		claims, err := api.login.auth.service.VerifyToken(r.Header.Get("Authorization"))
-		if err != nil {
-			writeAPIError(w, 401, 401, "请重新登录")
-			return
-		}
-		if _, err = api.login.auth.service.FindUser(r.Context(), claims.Username); err != nil {
-			writeAPIError(w, 401, 401, "当前账户不可用")
-			return
-		}
-		if !parseSiteForm(w, r) {
-			return
-		}
+	} else if !api.authorizeStatsRead(w, r) || !parseSiteForm(w, r) {
+		return
 	}
-	sites, e := api.login.sites.List(r.Context())
+	eligible, e := api.readStatsSites(r.Context())
 	if e != nil {
 		statsError(w, e)
 		return
 	}
-	eligible := []siteconfig.Site{}
-	address := ""
-	for _, s := range sites {
-		v, e := nativeSiteRecord(s)
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		if truthy(v["statistic_enable"]) {
-			eligible = append(eligible, s)
-			if s.Name == r.FormValue("name") {
-				address = text(v["strict_url"])
-			}
-		}
-	}
 	if r.URL.Path == "/api/v1/site/statistics" {
-		rows, e := api.store.List(r.Context(), statsURLs(eligible))
+		out, e := api.legacyStatsList(r.Context(), eligible, legacyStatsInput{})
 		if e != nil {
 			statsError(w, e)
 			return
 		}
-		out := []any{}
-		for _, v := range rows {
-			out = append(out, map[string]any{"site": v.Site, "username": v.Username, "user_level": v.Level, "join_at": v.Joined, "last_seen": v.LastSeen, "update_at": v.Updated, "upload": v.Upload, "download": v.Download, "ratio": v.Ratio, "seeding": v.Seeding, "leeching": v.Leeching, "seeding_size": v.SeedingSize, "bonus": v.Bonus, "url": v.URL, "message_unread": v.Unread})
+		for _, row := range out {
+			// Retain the alias previously emitted by the Go endpoint.
+			row["message_unread"] = row["msg_unread"]
 		}
 		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"user_statistics": out}})
 		return
 	}
-	dataset := [][]any{}
+	var dataset [][]any
+	action := strings.TrimPrefix(r.URL.Path, "/api/v1/site/statistics/")
+	address := statsAddressByName(eligible, r.FormValue("name"))
 	switch r.URL.Path {
-	case "/api/v1/site/statistics/activity":
+	case "/api/v1/site/statistics/activity", "/api/v1/site/statistics/seedinfo":
 		if address == "" {
-			writeAPIError(w, 404, 404, "站点不参与统计")
+			writeAPIError(w, 404, 404, "未找到唯一参与统计的站点")
 			return
 		}
-		rows, e := api.store.History(r.Context(), address, 730)
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		loc, e := rssWorkerLocation()
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		dataset = append(dataset, []any{"time", "upload", "download", "bonus", "seeding", "seeding_size"})
-		for _, v := range rows {
-			day, e := time.ParseInLocation("2006-01-02", v.Date, loc)
-			if e != nil {
-				continue
-			}
-			dataset = append(dataset, []any{day.UnixMilli(), v.Upload, v.Download, v.Bonus, v.Seeding, v.SeedingSize})
-		}
-	case "/api/v1/site/statistics/seedinfo":
-		if address == "" {
-			writeAPIError(w, 404, 404, "站点不参与统计")
-			return
-		}
-		seeds, e := api.store.Seeds(r.Context(), address)
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		dataset = append(dataset, []any{"seeders", "size"})
-		for _, v := range seeds {
-			dataset = append(dataset, []any{v[0], v[1]})
-		}
+		dataset, e = api.statsSiteDataset(r.Context(), action, address)
 	case "/api/v1/site/statistics/history":
-		days, e := strconv.Atoi(r.FormValue("days"))
-		if e != nil || days < 1 || days > 729 {
+		days, err := strconv.Atoi(r.FormValue("days"))
+		if err != nil || days < 1 || days > 729 {
 			writeAPIError(w, 400, 400, "统计天数无效")
 			return
 		}
-		loc, e := rssWorkerLocation()
-		if e != nil {
-			statsError(w, e)
+		dataset, e = api.statsHistoryDataset(r.Context(), eligible, days, r.FormValue("end_day"))
+		if _, ok := e.(*time.ParseError); ok {
+			writeAPIError(w, 400, 400, "统计日期无效")
 			return
-		}
-		end := time.Now().In(loc)
-		if raw := r.FormValue("end_day"); raw != "" {
-			end, e = time.ParseInLocation("2006-01-02", raw, loc)
-			if e != nil {
-				writeAPIError(w, 400, 400, "统计日期无效")
-				return
-			}
-		}
-		rows, e := api.store.Deltas(r.Context(), statsURLs(eligible), days+1, end)
-		if e != nil {
-			statsError(w, e)
-			return
-		}
-		dataset = append(dataset, []any{"site", "upload", "download"})
-		for _, v := range rows {
-			dataset = append(dataset, []any{v.Site, v.Upload, v.Download})
 		}
 	default:
 		writeAPIError(w, 404, 404, "未找到统计接口")
+		return
+	}
+	if e != nil {
+		statsError(w, e)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"code": 0, "dataset": dataset})

@@ -20,6 +20,28 @@ func TestBundledCatalogIsReadableWithoutPython(t *testing.T) {
 	if !catalog.HasTrackerRule("https://www.piggo.me/details/1", "FREE") || !catalog.HasTrackerRule("https://piggo.me", "2XFREE") || catalog.HasTrackerRule("https://piggo.me", "HR") {
 		t.Fatal("bundled tracker capabilities were not preserved")
 	}
+	count := 0
+	for _, item := range catalog.Indexers {
+		if len(item.Ranking) != 0 {
+			count++
+		}
+	}
+	if count != 19 {
+		t.Fatalf("ranking definitions = %d", count)
+	}
+}
+
+func TestRankingLookupUsesDomainBeforeDuplicateDisplayName(t *testing.T) {
+	catalog := Catalog{Indexers: []Definition{
+		{ID: "first", Name: "Fixture", Domain: "https://first.example", Ranking: []byte(`{"enabled":false}`)},
+		{ID: "second", Name: "Fixture", Domain: "https://www.second.example/", Ranking: []byte(`{"enabled":true}`)},
+	}}
+	if string(catalog.RankingRules("Fixture", "https://second.example/details")) != `{"enabled":true}` ||
+		string(catalog.RankingRules("different name", "second.example")) != `{"enabled":true}` ||
+		string(catalog.RankingRules(" fixture ", "unknown.example")) != `{"enabled":false}` ||
+		catalog.RankingRules("unknown", "unknown.example") != nil {
+		t.Fatal("ranking lookup did not retain the original domain and name boundaries")
+	}
 }
 
 func TestSelectionPreservesIDsAndFiltersCredentialsAndPublicSites(t *testing.T) {

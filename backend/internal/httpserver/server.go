@@ -580,6 +580,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.siteStatistics = nativeStats
 	mux.HandleFunc("/api/v1/site-statistics", nativeStats.manage)
 	mux.HandleFunc("/api/v1/site-statistics/", nativeStats.manage)
+	mux.HandleFunc("GET /api/v1/site-statistics/overview", nativeStats.serveStatsRead)
+	mux.HandleFunc("GET /api/v1/site-statistics/detail/{id}", nativeStats.serveStatsRead)
+	mux.HandleFunc("GET /api/v1/site-statistics/ranking/{id}", nativeStats.serveStatsRead)
 	mux.HandleFunc("GET /api/v1/site/statistics", nativeStats.compat)
 	for _, suffix := range []string{"activity", "history", "seedinfo"} {
 		mux.HandleFunc("POST /api/v1/site/statistics/"+suffix, nativeStats.compat)
@@ -757,7 +760,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("/api/v1/open-subtitles", nativeOpenSubtitles.manage)
 	mux.HandleFunc("/api/v1/open-subtitles/", nativeOpenSubtitles.manage)
-	mux.HandleFunc("/do", nativeSiteLogin.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))
+	mux.HandleFunc("/do", nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape))))
 	mux.HandleFunc("GET /stream-progress", nativeSiteLogin.legacyProgress)
 	mux.HandleFunc("/api/v1/media/subtitle/download", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)

@@ -21,6 +21,10 @@ func scanSnapshot(row interface{ Scan(...any) error }) (Snapshot, error) {
 	v.Seeds = [][2]int64{}
 	return v, e
 }
+func (s *Store) Snapshot(ctx context.Context, address string) (Snapshot, error) {
+	return scanSnapshot(s.db.QueryRowContext(ctx, snapshotSelect+` WHERE URL=?`, address))
+}
+
 func (s *Store) List(ctx context.Context, urls []string) ([]Snapshot, error) {
 	rows, e := s.db.QueryContext(ctx, snapshotSelect+` ORDER BY SITE,URL`)
 	if e != nil {
@@ -95,6 +99,7 @@ func (s *Store) Seeds(ctx context.Context, address string) ([][2]int64, error) {
 
 type Delta struct {
 	Site     string `json:"site"`
+	URL      string `json:"-"`
 	Upload   int64  `json:"upload"`
 	Download int64  `json:"download"`
 }
@@ -105,7 +110,7 @@ func deltas(ctx context.Context, db interface {
 	if days < 1 || days > 730 {
 		return nil, ErrState
 	}
-	rows, e := db.QueryContext(ctx, `SELECT COALESCE(SITE,''),COALESCE(URL,''),CAST(COALESCE(UPLOAD,'0')AS INTEGER),CAST(COALESCE(DOWNLOAD,'0')AS INTEGER)FROM SITE_STATISTICS_HISTORY WHERE DATE>? AND DATE<=? ORDER BY SITE,DATE`, end.AddDate(0, 0, -days).Format("2006-01-02"), end.Format("2006-01-02"))
+	rows, e := db.QueryContext(ctx, `SELECT COALESCE(SITE,''),COALESCE(URL,''),CAST(COALESCE(UPLOAD,'0')AS INTEGER),CAST(COALESCE(DOWNLOAD,'0')AS INTEGER)FROM SITE_STATISTICS_HISTORY WHERE DATE>? AND DATE<=? ORDER BY URL,DATE`, end.AddDate(0, 0, -days).Format("2006-01-02"), end.Format("2006-01-02"))
 	if e != nil {
 		return nil, e
 	}
@@ -114,7 +119,10 @@ func deltas(ctx context.Context, db interface {
 	for _, u := range urls {
 		allowed[u] = true
 	}
-	type span struct{ minU, minD, maxU, maxD int64 }
+	type span struct {
+		site                   string
+		minU, minD, maxU, maxD int64
+	}
 	data := map[string]span{}
 	for rows.Next() {
 		var site, u string
@@ -125,30 +133,37 @@ func deltas(ctx context.Context, db interface {
 		if !allowed[u] {
 			continue
 		}
-		v, ok := data[site]
+		v, ok := data[u]
 		if !ok {
-			v = span{up, down, up, down}
+			v = span{site, up, down, up, down}
 		} else {
+			v.site = site
 			v.minU = min(v.minU, up)
 			v.maxU = max(v.maxU, up)
 			v.minD = min(v.minD, down)
 			v.maxD = max(v.maxD, down)
 		}
-		data[site] = v
+		data[u] = v
 	}
 	if e = rows.Err(); e != nil {
 		return nil, e
 	}
 	out := []Delta{}
-	for site, v := range data {
+	for address, v := range data {
 		if v.minU == 0 && v.minD == 0 {
 			v.minU = v.maxU
 			v.minD = v.maxD
 		}
-		out = append(out, Delta{site, max(0, v.maxU-v.minU), max(0, v.maxD-v.minD)})
+		out = append(out, Delta{Site: v.site, URL: address, Upload: max(0, v.maxU-v.minU), Download: max(0, v.maxD-v.minD)})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Upload > out[j].Upload || (out[i].Upload == out[j].Upload && out[i].Site < out[j].Site)
+		if out[i].Upload != out[j].Upload {
+			return out[i].Upload > out[j].Upload
+		}
+		if out[i].Site != out[j].Site {
+			return out[i].Site < out[j].Site
+		}
+		return out[i].URL < out[j].URL
 	})
 	return out, nil
 }
