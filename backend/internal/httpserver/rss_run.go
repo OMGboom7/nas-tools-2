@@ -33,6 +33,7 @@ type rssRunAPI struct {
 	siteSignin      *siteSigninAPI
 	siteStatistics  *siteStatisticsAPI
 	cloudflare      *cloudflareAPI
+	cookieCloud     *cookieCloudAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI
 	notifications   *businessNotifications

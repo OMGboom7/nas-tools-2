@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeCookieCloud(request.PathValue("id")) {
+		service.serveCookieCloudPlugin(response, request, "get")
+		return
+	}
 	if service.nativeCloudflare(request.PathValue("id")) {
 		service.serveCloudflarePlugin(response, request, "get")
 		return
@@ -126,6 +130,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeCookieCloud(request.PathValue("id")) {
+		service.serveCookieCloudPlugin(response, request, "save")
+		return
+	}
 	if service.nativeCloudflare(request.PathValue("id")) {
 		service.serveCloudflarePlugin(response, request, "save")
 		return

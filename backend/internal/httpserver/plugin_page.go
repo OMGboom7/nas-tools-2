@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeCookieCloud(request.PathValue("id")) {
+		service.serveCookieCloudPlugin(response, request, "page")
+		return
+	}
 	if service.nativeSignin(request.PathValue("id")) {
 		service.serveSigninPlugin(response, request, "page")
 		return

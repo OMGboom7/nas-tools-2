@@ -107,7 +107,8 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
     {state.kind === "ready" && sections.map(([section, fields]) => <fieldset disabled={saving} className="plugin-config-section" key={section}><legend>{section}</legend><div className="plugin-config-grid">{fields.map((field) => <PluginField key={field.key} field={field} value={values[field.key]} secret={secrets[field.key] || ""} clearing={clearConfig.has(field.key)} onValue={(value) => setValue(field.key, value)} onSecret={(value) => setSecret(field.key, value)} onClear={(checked) => toggleClear(field.key, checked)} onMulti={(option, checked) => toggleMulti(field.key, option, checked)} />)}</div></fieldset>)}
     {state.kind==="ready" && plugin.id==="LibraryScraper" && <p className="editor-note">周期授权会扫描所选媒体库未来新增的文件；强制模式会保留占磁盘的原文件备份，备份不自动删除。保存或停用将停止旧任务后续写入。响应丢失不自动重试，请先只读刷新核查。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新并重置确认</button></p>}
     {state.kind==="ready"&&plugin.id==="LibraryRefresh"&&<p className="editor-note">启用会授权当前媒体服务器接收未来的新原生入库事件，可能回退整库扫描并改变服务器元数据；不接管历史待办。所有确认每次重新勾选，停用不能撤回已经接收的扫描。响应丢失请先只读刷新，不要重新提交。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新并重置确认</button></p>}
-    {state.kind === "ready" && <p className="editor-note">文本、路径、地址和凭据均按只写字段处理：已保存内容不会回显；留空表示保留原值。插件提供的动态脚本和事件处理器不会在此页面执行。</p>}
+    {state.kind === "ready" && <p className="editor-note">只写字段留空时保留已保存内容。此页面只使用服务器提供的表单字段。</p>}
+    {state.kind === "ready" && plugin.id === "CookieCloud" && <p className="editor-note">修改配置会撤销旧的同步授权。保存后可在 CookieCloud 同步管理中确认接收方，单独测试、同步或启用周期。</p>}
     {state.kind==="ready"&&plugin.id==="Webhook"&&<p className="editor-note">此插件会向指定地址发送事件数据；原始媒体回调可能含路径、站点链接、用户和私有字段。每次启用需重新确认；关闭或卸载阻止尚未发送的待办，不能撤回已接收的操作。响应丢失请先只读核对配置与原回执。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新并重置确认</button></p>}
     {state.kind==="ready"&&plugin.id==="SpeedLimiter"&&<p className="editor-note">保存配置会停止旧原生限速授权；原全局速度和回执保留。请在插件列表下方“播放联动下载器限速”中先只读核对当前会话和速度，再单独启用。旧安装或旧设置不会自动启动后台。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新原设置</button></p>}
     {state.kind==="ready"&&plugin.id==="MovieLike"&&<p className="editor-note">保存后自动精选移动保持停止，请在列表下方“电影精选移动管理”独立审核并授权。整部电影目录及所有附件一起移动，不覆盖已有目标；原回执、中断对象和精选路径配置保留，保存不会自动继续旧任务。</p>}
@@ -126,6 +127,13 @@ function PluginField({ field, value, secret, clearing, onValue, onSecret, onClea
   if (field.type === "multiselect") {
     const selected = Array.isArray(value) ? value : [];
     return <div className="plugin-config-field plugin-multiselect"><span>{heading}</span><div>{field.options.map((option) => <label key={option.value}><input type="checkbox" checked={selected.includes(option.value)} onChange={(event) => onMulti(option.value, event.target.checked)} /><span>{option.label}</span></label>)}</div>{field.tooltip && <small>{field.tooltip}</small>}</div>;
+  }
+  if (!field.writeOnly) {
+    const text = typeof value === "string" ? value : "";
+    const input = field.type === "textarea"
+      ? <textarea rows={4} value={text} placeholder={field.placeholder} onChange={(event) => onValue(event.target.value)} />
+      : <input type="text" value={text} placeholder={field.placeholder} onChange={(event) => onValue(event.target.value)} />;
+    return <div className="plugin-config-field"><label>{heading}{input}</label>{field.tooltip && <small>{field.tooltip}</small>}</div>;
   }
   const input = field.type === "textarea" ? <textarea rows={4} value={secret} disabled={clearing} placeholder={field.configured ? "留空以保留已保存内容" : field.placeholder} onChange={(event) => onSecret(event.target.value)} /> : <input type="password" value={secret} disabled={clearing} autoComplete="new-password" placeholder={field.configured ? "留空以保留已保存内容" : field.placeholder} onChange={(event) => onSecret(event.target.value)} />;
   return <div className="plugin-config-field"><label>{heading}{input}</label>{field.tooltip && <small>{field.tooltip}</small>}{field.configured && <label className="plugin-clear-field"><input type="checkbox" checked={clearing} onChange={(event) => onClear(event.target.checked)} />清除服务器上保存的内容</label>}</div>;

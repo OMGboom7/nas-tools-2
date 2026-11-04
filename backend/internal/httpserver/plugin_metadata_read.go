@@ -84,8 +84,12 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) && !service.nativeCookieCloud(id) {
 				for _, other := range installed {
+					if service.nativeCookieCloud(other) {
+						writeAPIError(response, 501, 501, "混合插件配置请使用各自的配置页")
+						return
+					}
 					if service.nativeOpenSubtitles(other) {
 						writeAPIError(response, 501, 501, "mixed plugin configuration list cannot forward native subtitle credentials; use the individual native pages")
 						return
@@ -97,6 +101,21 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeCookieCloud(id) {
+				actor, ok := service.cookieCloud.actor(response, request, false)
+				if !ok {
+					return
+				}
+				scope, err := service.cookieCloud.scope(request.Context(), actor)
+				if err != nil {
+					cookieCloudError(response, err)
+					return
+				}
+				detail := cookieCloudDetail(scope)
+				running, known := service.cookieCloud.summary(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.2", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeCloudflare(id) {
 				actor, ok := service.cloudflare.actor(response, request, false)
 				if !ok {

@@ -18,6 +18,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/cloudflare"
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/cookiecloud"
 	"github.com/0xforee/nas-tools/backend/internal/customhosts"
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
@@ -93,6 +94,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSiteSignin := startSiteSigninWorker(workerContext, runner.siteSignin)
 		waitCloudflare := startCloudflareWorker(workerContext, runner.cloudflare)
 		waitStatistics := startSiteStatisticsWorker(workerContext, runner.siteStatistics)
+		waitCookieCloud := startCookieCloudWorker(workerContext, runner.cookieCloud)
 		wait = func() {
 			waitExisting()
 			waitSync()
@@ -114,6 +116,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitSiteSignin()
 			waitCloudflare()
 			waitStatistics()
+			waitCookieCloud()
 		}
 	}
 	return handler, wait, nil
@@ -161,6 +164,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	var nativeSiteSignins *sitesignin.Store
 	var nativeCloudflare *cloudflare.Store
 	var nativeStatistics *sitestats.Store
+	var nativeCookieCloud *cookiecloud.Store
 	var nativeFilters *filterconfig.Store
 	var nativeNotifications *notificationconfig.Store
 	var nativeRSSParsers *rssparserconfig.Store
@@ -211,6 +215,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeStatistics, err = sitestats.Open(application.UserDatabasePath())
 		if err != nil {
 			return nil, fmt.Errorf("open native site statistics: %w", err)
+		}
+		nativeCookieCloud, err = cookiecloud.Open(application.UserDatabasePath())
+		if err != nil {
+			return nil, fmt.Errorf("open native CookieCloud receipts: %w", err)
 		}
 		nativeFilters, err = filterconfig.OpenWritable(application.UserDatabasePath())
 		if err != nil {
@@ -578,6 +586,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	nativeStats := &siteStatisticsAPI{store: nativeStatistics, login: nativeSiteLogin, signin: nativeSiteSignin}
 	nativeSiteSignin.statistics = nativeStats
 	rssRunner.siteStatistics = nativeStats
+	cloudCookies := &cookieCloudAPI{store: nativeCookieCloud, login: nativeSiteLogin}
+	rssRunner.cookieCloud = cloudCookies
+	mux.HandleFunc("GET /api/v1/cookie-cloud", cloudCookies.serve)
+	mux.HandleFunc("GET /api/v1/cookie-cloud/runs/{id}", cloudCookies.serve)
+	mux.HandleFunc("POST /api/v1/cookie-cloud/{action}", cloudCookies.serve)
 	mux.HandleFunc("/api/v1/site-statistics", nativeStats.manage)
 	mux.HandleFunc("/api/v1/site-statistics/", nativeStats.manage)
 	mux.HandleFunc("GET /api/v1/site-statistics/overview", nativeStats.serveStatsRead)
@@ -667,6 +680,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
+	plugins.cookieCloud = cloudCookies
 	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	if organizationJobs != nil {
 		movieLikes.queue = organizationJobs.MovieLike()

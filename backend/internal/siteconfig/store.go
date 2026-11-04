@@ -58,7 +58,14 @@ func Open(path string) (*Store, error) {
 }
 
 func (store *Store) List(ctx context.Context) ([]Site, error) {
-	rows, err := store.database.QueryContext(ctx, siteSelect+" ORDER BY CAST(PRI AS INTEGER), ID")
+	return ListIn(ctx, store.database)
+}
+
+// ListIn reads the same ordered site projection within a caller's transaction.
+func ListIn(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}) ([]Site, error) {
+	rows, err := db.QueryContext(ctx, siteSelect+" ORDER BY CAST(PRI AS INTEGER), ID")
 	if err != nil {
 		return nil, fmt.Errorf("list sites: %w", err)
 	}

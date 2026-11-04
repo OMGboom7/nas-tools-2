@@ -45,7 +45,7 @@ func TestNativePluginCatalogRetainsEntireBundledAndUnknownInstalledDirectory(t *
 		t.Fatal(err)
 	}
 	data = list(token)
-	if len(data.Items) != 31 || data.InstalledCount != 3 || data.RunningCount != 1 || data.UnknownStateCount != 2 {
+	if len(data.Items) != 31 || data.InstalledCount != 3 || data.RunningCount != 1 || data.UnknownStateCount != 1 {
 		t.Fatalf("installed catalog=%+v", data)
 	}
 	for _, item := range data.Items {
@@ -55,7 +55,7 @@ func TestNativePluginCatalogRetainsEntireBundledAndUnknownInstalledDirectory(t *
 				t.Fatal(item)
 			}
 		case "CookieCloud":
-			if item.Native || item.StateKnown || !item.Installed || !item.HasPage || !item.ActionsAvailable {
+			if !item.Native || !item.StateKnown || item.Running || !item.Installed || !item.HasPage || item.ActionsAvailable {
 				t.Fatal(item)
 			}
 		case "GhostPlugin":
