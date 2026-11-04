@@ -63,6 +63,7 @@ type Exchange struct {
 }
 type Before func(context.Context, Exchange) (func(state, digest string) error, error)
 type Challenge struct {
+	MinLength, MaxLength int
 	Kind, MIME, Question string
 	Image                []byte
 	Choices              []Choice
@@ -87,6 +88,7 @@ type Executor struct {
 	Configuration map[string]any
 	Transport     http.RoundTripper
 	AuxTransport  http.RoundTripper
+	LensTransport http.RoundTripper
 	Browser       browserruntime.Renderer
 	Guard         func(context.Context) error
 	Before        Before

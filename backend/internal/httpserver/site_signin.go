@@ -16,13 +16,15 @@ import (
 )
 
 type siteSigninChallengeView struct {
-	Kind     string              `json:"kind"`
-	Nonce    string              `json:"nonce"`
-	Deadline string              `json:"deadline"`
-	Question string              `json:"question"`
-	Image    string              `json:"image,omitempty"`
-	Choices  []sitesignin.Choice `json:"choices"`
-	Multiple bool                `json:"multiple"`
+	MinLength int                 `json:"minLength"`
+	MaxLength int                 `json:"maxLength"`
+	Kind      string              `json:"kind"`
+	Nonce     string              `json:"nonce"`
+	Deadline  string              `json:"deadline"`
+	Question  string              `json:"question"`
+	Image     string              `json:"image,omitempty"`
+	Choices   []sitesignin.Choice `json:"choices"`
+	Multiple  bool                `json:"multiple"`
 }
 type siteSigninJobView struct {
 	ID            string                   `json:"id"`
@@ -114,7 +116,8 @@ func (api *siteSigninAPI) jobView(ctx context.Context, r sitesignin.Job, actor, 
 	p := api.prompts[r.ID]
 	if p != nil && !p.consumed && r.State == "waiting_input" && r.Nonce == p.nonce && r.Actor == actor {
 		c := p.challenge
-		out.Challenge = &siteSigninChallengeView{Kind: c.Kind, Nonce: p.nonce, Deadline: r.Deadline, Question: c.Question, Choices: c.Choices, Multiple: c.Multiple}
+		min, max := sitesignin.ChallengeLimits(c)
+		out.Challenge = &siteSigninChallengeView{MinLength: min, MaxLength: max, Kind: c.Kind, Nonce: p.nonce, Deadline: r.Deadline, Question: c.Question, Choices: c.Choices, Multiple: c.Multiple}
 		if out.Challenge.Choices == nil {
 			out.Challenge.Choices = []sitesignin.Choice{}
 		}
@@ -466,24 +469,7 @@ func (api *siteSigninAPI) submitInput(w http.ResponseWriter, r *http.Request, ac
 		signinError(w, sitesignin.ErrInput)
 		return
 	}
-	if len(p.challenge.Choices) > 0 {
-		allowed := map[string]bool{}
-		for _, c := range p.challenge.Choices {
-			allowed[c.Value] = true
-		}
-		seen := map[string]bool{}
-		for _, v := range in.Values {
-			if !allowed[v] || seen[v] {
-				signinError(w, sitesignin.ErrInput)
-				return
-			}
-			seen[v] = true
-		}
-		if !p.challenge.Multiple && len(in.Values) != 1 {
-			signinError(w, sitesignin.ErrInput)
-			return
-		}
-	} else if len(in.Values) != 1 {
+	if sitesignin.ValidateInput(p.challenge, in.Values) != nil {
 		signinError(w, sitesignin.ErrInput)
 		return
 	}

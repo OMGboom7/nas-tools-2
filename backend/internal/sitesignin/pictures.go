@@ -296,7 +296,11 @@ func (s *session) lensAnswer(ctx context.Context, imageURL string, options []Cho
 		return "", ErrInput
 	}
 	address := "https://lens.google.com/uploadbyurl?" + url.Values{"url": {imageURL}}.Encode()
-	r, err := s.Browser.Render(ctx, browserruntime.Request{URL: address, UserAgent: s.Target.UserAgent, ReadOnly: true, Assets: true, Transport: s.AuxTransport, Guard: s.Guard, ReadySelector: "div.UAiK1e", Before: func(ctx context.Context, x browserruntime.Exchange) (func(string, string) error, error) {
+	transport := s.LensTransport
+	if transport == nil {
+		transport = s.AuxTransport
+	}
+	r, err := s.Browser.Render(ctx, browserruntime.Request{URL: address, UserAgent: s.Target.UserAgent, ReadOnly: true, Assets: true, Transport: transport, Guard: s.Guard, ReadySelector: "div.UAiK1e", Before: func(ctx context.Context, x browserruntime.Exchange) (func(string, string) error, error) {
 		return s.Before(ctx, Exchange{Kind: "lens:" + x.Kind, Method: x.Method, URL: x.URL, Body: x.Body})
 	}})
 	if err != nil {

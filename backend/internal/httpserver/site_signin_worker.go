@@ -412,13 +412,14 @@ func (api *siteSigninAPI) run(parent context.Context, b sitesignin.Batch, r site
 	}
 	location, _ := time.LoadLocation(b.Scope.Location)
 	aux := signinAuxTransport{base: api.login.transport, configuration: cfg}
-	result := (sitesignin.Executor{Target: sitesignin.Target{ID: site.ID, Name: site.Name, URL: r.Source.URL, Cookie: site.Cookie, UserAgent: r.Source.UserAgent, Browser: r.Source.Browser}, Options: b.Scope.Options, Configuration: cfg, Transport: transport, AuxTransport: aux, Browser: api.login.browser, Guard: full, Before: before, Input: input, Cache: api.cache, Login: login, Location: location}).Run(ctx)
+	result := (sitesignin.Executor{Target: sitesignin.Target{ID: site.ID, Name: site.Name, URL: r.Source.URL, Cookie: site.Cookie, UserAgent: r.Source.UserAgent, Browser: r.Source.Browser}, Options: b.Scope.Options, Configuration: cfg, Transport: transport, AuxTransport: aux, LensTransport: signinAuxTransport{base: api.login.transport, configuration: cfg, lens: true}, Browser: api.login.browser, Guard: full, Before: before, Input: input, Cache: api.cache, Login: login, Location: location}).Run(ctx)
 	finish(result)
 }
 
 type signinAuxTransport struct {
 	base          http.RoundTripper
 	configuration map[string]any
+	lens          bool
 }
 
 func (t signinAuxTransport) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -429,9 +430,21 @@ func (t signinAuxTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	ai, e := sitesignin.QuestionAI(t.configuration)
 	// The original built-in OpenAI endpoint and Google Lens used app proxies.
 	// A custom OpenAI base and ordinary OCR/Douban retain their original route.
-	if e == nil && ai.URL == r.URL.String() && ai.URL == "https://api.openai.com/v1/chat/completions" || r.URL.Hostname() == "lens.google.com" {
+	if t.lens || (e == nil && ai.URL == r.URL.String() && text(objectValue(t.configuration["openai"])["api_url"]) == "") || r.URL.Hostname() == "lens.google.com" {
+		raw := objectValue(t.configuration["app"])["proxies"]
+		proxies, ok := raw.(map[string]any)
+		if raw != nil && !ok {
+			return nil, sitesignin.ErrScope
+		}
+		value := proxies[r.URL.Scheme]
+		if value == nil || value == "" {
+			return transport.RoundTrip(r)
+		}
+		if _, ok := value.(string); !ok {
+			return nil, sitesignin.ErrScope
+		}
 		var err error
-		transport, err = siteProxyTransport(transport, objectValue(objectValue(t.configuration["app"])["proxies"]), r.URL.Scheme)
+		transport, err = siteProxyTransport(transport, proxies, r.URL.Scheme)
 		if err != nil {
 			return nil, err
 		}

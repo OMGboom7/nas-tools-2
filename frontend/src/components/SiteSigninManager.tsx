@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type AuthSession } from "../api/client";
-import { activateSignin, getSigninBatch, getSigninStatus, inputSignin, installSignin, reviewSignin, saveSigninSettings, signinActive, signinSettingsValid, startSignin, stopSigninControl, stopSigninJob, type SigninBatch, type SigninJob, type SigninOptions, type SigninReview, type SigninSettings, type SigninStatus } from "../api/siteSignin";
+import { activateSignin, getSigninBatch, getSigninStatus, inputSignin, installSignin, reviewSignin, saveSigninSettings, signinActive, signinInputError, signinInputRejected, signinSettingsValid, startSignin, stopSigninControl, stopSigninJob, type SigninBatch, type SigninJob, type SigninOptions, type SigninReview, type SigninSettings, type SigninStatus } from "../api/siteSignin";
 import "./SiteSigninManager.css";
 
 type Props={session:AuthSession;onSessionExpired:()=>void;onClose?:()=>void;initialSites?:string[]};
@@ -11,10 +11,10 @@ const rememberId=(key:string,id:string)=>{try{localStorage.setItem(key,id)}catch
 
 export function SiteSigninManager({session,onSessionExpired,onClose,initialSites=[]}:Props){
  const [status,setStatus]=useState<SigninStatus>();const [draft,setDraft]=useState<SigninSettings>();const [error,setError]=useState("");const [notice,setNotice]=useState("");const [busy,setBusy]=useState(false);const [mode,setMode]=useState<"manual"|"activate">("manual");const [selected,setSelected]=useState(initialSites);const [options,setOptions]=useState<SigninOptions>(initialOptions);const [review,setReview]=useState<SigninReview>();const [batch,setBatch]=useState<SigninBatch>();const [batchId,setBatchId]=useState("");const [lookup,setLookup]=useState("");const [uncertain,setUncertain]=useState(false);const [page,setPage]=useState(1);
- const generation=useRef(0),revision=useRef(0),inFlight=useRef(false),initialized=useRef(false),mounted=useRef(true);const storageKey="nastool.site-signin.batch:"+session.user.username;
+ const generation=useRef(0),revision=useRef(0),batchReads=useRef(0),inFlight=useRef(false),initialized=useRef(false),mounted=useRef(true);const storageKey="nastool.site-signin.batch:"+session.user.username;
  const fail=(e:unknown)=>{if(!mounted.current)return;if(e instanceof ApiError&&e.code===401){onSessionExpired();return}setError(e instanceof Error?e.message:"签到操作未完成")};
  async function load(reset=false){if(!mounted.current)return;const version=generation.current;try{const data=await getSigninStatus(session.token,page);if(version!==generation.current)return;setStatus(data);if(reset||!initialized.current){setDraft(data.settings);initialized.current=true}}catch(e){if(version===generation.current)fail(e)}}
- async function refresh(id=batchId){if(!id)return;const version=generation.current;try{const data=await getSigninBatch(session.token,id);if(version!==generation.current)return;setBatch(data);setBatchId(id);setLookup(id);rememberId(storageKey,id);setUncertain(false)}catch(e){if(version===generation.current)fail(e)}}
+ async function refresh(id=batchId){if(!id)return;const version=generation.current,read=++batchReads.current;try{const data=await getSigninBatch(session.token,id);if(version!==generation.current||read!==batchReads.current)return;setBatch(data);setBatchId(id);setLookup(id);rememberId(storageKey,id);setUncertain(false)}catch(e){if(version===generation.current&&read===batchReads.current)fail(e)}}
  useEffect(()=>{mounted.current=true;generation.current++;initialized.current=false;inFlight.current=false;setStatus(undefined);setDraft(undefined);setBatch(undefined);setReview(undefined);setOptions(initialOptions);setError("");setNotice("");setBusy(false);const id=savedId(storageKey);setBatchId(id);setLookup(id);setUncertain(!!id);void load(true);if(id)void refresh(id);return()=>{mounted.current=false;generation.current++}},[session.token,storageKey]);
  useEffect(()=>{void load()},[page]);
  const active=batch?.items.some(j=>signinActive(j.state))||status?.jobs.some(j=>signinActive(j.state));
@@ -26,11 +26,29 @@ export function SiteSigninManager({session,onSessionExpired,onClose,initialSites
  async function inspect(){const version=generation.current,editRevision=revision.current;await action(async()=>{const data=await reviewSignin(session.token,mode,selected,{...options,remote:mode==="activate"&&options.remote});if(version===generation.current&&editRevision===revision.current)setReview(data)})}
  async function begin(){const r=review;if(!r)return;await action(async()=>{
   const version=generation.current;setUncertain(true);setReview(undefined);
-  if(r.mode==="manual"){setBatch(undefined);setBatchId(r.id);setLookup(r.id);rememberId(storageKey,r.id);const data=await startSignin(session.token,r);if(version!==generation.current)return;setBatch(data);setUncertain(false);setNotice("本批次已保存，可按原编号刷新查看")}
+  if(r.mode==="manual"){batchReads.current++;setBatch(undefined);setBatchId(r.id);setLookup(r.id);rememberId(storageKey,r.id);const data=await startSignin(session.token,r);if(version!==generation.current)return;batchReads.current++;setBatch(data);setUncertain(false);setNotice("本批次已保存，可按原编号刷新查看")}
   else{await activateSignin(session.token,r);if(version!==generation.current)return;setUncertain(false);setNotice("已按核对的设置启用；旧的一次运行和清理开关已消耗，不会因重启再次触发")}
   await load(true)
  })}
  const allSites=[...(status?.sites||[])];for(const id of new Set([...(draft?.sign_sites||[]),...(draft?.special_sites||[])])){if(!allSites.some(s=>s.id===id))allSites.push({id,name:"原站点 "+id+"（当前不存在）",scheme:"http",host:"",path:"",adapter:"",browser:false})}
+ async function readChallenge(job:SigninJob){
+	const version=generation.current,read=++batchReads.current;const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),15000);
+	let data:SigninBatch;try{data=await getSigninBatch(session.token,job.batch,controller.signal)}finally{clearTimeout(timer)}
+  if(!mounted.current||version!==generation.current||read!==batchReads.current)return false;
+  setBatch(data);setBatchId(data.id);setLookup(data.id);rememberId(storageKey,data.id);
+  const current=data.items.find(v=>v.id===job.id);
+  return !!current&&current.state==="waiting_input"&&current.runtimeActive&&current.challenge?.nonce===job.challenge?.nonce&&Date.parse(current.challenge?.deadline||"")>Date.now();
+ }
+ async function sendChallenge(job:SigninJob,values:string[]){
+  if(!mounted.current||!job.challenge||inFlight.current)throw new ApiError("请等待上一操作完成后核对本次输入",409);
+  const version=generation.current;inFlight.current=true;setBusy(true);setError("");
+  try{
+   await inputSignin(session.token,job.id,job.challenge.nonce,values);
+   if(version===generation.current){void readChallenge(job).catch(e=>{if(version===generation.current)fail(e)});void load();}
+  }
+  catch(e){if(version===generation.current&&e instanceof ApiError&&e.code===401)fail(e);throw e;}
+  finally{if(mounted.current&&version===generation.current){inFlight.current=false;setBusy(false);}}
+ }
  const history=(batch?.items||status?.jobs||[]);
  return <section className="signin-manager" aria-label="站点签到管理">
   <header><div><h2>站点签到管理</h2><p>按原站点执行签到，保留每个请求和结果。登录有效、今日已签与本次签到成功分别显示。</p></div><div><button type="button" disabled={busy} onClick={()=>{changed();void load(true)}}>刷新原设置</button>{onClose&&<button type="button" onClick={onClose}>收起</button>}</div></header>
@@ -67,8 +85,8 @@ export function SiteSigninManager({session,onSessionExpired,onClose,initialSites
    {review&&<section aria-label="本次签到目标"><h3>{review.mode==="manual"?"本次将访问以下站点":"自动运行将使用以下站点"}</h3><ul>{review.targets.map(t=><li key={t.id}>{t.name} · {t.scheme}://{t.host}{t.path} · {t.adapter}{t.browser?"（浏览器）":""}</li>)}</ul>{review.helpers.length>0&&<><h4>辅助服务和实际发送的数据</h4><ul>{review.helpers.map((h,i)=><li key={i}>{h.kind} · {h.scheme}://{h.host}{h.path} — {h.data}</li>)}</ul></>}{review.remote.length>0&&<><h4>接收 /pts 的渠道</h4><ul>{review.remote.map(c=><li key={c.id}>{c.name} · {c.type} · {c.receiver}；{c.permission}</li>)}</ul><p>接收确认只发给原发送者。其他命令保留输入，等待各自功能迁移。</p></>}{review.settings.notify&&<p>签到汇总按现有渠道的“站点签到”开关发送站点名称和结果，不包含 Cookie 或验证码。</p>}<p>时区 {review.location}；核对有效至 {review.expires}。未知动作不自动重试，浏览器防护需要人工处理。</p><button type="button" disabled={busy} onClick={()=>void begin()}>{review.mode==="manual"?"确认执行本次签到":"确认启用这份设置"}</button></section>}
   </>}
   {uncertain&&<section role="status"><p>上次启动的应答尚未确认。请先刷新原批次或原自动签到设置，不要重复提交。</p><button type="button" disabled={busy} onClick={()=>{void refresh();void load(true)}}>只读核对原记录</button><button type="button" disabled={busy} onClick={()=>{changed();setUncertain(false);setNotice("请核对原站点后再建立新的执行范围；新核对会撤销旧的未启动审核")}}>我已核对，准备新的范围</button></section>}
-  <section aria-label="签到批次查询"><h3>批次与历史</h3><label>原批次编号<input value={lookup} onChange={e=>setLookup(e.target.value)} autoComplete="off"/></label><button type="button" disabled={busy||!/^[a-f0-9]{64}$/.test(lookup)} onClick={()=>void refresh(lookup)}>只读查询原批次</button>{batchId&&<p>当前批次 <code>{batchId}</code>{batch&&<button type="button" onClick={()=>{setBatch(undefined);setBatchId("");void load()}}>返回历史列表</button>}</p>}
-   <div className="signin-history">{history.map(job=><SigninJobCard key={job.id} job={job} busy={busy} onStop={()=>void action(async()=>{await stopSigninJob(session.token,job.id);if(batchId)await refresh();await load()})} onInput={values=>action(async()=>{if(!job.challenge)return;await inputSignin(session.token,job.id,job.challenge.nonce,values);if(batchId)await refresh();await load()})}/>)}</div>
+  <section aria-label="签到批次查询"><h3>批次与历史</h3><label>原批次编号<input value={lookup} onChange={e=>setLookup(e.target.value)} autoComplete="off"/></label><button type="button" disabled={busy||!/^[a-f0-9]{64}$/.test(lookup)} onClick={()=>void refresh(lookup)}>只读查询原批次</button>{batchId&&<p>当前批次 <code>{batchId}</code>{batch&&<button type="button" disabled={busy} onClick={()=>{batchReads.current++;setBatch(undefined);setBatchId("");void load()}}>返回历史列表</button>}</p>}
+   <div className="signin-history">{history.map(job=><SigninJobCard key={job.id} job={job} busy={busy} onStop={()=>void action(async()=>{await stopSigninJob(session.token,job.id);if(batchId)await refresh();await load()})} onInput={values=>sendChallenge(job,values)} onRead={()=>readChallenge(job)}/>)}</div>
    {!batch&&<div><button type="button" disabled={page<=1||busy} onClick={()=>setPage(p=>p-1)}>上一页</button><span>第 {page} 页</span><button type="button" disabled={busy||(status?.jobs.length||0)<30} onClick={()=>setPage(p=>p+1)}>下一页</button></div>}
   </section>
   {status?.signals.length? <section><h3>消息与事件记录</h3>{status.signals.map(s=><p key={s.id}>{s.state} · {s.reason} {s.batch&&<button type="button" onClick={()=>void refresh(s.batch)}>查看原批次</button>}</p>)}</section>:null}
@@ -76,9 +94,48 @@ export function SiteSigninManager({session,onSessionExpired,onClose,initialSites
   {status?.dependencies.length? <section><h3>其他功能状态</h3>{status.dependencies.map(d=><p key={d.batch}>{d.plugin} · {d.reason}</p>)}</section>:null}
  </section>
 }
-function SigninJobCard({job,busy,onStop,onInput}:{job:SigninJob;busy:boolean;onStop:()=>void;onInput:(v:string[])=>Promise<void>}){
- const [value,setValue]=useState("");const [choices,setChoices]=useState<string[]>([]);const [sent,setSent]=useState(false);const c=job.challenge;useEffect(()=>{setValue("");setChoices([]);setSent(false)},[c?.nonce]);
+function SigninJobCard({job,busy,onStop,onInput,onRead}:{job:SigninJob;busy:boolean;onStop:()=>void;onInput:(v:string[])=>Promise<void>;onRead:()=>Promise<boolean>}){
  return <article aria-label={job.name+"签到记录"}><h4>{job.name} · {labels[job.state]||job.state} {job.outcome.state?" · "+(labels[job.outcome.state]||job.outcome.state):""}</h4><p>{job.outcome.reason}</p><p>{job.day} · 请求 {job.requests} · 动作 {job.actions} · {job.runtimeActive?"执行器在线":"执行器未占用此批次"}</p><p>编号 <code>{job.id}</code></p>{job.outcome.cacheState&&<p>答案缓存：{job.outcome.cacheState==="saved"?"已保存":"保留原内容"}</p>}{job.canStop&&<button type="button" disabled={busy} onClick={onStop}>停止原任务</button>}
-  {c&&<form aria-label={job.name+"本次输入"} onSubmit={e=>{e.preventDefault();if(sent)return;setSent(true);const values=c.choices.length?choices:[value];setValue("");void onInput(values)}}><p>{c.question||({captcha:"请输入本次图片验证码",two_step:"请输入本次两步验证码",email:"请输入原站点要求的邮箱",email_code:"请输入本次邮箱验证码"}[c.kind]||"本次输入")} · 截止 {c.deadline}</p>{c.image&&<img src={c.image} alt="原站点本次验证码"/>}{c.choices.length>0?<fieldset disabled={busy||sent}><legend>本次答案</legend>{c.choices.map(choice=><label key={choice.value}><input type={c.multiple?"checkbox":"radio"} name={job.id} checked={choices.includes(choice.value)} onChange={e=>setChoices(v=>c.multiple?(e.target.checked?[...v,choice.value]:v.filter(i=>i!==choice.value)):[choice.value])}/>{choice.text}</label>)}</fieldset>:<input type={c.kind==="email"?"email":"password"} autoComplete="off" value={value} disabled={busy||sent} onChange={e=>setValue(e.target.value)}/>}<button type="submit" disabled={busy||sent||(c.choices.length?choices.length===0:!value)}>{sent?"本次输入已发送，请刷新原记录":"发送本次输入"}</button></form>}
+  {job.challenge&&<SigninChallengeForm job={job} busy={busy} onInput={onInput} onRead={onRead}/>}
  </article>
+}
+
+type InputPhase="idle"|"sending"|"received"|"uncertain"|"checked";
+export function SigninChallengeForm({job,busy,onInput,onRead}:{job:SigninJob;busy:boolean;onInput:(values:string[])=>Promise<void>;onRead:()=>Promise<boolean>}){
+ const c=job.challenge;
+ const [value,setValue]=useState("");const [choices,setChoices]=useState<string[]>([]);
+ const [phase,setPhase]=useState<InputPhase>("idle");const [error,setError]=useState("");const [checking,setChecking]=useState(false);const [now,setNow]=useState(Date.now);
+ const attempt=useRef(0),sending=useRef(false);
+ useEffect(()=>{attempt.current++;sending.current=false;setValue("");setChoices([]);setPhase("idle");setError("");setChecking(false);setNow(Date.now());const timer=setInterval(()=>setNow(Date.now()),1000);return()=>{clearInterval(timer);attempt.current++;};},[c?.nonce]);
+ if(!c)return null;
+ const values=c.choices.length?choices:[value];const validation=signinInputError(c,values,now);
+ const expired=!Number.isFinite(Date.parse(c.deadline))||Date.parse(c.deadline)<=now;
+ const label=({captcha:"本次图片验证码",two_step:"本次两步验证码",email:"原站点要求的邮箱",email_code:"本次邮箱验证码"} as Record<string,string>)[c.kind]||"本次输入";
+ async function submit(){
+  if(!c||busy||sending.current||phase!=="idle")return;
+  const reason=signinInputError(c,values);if(reason){setError(reason);return;}
+  const version=attempt.current;sending.current=true;setPhase("sending");setError("");const submitted=[...values];setValue("");setChoices([]);
+  try{await onInput(submitted);if(version===attempt.current)setPhase("received");}
+  catch(e){if(version!==attempt.current)return;if(signinInputRejected(e)){setPhase("idle");setError("输入未被接收，请核对原任务和输入内容");}else{setPhase("uncertain");setError("本次输入应答未确认，不会自动重发。请先只读核对原任务。");}}
+  finally{if(version===attempt.current)sending.current=false;}
+ }
+ async function read(){
+  if(checking)return;const version=attempt.current;setChecking(true);
+  try{const available=await onRead();if(version===attempt.current&&phase==="uncertain"&&available){setPhase("checked");setError("");}}
+  catch{if(version===attempt.current)setError("原任务读取未完成，保留当前输入状态，请稍后只读核对");}
+  finally{if(version===attempt.current)setChecking(false);}
+ }
+ return <form className="signin-challenge" aria-label={job.name+"本次输入"} onSubmit={e=>{e.preventDefault();void submit();}}>
+  <p>{c.question||label} · 截止 {c.deadline}</p>
+  {c.image&&<img src={c.image} alt="原站点本次验证码"/>}
+  {c.choices.length>0?<fieldset disabled={busy||phase!=="idle"||expired}><legend>本次答案</legend>{c.choices.map(choice=><label key={choice.value}><input type={c.multiple?"checkbox":"radio"} name={job.id+":"+c.nonce} checked={choices.includes(choice.value)} onChange={e=>{setError("");setChoices(v=>c.multiple?(e.target.checked?[...v,choice.value]:v.filter(i=>i!==choice.value)):[choice.value]);}}/>{choice.text}</label>)}</fieldset>:<label>{label}<input type={c.kind==="email"?"email":"password"} autoComplete="off" value={value} disabled={busy||phase!=="idle"||expired} maxLength={(c.maxLength??(c.kind==="email"?254:128))*2} onChange={e=>{setValue(e.target.value);setError("");}}/></label>}
+  {error&&<p role="alert">{error}</p>}
+  {!error&&phase==="idle"&&validation&&(value||choices.length>0||expired)&&<p role="status">{validation}</p>}
+  {phase==="received"&&<p role="status">本次输入已接收，请查看原任务结果。</p>}
+  {phase==="checked"&&<p role="status">原任务仍在等待这份输入，请确认后重新填写。</p>}
+  <p>输入只交给当前任务，不保存到回执；过期或已停止的输入不能再次使用。</p>
+  <button type="submit" disabled={busy||phase!=="idle"||!!validation}>{phase==="sending"?"发送中…":"发送本次输入"}</button>
+  <button type="button" disabled={busy||checking} onClick={()=>void read()}>只读核对原输入任务</button>
+  {phase==="checked"&&!expired&&<button type="button" disabled={busy} onClick={()=>{setValue("");setChoices([]);setError("");setPhase("idle");}}>重新填写尚未接收的输入</button>}
+ </form>;
 }

@@ -52,11 +52,12 @@ func (s *session) captcha(ctx context.Context, address string) (string, error) {
 		return "", ErrInput
 	}
 	mime := http.DetectContentType(r.body)
-	values, err := s.Input(ctx, Challenge{Kind: "captcha", MIME: mime, Image: r.body})
+	challenge := Challenge{Kind: "captcha", MIME: mime, Image: r.body, MinLength: 6, MaxLength: 6}
+	values, err := s.Input(ctx, challenge)
 	if err != nil {
 		return "", err
 	}
-	if len(values) != 1 || utf8.RuneCountInString(values[0]) != 6 || !sitelogin.Text(values[0], 128) {
+	if ValidateInput(challenge, values) != nil {
 		return "", ErrInput
 	}
 	return values[0], nil
