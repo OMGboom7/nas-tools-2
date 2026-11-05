@@ -603,6 +603,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/backup/runs/{id}/file", backup.serve)
 	mux.HandleFunc("POST /api/v1/backup/{action}", backup.serve)
 	mux.HandleFunc("POST /backup", backup.legacy)
+	restore := backupRestoreAPI{login: nativeSiteLogin, path: cfg.ApplicationConfigPath}
+	mux.HandleFunc("POST /api/v1/backup/restore", restore.serve)
+	mux.HandleFunc("GET /api/v1/backup/restore/{id}", restore.serve)
+	mux.HandleFunc("POST /api/v1/config/restore", restore.serve)
 	mux.HandleFunc("GET /api/v1/cookie-cloud", cloudCookies.serve)
 	mux.HandleFunc("GET /api/v1/cookie-cloud/runs/{id}", cloudCookies.serve)
 	mux.HandleFunc("POST /api/v1/cookie-cloud/{action}", cloudCookies.serve)
@@ -791,7 +795,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("/api/v1/open-subtitles", nativeOpenSubtitles.manage)
 	mux.HandleFunc("/api/v1/open-subtitles/", nativeOpenSubtitles.manage)
-	mux.HandleFunc("/do", nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape))))
+	mux.HandleFunc("/do", restore.legacy(nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
 	mux.HandleFunc("GET /stream-progress", nativeSiteLogin.legacyProgress)
 	mux.HandleFunc("/api/v1/media/subtitle/download", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)

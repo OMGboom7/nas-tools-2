@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, deleteDownloaderConfig, getServices, setDefaultDownloader, testManagedService, type AuthSession, type ManagedService, type ServicesData, type ServiceTestResult } from "../api/client";
 import { ServiceEditor } from "../components/ServiceEditor";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
+import { BackupRestorePanel } from "../components/BackupRestorePanel";
 import { BackupExport } from "../components/AutoBackupManager";
 import { MediaRefreshManager } from "../components/MediaRefreshManager";
 
@@ -148,6 +149,7 @@ export function ServicesPage({ session, currentPath, onNavigate, onLogout, onSes
         {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的服务。</div> : <section className="service-grid" aria-label="服务列表">{filtered.map((service) => <ServiceCard key={testKey(service)} service={service} test={tests[testKey(service)]} batchTesting={batchTesting} onTest={() => void runTest(service)} onEdit={service.kind === "indexer" ? undefined : () => editService(service)} onDelete={service.kind === "downloader" ? () => { setDeleteText(""); setDeleting(service); } : undefined} onDefault={service.kind === "downloader" && !service.default ? () => void makeDefault(service) : undefined} />)}</section>}
       </>}
       {state.kind==="ready"&&<BackupExport token={session.token} onSessionExpired={onSessionExpired} />}
+      {state.kind==="ready"&&<BackupRestorePanel token={session.token} onSessionExpired={onSessionExpired} />}
       {state.kind==="ready"&&<MediaRefreshManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {editing && <ServiceEditor session={session} kind={editing.kind} service={editing.service} onClose={() => setEditing(undefined)} onSaved={() => void saved()} onSessionExpired={onSessionExpired} />}
       {deleting && <DeleteDownloaderDialog service={deleting} value={deleteText} busy={deleteBusy} onChange={setDeleteText} onClose={() => setDeleting(undefined)} onConfirm={() => void confirmDelete()} />}
