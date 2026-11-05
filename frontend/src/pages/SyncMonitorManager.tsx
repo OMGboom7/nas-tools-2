@@ -8,6 +8,7 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
   const [status, setStatus] = useState<SyncMonitorStatus | null>(null);
   const [ids, setIDs] = useState<string[]>([]);
   const [includeExisting, setIncludeExisting] = useState(false);
+  const [timer, setTimer] = useState(false);
   const [review, setReview] = useState<SyncMonitorReview | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [oldStopped, setOldStopped] = useState(false);
@@ -22,7 +23,7 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
   const [error, setError] = useState("");
   const generation = useRef(0);
   const inFlight = useRef(false);
-  useEffect(() => { generation.current++; inFlight.current = false; setRecords([]); setStatus(null); setIDs([]); setIncludeExisting(false); setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setEventKey(""); setReason(""); setDismissConfirmed(false); setBusy(false); setError(""); return () => { generation.current++; }; }, [token]);
+  useEffect(() => { generation.current++; inFlight.current = false; setRecords([]); setStatus(null); setIDs([]); setIncludeExisting(false); setTimer(false); setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setEventKey(""); setReason(""); setDismissConfirmed(false); setBusy(false); setError(""); return () => { generation.current++; }; }, [token]);
   function invalidate() { generation.current++; setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); }
   async function viewJob(id: string) {
     if (!enabled || inFlight.current) return;
@@ -36,16 +37,20 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
     try {
       if (action === "review") {
         setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false);
-        const next = await reviewSyncMonitor(token, { ids, includeExisting });
+        const next = await reviewSyncMonitor(token, { ids, includeExisting: timer || includeExisting, ...(timer ? { timer: true } : {}) });
         if (version === generation.current) setReview(next);
       } else {
-        if (action === "activate") await activateSyncMonitor(token, { ids, includeExisting }, review!.fingerprint, confirmed, oldStopped, sourceRemoval, remoteRequired?{confirmRemoteExclusive:remoteExclusive,confirmRemoteRecoveryCopy:remoteRecovery,confirmOldExecutorsStopped:oldStopped}:undefined);
+        if (action === "activate") await activateSyncMonitor(token, { ids, includeExisting: timer || includeExisting, ...(timer ? { timer: true } : {}) }, review!.fingerprint, confirmed, oldStopped, sourceRemoval, remoteRequired?{confirmRemoteExclusive:remoteExclusive,confirmRemoteRecoveryCopy:remoteRecovery,confirmOldExecutorsStopped:oldStopped}:undefined);
         if (action === "stop") await stopSyncMonitor(token, stopConfirmed);
         if (action === "dismiss") await dismissSyncMonitorEvent(token, eventKey, reason, dismissConfirmed);
         if (version !== generation.current) return;
         setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setDismissConfirmed(false);
         const [rows, next] = await Promise.all([getDirectSyncRecords(token), getSyncMonitor(token)]);
-        if (version === generation.current) { setRecords(rows); setStatus(next); }
+        if (version === generation.current) {
+          setRecords(rows);
+          setStatus(next);
+          if (!next.timer?.installed || !next.timer.cron) setTimer(false);
+        }
       }
     } catch (err) {
       if (version !== generation.current) return;
@@ -53,27 +58,47 @@ export function SyncMonitorManager({ token, enabled, onSessionExpired, onChanged
       else setError(err instanceof Error ? err.message : "监控操作失败，请核对状态和任务账本");
       setReview(null); setConfirmed(false); setOldStopped(false); setSourceRemoval(false);setRemoteExclusive(false);setRemoteRecovery(false); setStopConfirmed(false); setDismissConfirmed(false);
       // A lost response is not evidence that a mutation failed. Never replay it.
-      try { const next = await getSyncMonitor(token); if (version === generation.current) setStatus(next); } catch { /* retain original error */ }
+      try {
+        const next = await getSyncMonitor(token);
+        if (version === generation.current) {
+          setStatus(next);
+          if (!next.timer?.installed || !next.timer.cron) setTimer(false);
+        }
+      } catch { /* retain original error */ }
     } finally { if (version === generation.current) { inFlight.current = false; setBusy(false); } }
   }
   return <section aria-label="自动同步监控">
     <h2>自动同步监控（明确授权后运行）</h2>
-    <p>默认关闭。先实际停止旧 Python／其他同步执行器，再审核来源并授权。每 10 秒检查，文件快照至少稳定 30 秒后进入持久队列；这不等于下载器已确认完成。不覆盖目标，不确定任务不自动重跑。仅纯 Go、带运行上下文的服务启动监控；此页面不会启动服务器。</p>
+    <p>默认关闭。先实际停止旧同步执行器，再审核来源并授权。可选择十秒轮询或使用插件配置的定时周期。两种方式共用同一份授权和任务账本，文件至少稳定 30 秒后才可执行。</p>
     {error && <p role="alert">{error}</p>}
     <button type="button" disabled={!enabled || busy} onClick={() => void operate("load")}>只读刷新配置、授权状态和事件</button>
     {status && <p>授权状态：{status.control.state} · 批次 {status.control.lease.generation || "无"} · 操作者 {status.control.lease.actor || "无"}。{status.control.reason} 配置修改或根身份变化会暂停，撤销配置不恢复授权。</p>}
+    {status?.timer?.installed && <div>
+      <p>定时目录同步 {status.timer.cron || "未设置周期"} · {status.timer.active ? "已启用" : "未授权"}
+        {status.timer.active && status.timer.next && (" · 下次扫描 " + new Date(status.timer.next).toLocaleString())}</p>
+      {!!status.timer.runs.length && <details><summary>最近定时扫描记录</summary><ul>{status.timer.runs.map(run =>
+        <li key={run.id}>{new Date(run.slot).toLocaleString()} · {({ observing: "等待稳定复核", scanned: "已扫描", needs_review: "需核对" } as Record<string, string>)[run.state] || run.state} · 候选 {run.candidates} · {run.id}</li>
+      )}</ul></details>}
+    </div>}
     <fieldset disabled={!enabled || busy}>
       <legend>选择本轮授权范围（最多 16 项）</legend>
+      {status?.timer?.installed && <label><input type="checkbox" checked={timer} disabled={!status.timer.cron} onChange={event => {
+        invalidate();
+        const useTimer = event.target.checked;
+        setTimer(useTimer);
+        const activeIDs = records.filter(row => row.enabled === 1).map(row => row.id);
+        if (useTimer && activeIDs.length <= 16) setIDs(activeIDs);
+      }} />按已保存的定时目录同步周期执行（包含当前已有文件）</label>}
       {records.map((row) => <label key={row.id}><input type="checkbox" disabled={row.enabled !== 1 || !ids.includes(row.id) && ids.length >= 16} checked={ids.includes(row.id)} onChange={(e) => { invalidate(); setIDs(e.target.checked ? [...ids, row.id] : ids.filter((id) => id !== row.id)); }} />#{row.id} · {row.source} → {row.dest || "按媒体类型选库"} · {row.rename === 1 ? "识别整理" : "原结构同步"} · {row.mode}</label>)}
-      <label><input type="checkbox" checked={includeExisting} onChange={(e) => { invalidate(); setIncludeExisting(e.target.checked); }} />将当前已有文件也纳入自动处理（不选则只建立基线）</label>
+      <label><input type="checkbox" checked={timer || includeExisting} disabled={timer} onChange={(e) => { invalidate(); setIncludeExisting(e.target.checked); }} />将当前已有文件也纳入自动处理（不选则只建立基线）</label>
       <button type="button" disabled={!ids.length} onClick={() => void operate("review")}>只读审核来源快照</button>
     </fieldset>
-    {review && <div><p>本次范围 {review.lease.ids.join("、")}；快照 {review.snapshots.length} 组、{review.snapshots.reduce((n, item) => n + item.files.length, 0)} 个文件；{review.lease.includeExisting ? "已有文件会进入待稳定队列" : "已有文件仅作为基线"}。未识别、冲突或不确定状态留待审核；蓝光按整盘处理，远程须独立授权，迟到附件不自动并入已完成任务。</p><ul>{review.snapshots.map((item) => <li key={`${item.configId}:${item.scope}`}>#{item.configId} · {item.scope} · {item.files.length} 个文件</li>)}</ul>
+    {review && <div><p>本次触发 {review.lease.timer ? "定时 " + review.lease.timer.cron + "（" + review.lease.timer.timezone + "）" : "十秒轮询"} · 范围 {review.lease.ids.join("、")} · 快照 {review.snapshots.length} 组、{review.snapshots.reduce((n, item) => n + item.files.length, 0)} 个文件；{review.lease.includeExisting ? "已有文件会进入待稳定队列" : "已有文件仅作为基线"}。未识别、冲突或不确定状态留待审核；蓝光按整盘处理，远程须独立授权，迟到附件不自动并入已完成任务。</p><ul>{review.snapshots.map((item) => <li key={`${item.configId}:${item.scope}`}>#{item.configId} · {item.scope} · {item.files.length} 个文件</li>)}</ul>
       <label><input type="checkbox" disabled={!enabled || busy} checked={oldStopped} onChange={(e) => setOldStopped(e.target.checked)} />我已实际停止旧同步执行器及会写本轮来源／远程范围的所有外部程序（不是仅切换开关）</label>
       {remoteRequired && <RemoteTransferConsent automatic targets={review.remoteTargets} busy={!enabled || busy} exclusive={remoteExclusive} recovery={remoteRecovery} onExclusive={setRemoteExclusive} onRecovery={setRemoteRecovery}/>}
       <label><input type="checkbox" disabled={!enabled || busy} checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />同意后台按上述范围自动创建并执行任务</label>
       {review.needsSourceRemoval && <label><input type="checkbox" disabled={!enabled || busy} checked={sourceRemoval} onChange={(e) => setSourceRemoval(e.target.checked)} />另行授权移动模式核验目标后移除源名和已核验备份</label>}
-      <button type="button" disabled={!enabled || busy || !confirmed || !oldStopped || remoteRequired && (!remoteExclusive || !remoteRecovery) || review.needsSourceRemoval && !sourceRemoval} onClick={() => void operate("activate")}>确认启用本轮自动同步</button>
+      <button type="button" disabled={!enabled || busy || !confirmed || !oldStopped || remoteRequired && (!remoteExclusive || !remoteRecovery) || review.needsSourceRemoval && !sourceRemoval} onClick={() => void operate("activate")}>{review.lease.timer ? "确认启用定时目录同步" : "确认启用本轮自动同步"}</button>
     </div>}
     <label><input type="checkbox" disabled={!enabled || busy} checked={stopConfirmed} onChange={(e) => setStopConfirmed(e.target.checked)} />请求暂停后续自动写入；正在进行的步骤仍须核对账本</label>
     <button type="button" disabled={!enabled || busy || !stopConfirmed} onClick={() => void operate("stop")}>确认请求暂停</button>

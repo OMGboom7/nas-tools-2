@@ -89,8 +89,11 @@ func verifyRemoteExecution(ctx context.Context, r unknownReader, d Definition, p
 		if err != nil {
 			return err
 		}
-		if c.State != "enabled" || c.Lease.Generation != g.Generation || d.Sync == nil || d.Sync.MonitorGeneration != g.Generation {
+		if !c.Enabled() || c.Lease.Generation != g.Generation || d.Sync == nil || d.Sync.MonitorGeneration != g.Generation {
 			return ErrState
+		}
+		if err := verifySyncTimer(ctx, r, c.Lease.Timer); err != nil {
+			return err
 		}
 		selected := false
 		for _, id := range c.Lease.IDs {

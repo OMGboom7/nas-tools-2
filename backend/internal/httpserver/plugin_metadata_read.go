@@ -84,9 +84,9 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) && !service.nativeCookieCloud(id) && !service.nativeAutoBackup(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) && !service.nativeCookieCloud(id) && !service.nativeAutoBackup(id) && !service.nativeSyncTimer(id) {
 				for _, other := range installed {
-					if service.nativeCookieCloud(other) || service.nativeAutoBackup(other) {
+					if service.nativeCookieCloud(other) || service.nativeAutoBackup(other) || service.nativeSyncTimer(other) {
 						writeAPIError(response, 501, 501, "混合插件配置请使用各自的配置页")
 						return
 					}
@@ -101,6 +101,26 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeSyncTimer(id) {
+				api := service.syncTimer
+				if !api.authorize(response, request) {
+					return
+				}
+				claims, err := api.auth.service.VerifyToken(request.Header.Get("Authorization"))
+				if err != nil {
+					writeAPIError(response, 401, 401, "请重新登录")
+					return
+				}
+				settings, err := service.syncTimerPluginSettings(request.Context())
+				if err != nil {
+					writeOrganizationError(response, err)
+					return
+				}
+				detail := syncTimerDetail(claims.Username, settings)
+				running, known := service.syncTimerRunning(request.Context())
+				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeAutoBackup(id) {
 				api := service.autoBackup
 				actor, ok := api.actor(response, request, false)

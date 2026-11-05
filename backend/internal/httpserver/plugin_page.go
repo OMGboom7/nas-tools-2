@@ -46,6 +46,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSyncTimer(request.PathValue("id")) {
+		service.serveSyncTimerPlugin(response, request, "page")
+		return
+	}
 	if service.nativeAutoBackup(request.PathValue("id")) {
 		service.serveAutoBackupPlugin(response, request, "page")
 		return

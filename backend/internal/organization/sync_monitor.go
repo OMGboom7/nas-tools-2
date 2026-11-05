@@ -11,6 +11,7 @@ import (
 )
 
 type MonitorLease struct {
+	Timer           *MonitorTimer     `json:"timer,omitempty"`
 	Remote          *RemoteAutomation `json:"remote,omitempty"`
 	Generation      string            `json:"generation"`
 	Actor           string            `json:"actor"`
@@ -26,6 +27,13 @@ type MonitorControl struct {
 	Lease  MonitorLease `json:"lease"`
 	Reason string       `json:"reason,omitempty"`
 }
+
+// Older Go versions only recognize "enabled" and must not treat a timer
+// grant as permission for continuous polling after a downgrade.
+func (c MonitorControl) Enabled() bool {
+	return c.State == "enabled" && c.Lease.Timer == nil || c.State == "scheduled" && c.Lease.Timer != nil
+}
+
 type MonitorSnapshot struct {
 	ConfigID string `json:"configId"`
 	Scope    string `json:"scope"`
@@ -81,10 +89,10 @@ func verifyMonitorControl(ctx context.Context, r unknownReader, generation strin
 	if err != nil {
 		return err
 	}
-	if generation == "" || control.State != "enabled" || control.Lease.Generation != generation {
+	if generation == "" || !control.Enabled() || control.Lease.Generation != generation {
 		return ErrState
 	}
-	return nil
+	return verifySyncTimer(ctx, r, control.Lease.Timer)
 }
 func (s *Store) VerifyMonitorControl(ctx context.Context, generation string) error {
 	return verifyMonitorControl(ctx, s.db, generation)
@@ -94,17 +102,40 @@ func pauseMonitorControl(ctx context.Context, w syncWriter, reason string) error
 	if err != nil {
 		return err
 	}
-	if control.State != "enabled" {
+	if !control.Enabled() {
 		return nil
 	}
-	_, err = w.ExecContext(ctx, `UPDATE GO_SYNC_MONITOR_CONTROL SET STATE='paused',REASON=? WHERE ID=1 AND STATE='enabled'`, reason)
-	return err
+	result, err := w.ExecContext(ctx, `UPDATE GO_SYNC_MONITOR_CONTROL SET STATE='paused',REASON=? WHERE ID=1 AND STATE=? AND json_extract(DOCUMENT,'$.generation')=?`, reason, control.State, control.Lease.Generation)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return ErrState
+	}
+	return pauseSyncTimer(ctx, w, control.Lease)
 }
 func (s *Store) StopSyncMonitor(ctx context.Context, actor string) error {
-	return pauseMonitorControl(ctx, s.db, "stop requested by "+actor+"; active steps require ledger review")
+	return s.PauseSyncMonitorGeneration(ctx, "", "stop requested by "+actor+"; active steps require ledger review")
 }
 func (s *Store) PauseSyncMonitor(ctx context.Context, reason string) error {
-	return pauseMonitorControl(ctx, s.db, reason)
+	return s.PauseSyncMonitorGeneration(ctx, "", reason)
+}
+func (s *Store) PauseSyncMonitorGeneration(ctx context.Context, generation, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if generation != "" {
+		control, err := readMonitorControl(ctx, tx)
+		if err != nil || control.Lease.Generation != generation {
+			return ErrState
+		}
+	}
+	if err := pauseMonitorControl(ctx, tx, reason); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func MonitorEventKey(generation string, snapshot MonitorSnapshot) string {
 	return Digest(struct {
@@ -134,16 +165,32 @@ func (s *Store) EnableSyncMonitor(ctx context.Context, lease MonitorLease, snaps
 	if err := monitorTables(ctx, tx); err != nil {
 		return MonitorControl{}, err
 	}
+	if err := pauseMonitorControl(ctx, tx, "superseded by a newly reviewed sync scope"); err != nil {
+		return MonitorControl{}, err
+	}
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return MonitorControl{}, err
 	}
 	lease.Generation = hex.EncodeToString(random[:])
+	if err := initSyncTimer(ctx, tx, lease); err != nil {
+		return MonitorControl{}, err
+	}
 	raw, err := json.Marshal(lease)
 	if err != nil {
 		return MonitorControl{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SYNC_MONITOR_CONTROL VALUES(1,?,'enabled','') ON CONFLICT(ID) DO UPDATE SET DOCUMENT=excluded.DOCUMENT,STATE='enabled',REASON=''`, string(raw)); err != nil {
+	controlState := "enabled"
+	if lease.Timer != nil {
+		controlState = "scheduled"
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SYNC_MONITOR_CONTROL VALUES(1,?,?,'') ON CONFLICT(ID) DO UPDATE SET DOCUMENT=excluded.DOCUMENT,STATE=excluded.STATE,REASON=''`, string(raw), controlState); err != nil {
+		return MonitorControl{}, err
+	}
+	if lease.Timer != nil {
+		snapshots = nil
+	}
+	if err := verifyMonitorControl(ctx, tx, lease.Generation); err != nil {
 		return MonitorControl{}, err
 	}
 	state := "baseline"
@@ -163,7 +210,7 @@ func (s *Store) EnableSyncMonitor(ctx context.Context, lease MonitorLease, snaps
 	if err := tx.Commit(); err != nil {
 		return MonitorControl{}, err
 	}
-	return MonitorControl{State: "enabled", Lease: lease}, nil
+	return MonitorControl{State: controlState, Lease: lease}, nil
 }
 func (s *Store) ObserveSyncMonitor(ctx context.Context, lease MonitorLease, snapshots []MonitorSnapshot, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -174,8 +221,23 @@ func (s *Store) ObserveSyncMonitor(ctx context.Context, lease MonitorLease, snap
 	if err := verifyMonitorControl(ctx, tx, lease.Generation); err != nil {
 		return err
 	}
+	if err := observeSyncMonitor(ctx, tx, lease, snapshots, now, false); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func observeSyncMonitor(ctx context.Context, tx *sql.Tx, lease MonitorLease, snapshots []MonitorSnapshot, now time.Time, reobserve bool) error {
 	keys := map[string]bool{}
 	stamp := now.UTC().Format(time.RFC3339Nano)
+	statement := `INSERT INTO GO_SYNC_MONITOR_EVENTS(EVENT_KEY,GENERATION,CONFIG_ID,SCOPE,SNAPSHOT,FIRST_SEEN,STATE,UPDATED)
+		VALUES(?,?,?,?,?,?,'observed',?) ON CONFLICT(EVENT_KEY) `
+	if reobserve {
+		statement += `DO UPDATE SET FIRST_SEEN=excluded.FIRST_SEEN,STATE='observed',UPDATED=excluded.UPDATED,REASON=''
+			WHERE GO_SYNC_MONITOR_EVENTS.STATE='superseded' AND GO_SYNC_MONITOR_EVENTS.JOBS='[]'`
+	} else {
+		statement += "DO NOTHING"
+	}
 	for _, snapshot := range snapshots {
 		key := MonitorEventKey(lease.Generation, snapshot)
 		keys[key] = true
@@ -183,7 +245,7 @@ func (s *Store) ObserveSyncMonitor(ctx context.Context, lease MonitorLease, snap
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO GO_SYNC_MONITOR_EVENTS(EVENT_KEY,GENERATION,CONFIG_ID,SCOPE,SNAPSHOT,FIRST_SEEN,STATE,UPDATED) VALUES(?,?,?,?,?,?,'observed',?) ON CONFLICT(EVENT_KEY) DO NOTHING`, key, lease.Generation, snapshot.ConfigID, snapshot.Scope, string(raw), stamp, stamp); err != nil {
+		if _, err := tx.ExecContext(ctx, statement, key, lease.Generation, snapshot.ConfigID, snapshot.Scope, string(raw), stamp, stamp); err != nil {
 			return err
 		}
 	}
@@ -212,7 +274,7 @@ func (s *Store) ObserveSyncMonitor(ctx context.Context, lease MonitorLease, snap
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 func scanMonitorEvent(row interface{ Scan(...any) error }) (MonitorEvent, error) {
 	var e MonitorEvent

@@ -17,6 +17,7 @@ import (
 )
 
 type monitorInput struct {
+	Timer                      bool     `json:"timer,omitempty"`
 	ConfirmRemoteExclusive     bool     `json:"confirmRemoteExclusive,omitempty"`
 	ConfirmRemoteRecoveryCopy  bool     `json:"confirmRemoteRecoveryCopy,omitempty"`
 	IDs                        []string `json:"ids"`
@@ -192,6 +193,15 @@ func (api organizationAPI) collectMonitor(ctx context.Context, ids []string) ([]
 	return records, snapshots, proofs, nil
 }
 func (api organizationAPI) monitorReview(ctx context.Context, input monitorInput, actor string) (monitorReview, *recognitionFailure) {
+	var timer *organization.MonitorTimer
+	if input.Timer {
+		var failure *recognitionFailure
+		timer, failure = api.reviewSyncTimer(ctx)
+		if failure != nil {
+			return monitorReview{}, failure
+		}
+		input.IncludeExisting = true
+	}
 	ids := append([]string{}, input.IDs...)
 	sort.Strings(ids)
 	records, snapshots, roots, failure := api.collectMonitor(ctx, ids)
@@ -202,7 +212,7 @@ func (api organizationAPI) monitorReview(ctx context.Context, input monitorInput
 	if err != nil {
 		return monitorReview{}, &recognitionFailure{503, "configuration unavailable"}
 	}
-	review := monitorReview{Records: records, Snapshots: snapshots, Lease: organization.MonitorLease{Actor: actor, IDs: ids, ConfigDigest: organization.Digest(snapshot), GraphDigest: organization.SyncGraphDigest(records), Roots: roots, IncludeExisting: input.IncludeExisting}}
+	review := monitorReview{Records: records, Snapshots: snapshots, Lease: organization.MonitorLease{Timer: timer, Actor: actor, IDs: ids, ConfigDigest: organization.Digest(snapshot), GraphDigest: organization.SyncGraphDigest(records), Roots: roots, IncludeExisting: input.IncludeExisting}}
 	review.Lease.Remote = remoteAutomationFromRoots(roots)
 	configured, err := api.roots(ctx)
 	if err != nil {
@@ -259,7 +269,16 @@ func (api organizationAPI) serveMonitorEnable(w http.ResponseWriter, r *http.Req
 		writeAPIError(w, 400, 400, "remote automatic execution requires separate exclusive namespace/non-atomic visibility and retained recovery-copy consent")
 		return
 	}
-	control, err := api.jobs.EnableSyncMonitor(ctx, review.Lease, review.Snapshots, review.Records, time.Now())
+	now := time.Now()
+	if review.Lease.Timer != nil {
+		next, err := nextSyncTimer(*review.Lease.Timer, now)
+		if err != nil {
+			writeOrganizationError(w, err)
+			return
+		}
+		review.Lease.Timer.FirstDue = next
+	}
+	control, err := api.jobs.EnableSyncMonitor(ctx, review.Lease, review.Snapshots, review.Records, now)
 	if err != nil {
 		writeOrganizationError(w, err)
 		return
@@ -280,7 +299,7 @@ func (api organizationAPI) serveMonitorStatus(w http.ResponseWriter, r *http.Req
 		writeOrganizationError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"control": control, "events": events}})
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"control": control, "events": events, "timer": api.syncTimerStatus(r.Context(), control)}})
 }
 func (api organizationAPI) serveMonitorStop(w http.ResponseWriter, r *http.Request) {
 	if !api.jobsAuthorized(w, r) {
@@ -495,7 +514,7 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 		return organization.ErrState
 	}
 	initial, err := api.jobs.MonitorControl(ctx)
-	if err != nil || initial.State != "enabled" {
+	if err != nil || !initial.Enabled() {
 		return err
 	}
 	guard, err := api.jobs.AcquireJob(ctx, "native-sync-monitor")
@@ -504,28 +523,43 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 	}
 	defer guard.Close()
 	control, err := api.jobs.MonitorControl(ctx)
-	if err != nil || control.State != "enabled" {
+	if err != nil || !control.Enabled() {
 		return err
+	}
+	if control.Lease.Timer != nil {
+		return api.syncTimerTick(ctx, control, now)
 	}
 	lease := control.Lease
 	ctx = organization.AutomaticRemoteContext(ctx, "sync-monitor", lease.Generation)
-	records, snapshots, roots, failure := api.collectMonitor(ctx, lease.IDs)
+	snapshots, failure := api.monitorSnapshots(ctx, lease)
 	if failure != nil {
-		return api.jobs.PauseSyncMonitor(ctx, failure.message)
-	}
-	config, err := api.service.configStore.Snapshot()
-	if err != nil {
-		return err
-	}
-	if organization.SyncGraphDigest(records) != lease.GraphDigest || organization.Digest(config) != lease.ConfigDigest || organization.Digest(roots) != organization.Digest(lease.Roots) {
-		return api.jobs.PauseSyncMonitor(ctx, "configuration or physical roots changed; explicit reactivation required")
-	}
-	if remoteAutomationFromRoots(roots) != nil && !lease.Remote.Valid() {
-		return api.jobs.PauseSyncMonitor(ctx, "remote execution has no current independent grant; explicit new review required")
+		return api.jobs.PauseSyncMonitorGeneration(ctx, lease.Generation, failure.message)
 	}
 	if err := api.jobs.ObserveSyncMonitor(ctx, lease, snapshots, now); err != nil {
 		return err
 	}
+	return api.processMonitorEvents(ctx, lease, now, nil)
+}
+
+func (api organizationAPI) monitorSnapshots(ctx context.Context, lease organization.MonitorLease) ([]organization.MonitorSnapshot, *recognitionFailure) {
+	records, snapshots, roots, failure := api.collectMonitor(ctx, lease.IDs)
+	if failure != nil {
+		return nil, &recognitionFailure{failure.status, failure.message}
+	}
+	config, err := api.service.configStore.Snapshot()
+	if err != nil {
+		return nil, &recognitionFailure{503, "configuration unavailable"}
+	}
+	if organization.SyncGraphDigest(records) != lease.GraphDigest || organization.Digest(config) != lease.ConfigDigest || organization.Digest(roots) != organization.Digest(lease.Roots) {
+		return nil, &recognitionFailure{409, "configuration or physical roots changed; explicit reactivation required"}
+	}
+	if remoteAutomationFromRoots(roots) != nil && !lease.Remote.Valid() {
+		return nil, &recognitionFailure{409, "remote execution has no current independent grant; explicit new review required"}
+	}
+	return snapshots, nil
+}
+
+func (api organizationAPI) processMonitorEvents(ctx context.Context, lease organization.MonitorLease, now time.Time, allowed map[string]bool) error {
 	events, err := api.jobs.MonitorEvents(ctx, lease.Generation, true)
 	if err != nil {
 		return err
@@ -543,6 +577,9 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 			if err := api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", ids, "previous reservation/response interrupted; inspect saved jobs, never automatically restart"); err != nil {
 				return err
 			}
+			continue
+		}
+		if allowed != nil && !allowed[event.Key] {
 			continue
 		}
 		first, err := time.Parse(time.RFC3339Nano, event.FirstSeen)
@@ -572,92 +609,99 @@ func (api organizationAPI) syncMonitorTick(ctx context.Context, now time.Time) e
 			}
 			continue
 		}
-		plans, failure := api.monitorPlans(ctx, event, lease)
-		if failure != nil {
-			return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, failure.message)
-		}
-		fresh, failure := api.monitorPlans(ctx, event, lease)
-		if failure != nil {
-			return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, failure.message)
-		}
-		if len(fresh) != len(plans) {
-			return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "planning scope changed")
-		}
-		for i := range plans {
-			if fresh[i].Fingerprint != plans[i].Fingerprint {
-				return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "source/metadata plan changed")
-			}
-		}
-		observed := map[string]organization.File{}
-		for _, file := range event.Snapshot.Files {
-			observed[file.Path] = file
-		}
-		for _, plan := range fresh {
-			for _, entry := range plan.definition.Entries {
-				file, ok := observed[entry.Source]
-				if !ok || file.Identity != entry.Identity || file.Size != entry.Size || strconv.FormatInt(file.Modified, 10) != entry.Modified || organization.Digest(file.DiscInfo) != organization.Digest(entry.Disc) {
-					return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "source is not the exact twice-observed snapshot")
-				}
-			}
-		}
-		if len(plans) == 0 {
-			return api.jobs.SetMonitorEvent(ctx, event.Key, "filtered", nil, "no verified executable primary media, or history/ignore rules suppress transfer; not a new successful transfer")
-		}
-		if err := api.jobs.ReserveMonitorEvent(ctx, event); err != nil {
+		err = api.processMonitorEvent(ctx, lease, event)
+		if err != nil || allowed == nil {
 			return err
 		}
-		ids := []string{}
-		for _, plan := range fresh {
-			plan.definition.Sync.MonitorGeneration, plan.definition.Sync.MonitorEvent = lease.Generation, event.Key
-			fingerprint := organization.Digest(struct {
-				Original   string
-				Definition organization.Definition
-			}{plan.Fingerprint, plan.definition})
-			id, err := api.jobs.Create(ctx, fingerprint, plan.definition)
-			if err != nil {
-				_ = api.jobs.SetMonitorEvent(context.WithoutCancel(ctx), event.Key, "needs_review", ids, "reservation interrupted; inspect all saved jobs")
-				return err
-			}
-			ids = append(ids, id)
-		}
-		if err := api.jobs.SetMonitorEvent(ctx, event.Key, "reserved", ids, ""); err != nil {
-			return err
-		}
-		worker := api
-		worker.monitorGeneration = lease.Generation
-		if lease.Remote != nil {
-			worker.remoteApproval = lease.Remote.Approval(lease.Actor, "sync-monitor", lease.Generation)
-		}
-		for _, id := range ids {
-			job, err := api.jobs.Get(ctx, id)
-			if err != nil {
-				return err
-			}
-			if organization.MoveMode(job.Mode) && !lease.SourceRemoval {
-				return organization.ErrState
-			}
-			jobGuard, err := api.jobs.AcquireJob(ctx, id)
-			if err != nil {
-				return err
-			}
-			job.AutomaticGeneration = lease.Generation
-			err = worker.validateJob(ctx, job)
-			if err == nil {
-				err = worker.runJob(ctx, job, false)
-			}
-			jobGuard.Close()
-			current, readErr := api.jobs.Get(context.WithoutCancel(ctx), id)
-			if err != nil || readErr != nil || current.State != "completed" {
-				_ = api.jobs.SetMonitorEvent(context.WithoutCancel(ctx), event.Key, "needs_review", ids, "execution or receipt interrupted; explicit job review required")
-				if err != nil {
-					return err
-				}
-				return readErr
-			}
-		}
-		return api.jobs.SetMonitorEvent(ctx, event.Key, "completed", ids, "")
 	}
 	return nil
+}
+
+func (api organizationAPI) processMonitorEvent(ctx context.Context, lease organization.MonitorLease, event organization.MonitorEvent) error {
+	plans, failure := api.monitorPlans(ctx, event, lease)
+	if failure != nil {
+		return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, failure.message)
+	}
+	fresh, failure := api.monitorPlans(ctx, event, lease)
+	if failure != nil {
+		return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, failure.message)
+	}
+	if len(fresh) != len(plans) {
+		return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "planning scope changed")
+	}
+	for i := range plans {
+		if fresh[i].Fingerprint != plans[i].Fingerprint {
+			return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "source/metadata plan changed")
+		}
+	}
+	observed := map[string]organization.File{}
+	for _, file := range event.Snapshot.Files {
+		observed[file.Path] = file
+	}
+	for _, plan := range fresh {
+		for _, entry := range plan.definition.Entries {
+			file, ok := observed[entry.Source]
+			if !ok || file.Identity != entry.Identity || file.Size != entry.Size || strconv.FormatInt(file.Modified, 10) != entry.Modified || organization.Digest(file.DiscInfo) != organization.Digest(entry.Disc) {
+				return api.jobs.SetMonitorEvent(ctx, event.Key, "needs_review", nil, "source is not the exact twice-observed snapshot")
+			}
+		}
+	}
+	if len(plans) == 0 {
+		return api.jobs.SetMonitorEvent(ctx, event.Key, "filtered", nil, "no verified executable primary media, or history/ignore rules suppress transfer; not a new successful transfer")
+	}
+	if err := api.jobs.ReserveMonitorEvent(ctx, event); err != nil {
+		return err
+	}
+	ids := []string{}
+	for _, plan := range fresh {
+		plan.definition.Sync.MonitorGeneration, plan.definition.Sync.MonitorEvent = lease.Generation, event.Key
+		fingerprint := organization.Digest(struct {
+			Original   string
+			Definition organization.Definition
+		}{plan.Fingerprint, plan.definition})
+		id, err := api.jobs.Create(ctx, fingerprint, plan.definition)
+		if err != nil {
+			_ = api.jobs.SetMonitorEvent(context.WithoutCancel(ctx), event.Key, "needs_review", ids, "reservation interrupted; inspect all saved jobs")
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := api.jobs.SetMonitorEvent(ctx, event.Key, "reserved", ids, ""); err != nil {
+		return err
+	}
+	worker := api
+	worker.monitorGeneration = lease.Generation
+	if lease.Remote != nil {
+		worker.remoteApproval = lease.Remote.Approval(lease.Actor, "sync-monitor", lease.Generation)
+	}
+	for _, id := range ids {
+		job, err := api.jobs.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if organization.MoveMode(job.Mode) && !lease.SourceRemoval {
+			return organization.ErrState
+		}
+		jobGuard, err := api.jobs.AcquireJob(ctx, id)
+		if err != nil {
+			return err
+		}
+		job.AutomaticGeneration = lease.Generation
+		err = worker.validateJob(ctx, job)
+		if err == nil {
+			err = worker.runJob(ctx, job, false)
+		}
+		jobGuard.Close()
+		current, readErr := api.jobs.Get(context.WithoutCancel(ctx), id)
+		if err != nil || readErr != nil || current.State != "completed" {
+			_ = api.jobs.SetMonitorEvent(context.WithoutCancel(ctx), event.Key, "needs_review", ids, "execution or receipt interrupted; explicit job review required")
+			if err != nil {
+				return err
+			}
+			return readErr
+		}
+	}
+	return api.jobs.SetMonitorEvent(ctx, event.Key, "completed", ids, "")
 }
 
 func startSyncMonitorWorker(ctx context.Context, api *organizationAPI) func() {
@@ -673,9 +717,9 @@ func startSyncMonitorWorker(ctx context.Context, api *organizationAPI) func() {
 			select {
 			case <-ctx.Done():
 				return
-			case now := <-ticker.C:
+			case <-ticker.C:
 				run, cancel := context.WithTimeout(ctx, organization.ExecutionTimeout)
-				err := api.syncMonitorTick(run, now)
+				err := api.syncMonitorTick(run, time.Now())
 				cancel()
 				if err != nil && !errors.Is(err, organization.ErrBusy) && !errors.Is(err, context.Canceled) {
 					slog.Warn("native sync monitor requires review", "error", fmt.Sprint(err))

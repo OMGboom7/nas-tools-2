@@ -1066,7 +1066,7 @@ export type SyncConfigPatch = Partial<Pick<OrganizationSyncRecord, "source" | "d
 export type SyncConfigInput = { action: "create" | "update" | "delete" | "status" | "restore"; id?: string; patch?: SyncConfigPatch; restoreId?: string };
 export type SyncConfigReview = { action: string; actor: string; before: OrganizationSyncRecord[]; after: OrganizationSyncRecord[]; jobs: Array<{ id: string; configId: string; mode: string }>; fingerprint: string; restoreId?: string };
 export type SyncConfigReceipt = { id: string; review: SyncConfigReview; after: OrganizationSyncRecord[]; created: string; restoreId?: string };
-export type SyncMonitorInput = { ids: string[]; includeExisting: boolean };
+export type SyncMonitorInput = { ids: string[]; includeExisting: boolean; timer?: boolean };
 export type DownloadCompletionInput = { downloaderId: string; taskId: string };
 export type DownloadMonitorInput = { ids: string[]; includeExisting: boolean; allowOmitted: boolean };
 export type DownloadMonitorReview = { remoteTargets?:OrganizationRemoteTarget[];lease: { ids: string[]; actor: string; includeExisting: boolean; allowOmitted: boolean }; sources: Array<{ id: string; name: string; type: string; mode: string; directories: string[] }>; candidates: Record<string, string[]>; needsSourceRemoval: boolean; needsPauseTasks: boolean; needsTaskRemoval: boolean; needsExclusiveLabels: boolean; fingerprint: string };
@@ -1154,8 +1154,8 @@ export async function reviewDownloadCompletion(token: string, input: DownloadCom
   if (!result.success || result.code !== 0 || result.data?.reviewOnly !== true || !/^[a-f0-9]{64}$/.test(result.data.fingerprint)) throw new ApiError(result.message || "下载完成证据无法核实；未自动整理或标记任务", result.code);
   return result.data;
 }
-export type SyncMonitorReview = { remoteTargets?:OrganizationRemoteTarget[];lease: { ids: string[]; actor: string; includeExisting: boolean }; records: OrganizationSyncRecord[]; snapshots: Array<{ configId: string; scope: string; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }> }>; fingerprint: string; needsSourceRemoval: boolean };
-export type SyncMonitorStatus = { control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[]; includeExisting?: boolean; sourceRemoval?: boolean } }; events: Array<{ key: string; generation: string; snapshot: { configId: string; scope: string }; firstSeen: string; state: string; jobs: string[]; reason?: string; updated: string }> };
+export type SyncMonitorReview = { remoteTargets?:OrganizationRemoteTarget[];lease: { ids: string[]; actor: string; includeExisting: boolean; timer?: { cron: string; timezone: string } }; records: OrganizationSyncRecord[]; snapshots: Array<{ configId: string; scope: string; files: Array<{ path: string; kind: string; size: number; modified: number; identity: string }> }>; fingerprint: string; needsSourceRemoval: boolean };
+export type SyncMonitorStatus = { timer?: { installed: boolean; cron: string; active: boolean; next?: string; runs: Array<{ id: string; slot: string; started: string; state: string; candidates: number }> }; control: { state: string; reason?: string; lease: { generation?: string; actor?: string; ids?: string[]; includeExisting?: boolean; sourceRemoval?: boolean } }; events: Array<{ key: string; generation: string; snapshot: { configId: string; scope: string }; firstSeen: string; state: string; jobs: string[]; reason?: string; updated: string }> };
 export type OrganizationSourceRestoreItem = {index:number;source:string;outcome:string};
 export type OrganizationSourceRestoreReview = {jobId:string;state:string;fingerprint:string;canRestore:boolean;reason:string;items:OrganizationSourceRestoreItem[]};
 export type OrganizationSourceRestoreReceipt = {jobId:string;actor:string;reason:string;created:string;updated:string;state:string;targetsRetained:boolean;items:OrganizationSourceRestoreItem[]};

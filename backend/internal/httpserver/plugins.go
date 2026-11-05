@@ -31,6 +31,7 @@ type pluginService struct {
 	cloudflare      *cloudflareAPI
 	cookieCloud     *cookieCloudAPI
 	autoBackup      *autoBackupAPI
+	syncTimer       *organizationAPI
 }
 
 type pluginSummary struct {
@@ -85,6 +86,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeSyncTimer(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveSyncTimerPlugin(response, request, action)
+		return
+	}
 	if service.nativeAutoBackup(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

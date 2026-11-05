@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSyncTimer(request.PathValue("id")) {
+		service.serveSyncTimerPlugin(response, request, "get")
+		return
+	}
 	if service.nativeAutoBackup(request.PathValue("id")) {
 		service.serveAutoBackupPlugin(response, request, "get")
 		return
@@ -134,6 +138,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeSyncTimer(request.PathValue("id")) {
+		service.serveSyncTimerPlugin(response, request, "save")
+		return
+	}
 	if service.nativeAutoBackup(request.PathValue("id")) {
 		service.serveAutoBackupPlugin(response, request, "save")
 		return

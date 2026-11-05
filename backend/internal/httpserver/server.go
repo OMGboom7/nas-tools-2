@@ -701,6 +701,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	plugins.cookieCloud = cloudCookies
 	plugins.autoBackup = backup
+	plugins.syncTimer = &organizer
 	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}
 	if organizationJobs != nil {
 		movieLikes.queue = organizationJobs.MovieLike()

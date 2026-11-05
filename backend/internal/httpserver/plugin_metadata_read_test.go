@@ -101,7 +101,7 @@ func TestInstalledPluginListDoesNotHideRemainingPlugins(t *testing.T) {
 		if err != nil || string(contents) != body.Encode() {
 			t.Fatalf("remaining list request changed=%q %v", contents, err)
 		}
-		return jsonResponse(request, `{"code":0,"result":{"SyncTimer":{"name":"SyncTimer"},"CustomReleaseGroups":{"name":"Native groups"}}}`), nil
+		return jsonResponse(request, `{"code":0,"result":{"TorrentMark":{"name":"TorrentMark"},"CustomReleaseGroups":{"name":"Native groups"}}}`), nil
 	})
 	handler, token, path := nativeServicesFixture(t, "", nil, transport)
 	store, err := systemconfig.Open(path)
@@ -109,11 +109,11 @@ func TestInstalledPluginListDoesNotHideRemainingPlugins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.Set(t.Context(), "UserInstalledPlugins", `["SyncTimer","CustomReleaseGroups"]`); err != nil {
+	if err := store.Set(t.Context(), "UserInstalledPlugins", `["TorrentMark","CustomReleaseGroups"]`); err != nil {
 		t.Fatal(err)
 	}
 	response := performFormRequest(handler, "/api/v1/plugin/list", token, body)
-	if response.Code != 200 || !called || !strings.Contains(response.Body.String(), "SyncTimer") {
+	if response.Code != 200 || !called || !strings.Contains(response.Body.String(), "TorrentMark") {
 		t.Fatalf("remaining installed plugin was hidden: %d %s", response.Code, response.Body.String())
 	}
 }
