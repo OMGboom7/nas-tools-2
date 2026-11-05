@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeAutoBackup(request.PathValue("id")) {
+		service.serveAutoBackupPlugin(response, request, "get")
+		return
+	}
 	if service.nativeCookieCloud(request.PathValue("id")) {
 		service.serveCookieCloudPlugin(response, request, "get")
 		return
@@ -130,6 +134,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeAutoBackup(request.PathValue("id")) {
+		service.serveAutoBackupPlugin(response, request, "save")
+		return
+	}
 	if service.nativeCookieCloud(request.PathValue("id")) {
 		service.serveCookieCloudPlugin(response, request, "save")
 		return

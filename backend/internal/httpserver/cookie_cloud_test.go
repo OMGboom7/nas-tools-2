@@ -289,7 +289,7 @@ func TestCookieCloudHybridWritesDoNotFallThrough(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.Set(t.Context(), "UserInstalledPlugins", `["CookieCloud","AutoBackup"]`); err != nil {
+	if err := store.Set(t.Context(), "UserInstalledPlugins", `["CookieCloud","SyncTimer"]`); err != nil {
 		t.Fatal(err)
 	}
 	res := nativeJSONRequest(handler, http.MethodPut, "/api/v1/plugins/%20CookieCloud", token, `{"values":{}}`)

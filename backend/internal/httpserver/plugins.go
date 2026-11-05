@@ -30,6 +30,7 @@ type pluginService struct {
 	siteSignin      *siteSigninAPI
 	cloudflare      *cloudflareAPI
 	cookieCloud     *cookieCloudAPI
+	autoBackup      *autoBackupAPI
 }
 
 type pluginSummary struct {
@@ -84,6 +85,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeAutoBackup(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveAutoBackupPlugin(response, request, action)
+		return
+	}
 	if service.nativeCookieCloud(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

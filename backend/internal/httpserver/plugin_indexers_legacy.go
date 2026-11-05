@@ -49,6 +49,10 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeAutoBackup(id) {
+			s.serveAutoBackupPlugin(w, probe, "page")
+			return
+		}
 		if s.nativeCookieCloud(id) {
 			probe.SetPathValue("id", id)
 			s.serveCookieCloudPlugin(w, probe, "legacy-page")

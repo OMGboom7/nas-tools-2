@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/auth"
+	"github.com/0xforee/nas-tools/backend/internal/autobackup"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/cookiecloud"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
@@ -30,7 +31,7 @@ func (api configurationAPI) setSystem(response http.ResponseWriter, request *htt
 	}
 	key := strings.TrimSpace(request.Form.Get("key"))
 	value := request.Form.Get("value")
-	if key == cookiecloud.ConfigKey || key == "UserInstalledPlugins" {
+	if key == cookiecloud.ConfigKey || key == autobackup.ConfigKey || key == "UserInstalledPlugins" {
 		writeAPIError(response, http.StatusBadRequest, 400, "请通过插件管理修改此配置")
 		return
 	}
