@@ -19,6 +19,7 @@ import (
 const Plugin = "TorrentRemover"
 const ConfigKey = "plugin.TorrentRemover"
 
+var ErrAttempted = errors.New("original task incarnation already has a removal intent")
 var ErrState = errors.New("torrent removal source or execution state changed")
 
 type Target struct {
@@ -28,11 +29,12 @@ type Target struct {
 	Digest string `json:"digest"`
 }
 type Control struct {
-	Epoch   string   `json:"epoch"`
-	Actor   string   `json:"actor"`
-	Scope   string   `json:"scope"`
-	Config  string   `json:"config"`
-	Targets []Target `json:"targets"`
+	Exclusive bool     `json:"exclusive"`
+	Epoch     string   `json:"epoch"`
+	Actor     string   `json:"actor"`
+	Scope     string   `json:"scope"`
+	Config    string   `json:"config"`
+	Targets   []Target `json:"targets"`
 }
 type Event struct {
 	ID        string `json:"id"`
@@ -64,14 +66,16 @@ type Download struct {
 	Downloader string `json:"downloader"`
 	Task       string `json:"task"`
 	SavePath   string `json:"savePath"`
+	Date       string `json:"date"`
 }
 type Definition struct {
-	Event      Event       `json:"event"`
-	Control    Control     `json:"control"`
-	Candidates []Candidate `json:"candidates"`
-	Histories  []History   `json:"histories"`
-	Problems   []string    `json:"problems"`
-	Downloads  []Download  `json:"downloads"`
+	Event          Event       `json:"event"`
+	Control        Control     `json:"control"`
+	Candidates     []Candidate `json:"candidates"`
+	Histories      []History   `json:"histories"`
+	Problems       []string    `json:"problems"`
+	Downloads      []Download  `json:"downloads"`
+	TransferConfig *string     `json:"transferConfig,omitempty"`
 }
 type Task struct {
 	Candidate
@@ -155,7 +159,7 @@ func Merge(raw string, enabled bool) (string, error) {
 	return string(b), err
 }
 func (c Control) Valid() bool {
-	if !Hex(c.Epoch, 64) || !Hex(c.Scope, 64) || !Hex(c.Config, 64) || !validText(c.Actor, 256) || len(c.Targets) == 0 || len(c.Targets) > 50 {
+	if !c.Exclusive || !Hex(c.Epoch, 64) || !Hex(c.Scope, 64) || !Hex(c.Config, 64) || !validText(c.Actor, 256) || len(c.Targets) == 0 || len(c.Targets) > 50 {
 		return false
 	}
 	seen := map[string]bool{}
@@ -181,7 +185,7 @@ func EventFromPayload(id, reference string, raw json.RawMessage) (Event, error) 
 			Title string `json:"title"`
 		} `json:"media_info"`
 	}
-	if len(raw) > 128<<10 || json.Unmarshal(raw, &wire) != nil || reference != wire.Removal || !downloadcompletion.Absolute(wire.Path) {
+	if len(raw) > 128<<10 || json.Unmarshal(raw, &wire) != nil || reference != wire.Removal || (!downloadcompletion.Absolute(wire.Path) && wire.Path != "/") {
 		return Event{}, ErrState
 	}
 	e := Event{ID: id, Removal: reference, History: wire.History, Title: wire.Media.Title, Path: wire.Path, Driver: wire.Driver, Directory: wire.Filename == ""}

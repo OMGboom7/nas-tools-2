@@ -26,6 +26,8 @@ func Open(file string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	// Keep only transaction-owned connections; the DSN reinstalls the wait budget.
+	db.SetMaxIdleConns(0)
 	s := &Store{db: db}
 	tx, err := db.Begin()
 	if err != nil {
@@ -50,6 +52,7 @@ func schema(ctx context.Context, tx *sql.Tx) error {
 		`CREATE TABLE IF NOT EXISTS GO_TORRENT_REMOVAL_CONTROL(ID INTEGER PRIMARY KEY CHECK(ID=1),DOCUMENT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_TORRENT_REMOVAL_EVENTS(ID TEXT PRIMARY KEY,EVENT_ID TEXT NOT NULL UNIQUE,STATE TEXT NOT NULL,REASON TEXT NOT NULL,ACTOR TEXT NOT NULL,CREATED TEXT NOT NULL,UPDATED TEXT NOT NULL,DOCUMENT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_TORRENT_REMOVAL_TASKS(RECEIPT_ID TEXT NOT NULL,ID TEXT NOT NULL,STATE TEXT NOT NULL,REASON TEXT NOT NULL,PROOF TEXT NOT NULL DEFAULT '',PRIMARY KEY(RECEIPT_ID,ID))`,
+		`CREATE TABLE IF NOT EXISTS GO_TORRENT_REMOVAL_ATTEMPTS(DOWNLOADER TEXT NOT NULL,TASK TEXT NOT NULL,INCARNATION TEXT NOT NULL,RECEIPT_ID TEXT NOT NULL,CANDIDATE_ID TEXT NOT NULL,PROOF TEXT NOT NULL,PRIMARY KEY(DOWNLOADER,TASK,INCARNATION))`,
 		`CREATE INDEX IF NOT EXISTS GO_TORRENT_REMOVAL_STATE ON GO_TORRENT_REMOVAL_EVENTS(STATE,CREATED,ID)`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -218,9 +221,12 @@ func Capture(ctx context.Context, tx *sql.Tx, event Event) error {
 	if err != nil {
 		return err
 	}
+	if !settings.Installed || !settings.Control.Valid() {
+		return nil
+	}
 	enabled, err := Enabled(settings.Raw)
 	if err != nil {
-		return err
+		return nil
 	}
 	if !settings.Installed || !enabled || !settings.Control.Valid() || settings.Control.Config != Hash(settings.Raw) {
 		return nil
@@ -243,6 +249,10 @@ func Capture(ctx context.Context, tx *sql.Tx, event Event) error {
 		return err
 	}
 	definition, err := Snapshot(ctx, tx, event, settings.Control)
+	if errors.Is(err, ErrState) {
+		definition = Definition{Event: event, Control: settings.Control, Candidates: []Candidate{}, Histories: []History{}, Downloads: []Download{}, Problems: []string{"原历史关系不完整，需要人工核对"}}
+		err = nil
+	}
 	if err != nil {
 		return err
 	}
@@ -389,4 +399,25 @@ func (s *Store) List(ctx context.Context, state string) ([]Receipt, error) {
 		receipts = append(receipts, r)
 	}
 	return receipts, tx.Commit()
+}
+
+// CapturePayload accepts only the actual source-deletion producer's payload.
+// Facts without a usable media identity cannot establish torrent ownership.
+func CapturePayload(ctx context.Context, tx *sql.Tx, id, reference string, raw json.RawMessage) error {
+	settings, err := readSettings(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if !settings.Installed || !settings.Control.Valid() || settings.Control.Config != Hash(settings.Raw) {
+		return nil
+	}
+	enabled, err := Enabled(settings.Raw)
+	if err != nil || !enabled {
+		return nil
+	}
+	event, err := EventFromPayload(id, reference, raw)
+	if err != nil {
+		return nil
+	}
+	return Capture(ctx, tx, event)
 }

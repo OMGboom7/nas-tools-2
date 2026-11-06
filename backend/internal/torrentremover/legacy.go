@@ -89,7 +89,7 @@ func Snapshot(ctx context.Context, q reader, event Event, control Control) (Defi
 	if err != nil || !exists {
 		return d, err
 	}
-	rows, err := q.QueryContext(ctx, `SELECT CAST(ID AS TEXT),COALESCE(TITLE,''),COALESCE(DOWNLOADER,''),COALESCE(DOWNLOAD_ID,''),COALESCE(SAVE_PATH,'') FROM DOWNLOAD_HISTORY WHERE TITLE=? ORDER BY ID LIMIT 1001`, event.Title)
+	rows, err := q.QueryContext(ctx, `SELECT CAST(ID AS TEXT),COALESCE(TITLE,''),COALESCE(DOWNLOADER,''),COALESCE(DOWNLOAD_ID,''),COALESCE(SAVE_PATH,''),COALESCE(DATE,'') FROM DOWNLOAD_HISTORY WHERE TITLE=? ORDER BY ID LIMIT 1001`, event.Title)
 	if err != nil {
 		return d, err
 	}
@@ -100,7 +100,7 @@ func Snapshot(ctx context.Context, q reader, event Event, control Control) (Defi
 	originals := []original{}
 	for rows.Next() {
 		var item original
-		if err := rows.Scan(&item.record.ID, &item.record.Title, &item.id, &item.hash, &item.record.SavePath); err != nil {
+		if err := rows.Scan(&item.record.ID, &item.record.Title, &item.id, &item.hash, &item.record.SavePath, &item.record.Date); err != nil {
 			rows.Close()
 			return d, err
 		}
@@ -156,6 +156,13 @@ func Snapshot(ctx context.Context, q reader, event Event, control Control) (Defi
 		targetID, targetHash := o.id, o.hash
 		role := "original"
 		if transfer != nil {
+			if d.TransferConfig == nil {
+				raw, err := setting(ctx, q, "plugin.TorrentTransfer")
+				if err != nil {
+					return d, err
+				}
+				d.TransferConfig = &raw
+			}
 			var v map[string]json.RawMessage
 			if json.Unmarshal([]byte(transfer.Value), &v) != nil || v == nil {
 				return d, ErrState
@@ -224,4 +231,59 @@ func Snapshot(ctx context.Context, q reader, event Event, control Control) (Defi
 // path handling. Callers must use this projection for both review and execution.
 func DownloaderDigest(id int64, name string, enabled int, kind string, transfer, onlyNastool, matchPath int, mode, config, dirs string) string {
 	return Hash([]any{strconv.FormatInt(id, 10), name, enabled, kind, transfer, onlyNastool, matchPath, mode, config, dirs})
+}
+
+// ExpectedTask binds current remote evidence to the recorded source directory
+// and the time the owning download/transfer/cross-seed relationship was created.
+func ExpectedTask(d Definition, c Candidate) (string, string, error) {
+	var source *Download
+	for _, item := range d.Downloads {
+		if Hash([]string{item.Downloader, strings.ToLower(item.Task)}) == c.Root {
+			copy := item
+			source = &copy
+			break
+		}
+	}
+	if source == nil || !downloadcompletion.Absolute(source.SavePath) {
+		return "", "", ErrState
+	}
+	directory, date := source.SavePath, source.Date
+	if c.Role == "transfer" || c.Role == "cross-seed" {
+		for _, h := range d.Histories {
+			if h.Plugin != "TorrentTransfer" || h.Key != source.Downloader+"-"+strings.ToLower(source.Task) {
+				continue
+			}
+			if d.TransferConfig == nil {
+				return "", "", ErrState
+			}
+			var cfg struct {
+				From string `json:"frompath"`
+				To   string `json:"topath"`
+			}
+			if *d.TransferConfig != "" && json.Unmarshal([]byte(*d.TransferConfig), &cfg) != nil {
+				return "", "", ErrState
+			}
+			if cfg.From != "" && cfg.To != "" {
+				from, to := strings.TrimRight(cfg.From, "/"), strings.TrimRight(cfg.To, "/")
+				if !downloadcompletion.Absolute(from) || !downloadcompletion.Absolute(to) || (directory != from && !strings.HasPrefix(directory, from+"/")) {
+					return "", "", ErrState
+				}
+				directory = to + strings.TrimPrefix(directory, from)
+			}
+			date = h.Date
+			break
+		}
+	}
+	if c.Role == "cross-seed" {
+		for _, h := range d.Histories {
+			if h.Plugin == "IYUUAutoSeed" {
+				for _, base := range d.Candidates {
+					if base.ID == c.Parent && h.Key == base.Task {
+						date = h.Date
+					}
+				}
+			}
+		}
+	}
+	return directory, date, nil
 }

@@ -27,8 +27,14 @@ func current(ctx context.Context, q reader, r Receipt) error {
 	}
 	for _, d := range r.Definition.Downloads {
 		var item Download
-		err := q.QueryRowContext(ctx, `SELECT CAST(ID AS TEXT),COALESCE(TITLE,''),COALESCE(DOWNLOADER,''),COALESCE(DOWNLOAD_ID,''),COALESCE(SAVE_PATH,'') FROM DOWNLOAD_HISTORY WHERE ID=?`, d.ID).Scan(&item.ID, &item.Title, &item.Downloader, &item.Task, &item.SavePath)
+		err := q.QueryRowContext(ctx, `SELECT CAST(ID AS TEXT),COALESCE(TITLE,''),COALESCE(DOWNLOADER,''),COALESCE(DOWNLOAD_ID,''),COALESCE(SAVE_PATH,''),COALESCE(DATE,'') FROM DOWNLOAD_HISTORY WHERE ID=?`, d.ID).Scan(&item.ID, &item.Title, &item.Downloader, &item.Task, &item.SavePath, &item.Date)
 		if err != nil || item != d {
+			return ErrState
+		}
+	}
+	if r.Definition.TransferConfig != nil {
+		raw, err := setting(ctx, q, "plugin.TorrentTransfer")
+		if err != nil || raw != *r.Definition.TransferConfig {
 			return ErrState
 		}
 	}
@@ -118,8 +124,8 @@ func writeTaskState(ctx context.Context, tx *sql.Tx, id, task, from, to, reason,
 
 // Intent is the only transition into a remotely writable state. The caller
 // must hold the process/task guards and revalidate before every network request.
-func (s *Store) Intent(ctx context.Context, id, task, proof string) error {
-	if !Hex(proof, 64) {
+func (s *Store) Intent(ctx context.Context, id, task, proof, incarnation string) error {
+	if !Hex(proof, 64) || !Hex(incarnation, 64) {
 		return ErrState
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -146,6 +152,24 @@ func (s *Store) Intent(ctx context.Context, id, task, proof string) error {
 		if !ok || p.State != "completed" {
 			return ErrState
 		}
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM GO_TORRENT_REMOVAL_ATTEMPTS WHERE DOWNLOADER=? AND TASK=? AND INCARNATION=?`, t.Downloader, t.Task, incarnation).Scan(&existing); err != nil {
+		return err
+	}
+	if existing != 0 {
+		return ErrAttempted
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO GO_TORRENT_REMOVAL_ATTEMPTS VALUES(?,?,?,?,?,?)`, t.Downloader, t.Task, incarnation, id, task, proof)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return ErrState
+	}
+	var savedReceipt, savedTask, savedProof string
+	if err := tx.QueryRowContext(ctx, `SELECT RECEIPT_ID,CANDIDATE_ID,PROOF FROM GO_TORRENT_REMOVAL_ATTEMPTS WHERE DOWNLOADER=? AND TASK=? AND INCARNATION=?`, t.Downloader, t.Task, incarnation).Scan(&savedReceipt, &savedTask, &savedProof); err != nil || savedReceipt != id || savedTask != task || savedProof != proof {
+		return ErrState
 	}
 	if err := writeTaskState(ctx, tx, id, task, "pending", "intent", "移除任务意图已保存，必须保留全部文件", proof); err != nil {
 		return err
@@ -282,3 +306,36 @@ func (s *Store) BlockPending(ctx context.Context, id, reason string) error {
 	return tx.Commit()
 }
 func controlJSON(c Control) string { b, _ := json.Marshal(c); return string(b) }
+
+// FinalizeReconciled records only a fully observed result. Stopped authority
+// cannot authorize edits to the original plugin history, even after absence is read.
+func (s *Store) FinalizeReconciled(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	r, err := readReceipt(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if r.State != "unknown" && r.State != "stopped" {
+		return ErrState
+	}
+	for _, task := range r.Tasks {
+		if task.State != "completed" && task.State != "ignored" {
+			return nil
+		}
+	}
+	reason := "已只读核实原任务结果；原授权已停止或关系变化，关联历史保留"
+	if current(ctx, tx, r) == nil {
+		if err := cleanupHistories(ctx, tx, r); err != nil {
+			return err
+		}
+		reason = "已只读核实原任务结果并更新原关联历史"
+	}
+	if err := writeReceiptState(ctx, tx, id, r.State, "completed", reason); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

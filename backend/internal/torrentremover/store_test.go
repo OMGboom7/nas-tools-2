@@ -26,7 +26,7 @@ func newFixture(t *testing.T) *fixture {
 	for _, sql := range []string{
 		`CREATE TABLE SYSTEM_DICT(ID INTEGER PRIMARY KEY,TYPE TEXT,KEY TEXT,VALUE TEXT,NOTE TEXT)`,
 		`CREATE TABLE DOWNLOADER(ID INTEGER PRIMARY KEY,NAME TEXT,ENABLED INTEGER,TYPE TEXT,TRANSFER INTEGER,ONLY_NASTOOL INTEGER,MATCH_PATH INTEGER,RMT_MODE TEXT,CONFIG TEXT,DOWNLOAD_DIR TEXT)`,
-		`CREATE TABLE DOWNLOAD_HISTORY(ID INTEGER PRIMARY KEY,TITLE TEXT,DOWNLOADER TEXT,DOWNLOAD_ID TEXT,SAVE_PATH TEXT)`,
+		`CREATE TABLE DOWNLOAD_HISTORY(ID INTEGER PRIMARY KEY,TITLE TEXT,DOWNLOADER TEXT,DOWNLOAD_ID TEXT,SAVE_PATH TEXT,DATE TEXT)`,
 		`CREATE TABLE PLUGIN_HISTORY(ID INTEGER PRIMARY KEY,PLUGIN_ID TEXT,KEY TEXT,VALUE TEXT,DATE TEXT)`,
 		`INSERT INTO DOWNLOADER VALUES(9007199254740993,'original',1,'qbittorrent',0,0,0,'','{}','[]'),(9007199254740994,'target',1,'transmission',0,0,0,'','{}','[]')`,
 		`INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE)VALUES('SystemConfig','plugin.TorrentRemover','{"enable":true,"opaque":9007199254740993}'),('SystemConfig','UserInstalledPlugins','["TorrentRemover"]')`,
@@ -36,7 +36,7 @@ func newFixture(t *testing.T) *fixture {
 		}
 	}
 	f := &fixture{s: s, original: strings.Repeat("a", 40), transferred: strings.Repeat("b", 40), seed: strings.Repeat("c", 40)}
-	_, err = s.db.Exec(`INSERT INTO DOWNLOAD_HISTORY VALUES(9007199254740993,'Fixture movie','9007199254740993',?,'/source')`, f.original)
+	_, err = s.db.Exec(`INSERT INTO DOWNLOAD_HISTORY VALUES(9007199254740993,'Fixture movie','9007199254740993',?,'/source','2026-11-06 00:00:00')`, f.original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.control = Control{Epoch: strings.Repeat("a", 64), Actor: "admin", Scope: strings.Repeat("b", 64), Config: Hash(st.Raw), Targets: []Target{
+	f.control = Control{Exclusive: true, Epoch: strings.Repeat("a", 64), Actor: "admin", Scope: strings.Repeat("b", 64), Config: Hash(st.Raw), Targets: []Target{
 		{ID: "9007199254740993", Name: "original", Type: "qbittorrent", Digest: DownloaderDigest(9007199254740993, "original", 1, "qbittorrent", 0, 0, 0, "", "{}", "[]")},
 		{ID: "9007199254740994", Name: "target", Type: "transmission", Digest: DownloaderDigest(9007199254740994, "target", 1, "transmission", 0, 0, 0, "", "{}", "[]")},
 	}}
@@ -114,7 +114,7 @@ func TestUnknownIntentCannotBeRedispatchedAfterRecovery(t *testing.T) {
 			}
 		}
 	}
-	if err := f.s.Intent(t.Context(), r.ID, task.ID, strings.Repeat("1", 64)); err != nil {
+	if err := f.s.Intent(t.Context(), r.ID, task.ID, strings.Repeat("1", 64), strings.Repeat("d", 64)); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.s.Recover(t.Context()); err != nil {
@@ -131,7 +131,7 @@ func TestUnknownIntentCannotBeRedispatchedAfterRecovery(t *testing.T) {
 	if err := f.s.Claim(t.Context(), r.ID); err == nil {
 		t.Fatal("interrupted receipt adopted")
 	}
-	if err := f.s.Intent(t.Context(), r.ID, task.ID, strings.Repeat("2", 64)); err == nil {
+	if err := f.s.Intent(t.Context(), r.ID, task.ID, strings.Repeat("2", 64), strings.Repeat("d", 64)); err == nil {
 		t.Fatal("unknown intent resent")
 	}
 	if err := f.s.Resolve(t.Context(), r.ID, task.ID, "unknown", "pending", "retry"); err == nil {
@@ -156,7 +156,7 @@ func TestConfirmedRemovalCleansOnlyItsOriginalPluginRelationships(t *testing.T) 
 		return 0
 	})
 	for _, task := range tasks {
-		if err := f.s.Intent(t.Context(), r.ID, task.ID, strings.Repeat("1", 64)); err != nil {
+		if err := f.s.Intent(t.Context(), r.ID, task.ID, strings.Repeat("1", 64), strings.Repeat("d", 64)); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.s.Resolve(t.Context(), r.ID, task.ID, "intent", "completed", "已核实任务不再存在，文件保留"); err != nil {
@@ -198,7 +198,7 @@ func TestOriginalConfigAndHistoryChangesBlockAnUnsentIntent(t *testing.T) {
 			if _, err := f.s.db.Exec(change); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.s.Intent(t.Context(), r.ID, r.Tasks[0].ID, strings.Repeat("1", 64)); err == nil {
+			if err := f.s.Intent(t.Context(), r.ID, r.Tasks[0].ID, strings.Repeat("1", 64), strings.Repeat("d", 64)); err == nil {
 				t.Fatal("changed source granted mutation")
 			}
 		})

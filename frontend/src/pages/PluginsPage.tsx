@@ -10,6 +10,7 @@ import { MediaSyncDeleteManager } from "../components/MediaSyncDeleteManager";
 import { SiteSigninManager } from "../components/SiteSigninManager";
 import { CloudflareManager } from "../components/CloudflareManager";
 import { AutoBackupManager } from "../components/AutoBackupManager";
+import { TorrentRemoverManager } from "../components/TorrentRemoverManager";
 import { TorrentMarkManager } from "../components/TorrentMarkManager";
 import { CookieCloudManager } from "../components/CookieCloudManager";
 
@@ -114,6 +115,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
       {data?.items.some(p=>p.id==="Webhook"&&p.native&&p.actionsAvailable)&&<EventWebhookReceipts token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="CloudflareSpeedTest"&&p.native&&p.installed)&&<CloudflareManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="AutoBackup"&&p.native&&p.installed)&&<AutoBackupManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
+      {data?.items.some(p=>p.id==="TorrentRemover"&&p.native&&p.installed)&&<TorrentRemoverManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="TorrentMark"&&p.native&&p.installed)&&<TorrentMarkManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="CookieCloud"&&p.native&&p.installed)&&<CookieCloudManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="SpeedLimiter"&&p.native&&p.actionsAvailable)&&<SpeedLimiterManager token={session.token} onSessionExpired={onSessionExpired}/>}

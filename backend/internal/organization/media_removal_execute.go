@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
+	"github.com/0xforee/nas-tools/backend/internal/torrentremover"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/remotestore"
@@ -166,6 +167,16 @@ func receiptMediaRemovalUnitTx(ctx context.Context, tx *sql.Tx, v MediaRemovalRe
 			if err := bus.EmitData(ctx, tx, kind, key, v.ID, title, fmt.Sprintf("%s (%s) %s\n本次已核验删除：%s\n处置批次：%s", history.Title, history.Year, history.SeasonEpisode, full, v.ID), payload); err != nil {
 				return err
 			}
+			if kind == "source_file_deleted" {
+				raw, err := json.Marshal(payload)
+				if err != nil {
+					return err
+				}
+				if err := torrentremover.CapturePayload(ctx, tx, bus.Hash([]string{kind, key}), v.ID, raw); err != nil {
+					return err
+				}
+			}
+
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE GO_MEDIA_REMOVAL_UNITS SET STATE='done' WHERE REMOVAL_ID=? AND ORDINAL=? AND STATE='pending'`, v.ID, i); err != nil {

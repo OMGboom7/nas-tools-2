@@ -32,7 +32,7 @@ func (api configurationAPI) setSystem(response http.ResponseWriter, request *htt
 	}
 	key := strings.TrimSpace(request.Form.Get("key"))
 	value := request.Form.Get("value")
-	if key == markConfigKey || strings.HasPrefix(key, markStateKey) || key == cookiecloud.ConfigKey || key == autobackup.ConfigKey || key == organization.SyncTimerConfig || key == "UserInstalledPlugins" {
+	if key == "plugin.TorrentRemover" || key == markConfigKey || strings.HasPrefix(key, markStateKey) || key == cookiecloud.ConfigKey || key == autobackup.ConfigKey || key == organization.SyncTimerConfig || key == "UserInstalledPlugins" {
 		writeAPIError(response, http.StatusBadRequest, 400, "请通过插件管理修改此配置")
 		return
 	}

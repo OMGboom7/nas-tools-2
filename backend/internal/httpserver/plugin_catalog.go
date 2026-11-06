@@ -58,11 +58,15 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		item.Installed = installedSet[item.ID]
 		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeOpenSubtitles(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID) || service.nativeEventWebhook(item.ID) || service.nativeSpeedLimiter(item.ID) || service.nativeMovieLike(item.ID) || service.nativeMediaSyncDelete(item.ID)
 		item.Native = item.Native || service.nativeSignin(item.ID)
-		item.Native = item.Native || service.nativeCloudflare(item.ID) || service.nativeCookieCloud(item.ID) || service.nativeAutoBackup(item.ID) || service.nativeSyncTimer(item.ID) || service.nativeTorrentMark(item.ID)
+		item.Native = item.Native || service.nativeCloudflare(item.ID) || service.nativeCookieCloud(item.ID) || service.nativeAutoBackup(item.ID) || service.nativeSyncTimer(item.ID) || service.nativeTorrentMark(item.ID) || service.nativeTorrentRemover(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
 		if service.nativeCloudflare(item.ID) {
 			item.ActionsAvailable = service.cloudflare.organizer.pureGo
+		}
+		if service.nativeTorrentRemover(item.ID) {
+			item.ActionsAvailable = service.torrentRemover.login.pureGo && administrator
+			item.HasPage = true
 		}
 		if service.nativeTorrentMark(item.ID) {
 			item.ActionsAvailable = service.torrentMark.login.pureGo && administrator
@@ -122,6 +126,11 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
+			if service.nativeTorrentRemover(item.ID) {
+				item.Running, item.StateKnown = service.torrentRemover.summary(ctx)
+				data.Items = append(data.Items, item)
+				continue
+			}
 			if service.nativeTorrentMark(item.ID) {
 				item.Running, item.StateKnown = service.torrentMark.summary(ctx)
 				data.Items = append(data.Items, item)

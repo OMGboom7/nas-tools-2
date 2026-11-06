@@ -36,6 +36,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/sitesignin"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
+	"github.com/0xforee/nas-tools/backend/internal/torrentremover"
 	"github.com/0xforee/nas-tools/backend/internal/wordconfig"
 )
 
@@ -95,6 +96,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSiteSignin := startSiteSigninWorker(workerContext, runner.siteSignin)
 		waitCloudflare := startCloudflareWorker(workerContext, runner.cloudflare)
 		waitStatistics := startSiteStatisticsWorker(workerContext, runner.siteStatistics)
+		waitTorrentRemover := startTorrentRemovalWorker(workerContext, runner.torrentRemover)
 		waitTorrentMark := startTorrentMarkWorker(workerContext, runner.torrentMark)
 		waitCookieCloud := startCookieCloudWorker(workerContext, runner.cookieCloud)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
@@ -119,6 +121,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitSiteSignin()
 			waitCloudflare()
 			waitStatistics()
+			waitTorrentRemover()
 			waitTorrentMark()
 			waitCookieCloud()
 			waitAutoBackup()
@@ -170,6 +173,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	var nativeCloudflare *cloudflare.Store
 	var nativeStatistics *sitestats.Store
 	var nativeCookieCloud *cookiecloud.Store
+	var nativeTorrentRemovals *torrentremover.Store
 	var nativeAutoBackups *autobackup.Store
 	var nativeFilters *filterconfig.Store
 	var nativeNotifications *notificationconfig.Store
@@ -225,6 +229,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeAutoBackups, err = autobackup.OpenStore(application.UserDatabasePath())
 		if err != nil {
 			return nil, fmt.Errorf("open native backup receipts: %w", err)
+		}
+		nativeTorrentRemovals, err = torrentremover.Open(application.UserDatabasePath())
+		if err != nil {
+			return nil, fmt.Errorf("open native torrent removal: %w", err)
 		}
 		nativeCookieCloud, err = cookiecloud.Open(application.UserDatabasePath())
 		if err != nil {
@@ -600,6 +608,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.cookieCloud = cloudCookies
 	markAPI := &torrentMarkAPI{login: nativeSiteLogin, system: nativeSystemConfig, downloaders: nativeDownloaders}
 	rssRunner.torrentMark = markAPI
+	removalAPI := &torrentRemovalAPI{login: nativeSiteLogin, store: nativeTorrentRemovals, organizer: &organizer}
+	rssRunner.torrentRemover = removalAPI
+	mux.HandleFunc("GET /api/v1/torrent-remover", removalAPI.serve)
+	mux.HandleFunc("GET /api/v1/torrent-remover/records/{id}", removalAPI.serve)
+	mux.HandleFunc("POST /api/v1/torrent-remover/{action}", removalAPI.serve)
 	mux.HandleFunc("GET /api/v1/torrent-mark", markAPI.serve)
 	mux.HandleFunc("POST /api/v1/torrent-mark/{action}", markAPI.serve)
 	backup := newAutoBackupAPI(nativeAutoBackups, nativeSiteLogin, cfg.ApplicationConfigPath, cfg.DefaultCategoryPath, nativeUserDatabasePath, cfg.FrontendDist)
@@ -707,6 +720,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	plugins.cookieCloud = cloudCookies
 	plugins.torrentMark = markAPI
+	plugins.torrentRemover = removalAPI
 	plugins.autoBackup = backup
 	plugins.syncTimer = &organizer
 	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}

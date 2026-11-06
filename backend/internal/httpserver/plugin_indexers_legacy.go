@@ -49,6 +49,10 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeTorrentRemover(id) {
+			s.serveTorrentRemoverPlugin(w, probe, "page")
+			return
+		}
 		if s.nativeTorrentMark(id) {
 			s.serveTorrentMarkPlugin(w, probe, "page")
 			return
