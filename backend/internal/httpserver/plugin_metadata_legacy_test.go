@@ -61,7 +61,7 @@ func TestLegacyMetadataPluginRoutesAreNativeAndReplaceFullConfiguration(t *testi
 
 func TestUnmigratedLegacyPluginRequestRetainsOriginalBody(t *testing.T) {
 	called := false
-	body := url.Values{"id": {"TorrentMark"}, "config": {`{"server":"https://example.test","notes":"中文+特殊&字符"}`}, "extra": {"one", "two"}}
+	body := url.Values{"id": {"TorrentTransfer"}, "config": {`{"server":"https://example.test","notes":"中文+特殊&字符"}`}, "extra": {"one", "two"}}
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		called = true
 		if request.URL.Path != "/api/v1/plugin/config" {

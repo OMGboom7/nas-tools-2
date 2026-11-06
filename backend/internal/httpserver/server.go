@@ -95,6 +95,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitSiteSignin := startSiteSigninWorker(workerContext, runner.siteSignin)
 		waitCloudflare := startCloudflareWorker(workerContext, runner.cloudflare)
 		waitStatistics := startSiteStatisticsWorker(workerContext, runner.siteStatistics)
+		waitTorrentMark := startTorrentMarkWorker(workerContext, runner.torrentMark)
 		waitCookieCloud := startCookieCloudWorker(workerContext, runner.cookieCloud)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
 		wait = func() {
@@ -118,6 +119,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitSiteSignin()
 			waitCloudflare()
 			waitStatistics()
+			waitTorrentMark()
 			waitCookieCloud()
 			waitAutoBackup()
 		}
@@ -596,6 +598,10 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.siteStatistics = nativeStats
 	cloudCookies := &cookieCloudAPI{store: nativeCookieCloud, login: nativeSiteLogin}
 	rssRunner.cookieCloud = cloudCookies
+	markAPI := &torrentMarkAPI{login: nativeSiteLogin, system: nativeSystemConfig, downloaders: nativeDownloaders}
+	rssRunner.torrentMark = markAPI
+	mux.HandleFunc("GET /api/v1/torrent-mark", markAPI.serve)
+	mux.HandleFunc("POST /api/v1/torrent-mark/{action}", markAPI.serve)
 	backup := newAutoBackupAPI(nativeAutoBackups, nativeSiteLogin, cfg.ApplicationConfigPath, cfg.DefaultCategoryPath, nativeUserDatabasePath, cfg.FrontendDist)
 	rssRunner.autoBackup = backup
 	mux.HandleFunc("GET /api/v1/backup", backup.serve)
@@ -700,6 +706,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	plugins.cookieCloud = cloudCookies
+	plugins.torrentMark = markAPI
 	plugins.autoBackup = backup
 	plugins.syncTimer = &organizer
 	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}

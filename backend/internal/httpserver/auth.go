@@ -291,7 +291,7 @@ func isMigratedProtectedPath(path string) bool {
 		return true
 	}
 	for _, prefix := range []string{
-		"/api/v1/site-statistics", "/api/v1/site/statistics/activity", "/api/v1/site/statistics/history", "/api/v1/site/statistics/seedinfo", "/api/v1/cookie-cloud", "/api/v1/backup",
+		"/api/v1/site-statistics", "/api/v1/site/statistics/activity", "/api/v1/site/statistics/history", "/api/v1/site/statistics/seedinfo", "/api/v1/cookie-cloud", "/api/v1/torrent-mark", "/api/v1/backup",
 		"/api/v1/dashboard", "/api/v1/search/resources", "/api/v1/downloads",
 		"/api/v1/subscriptions", "/api/v1/discovery", "/api/v1/sites",
 		"/api/v1/services", "/api/v1/notifications", "/api/v1/plugins", "/api/v1/plugin", "/api/v1/media-webhooks", "/api/v1/event-webhooks", "/api/v1/speed-limiter", "/api/v1/media-sync-delete", "/api/v1/movie-like",

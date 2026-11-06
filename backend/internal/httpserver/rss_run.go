@@ -34,6 +34,7 @@ type rssRunAPI struct {
 	siteStatistics  *siteStatisticsAPI
 	cloudflare      *cloudflareAPI
 	cookieCloud     *cookieCloudAPI
+	torrentMark     *torrentMarkAPI
 	autoBackup      *autoBackupAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI

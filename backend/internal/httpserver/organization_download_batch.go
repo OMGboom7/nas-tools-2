@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -405,7 +406,19 @@ func (api organizationAPI) reviewDownloadResult(ctx context.Context, b organizat
 	return review, nil
 }
 func (api organizationAPI) finalizeDownloadBatch(ctx context.Context, b organization.DownloadBatch, input downloadBatchRequest) error {
+	if b.Origin.DownloaderType == "transmission" {
+		id, err := strconv.ParseInt(b.Origin.DownloaderID, 10, 64)
+		if err != nil {
+			return err
+		}
+		guard, err := api.jobs.AcquireJob(ctx, torrentLabelGuard(id, b.Origin.Task.ID))
+		if err != nil {
+			return err
+		}
+		defer guard.Close()
+	}
 	review, err := api.reviewDownloadResult(ctx, b, input.actor)
+
 	if err != nil {
 		return err
 	}

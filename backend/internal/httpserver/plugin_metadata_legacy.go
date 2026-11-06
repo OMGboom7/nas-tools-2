@@ -25,6 +25,14 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if service.nativeTorrentMark(id) {
+			kind := action
+			if kind == "config" {
+				kind = "legacy-save"
+			}
+			service.serveTorrentMarkPlugin(response, probe, kind)
+			return
+		}
 		if service.nativeSyncTimer(id) {
 			kind := action
 			if kind == "config" {
