@@ -120,26 +120,33 @@ func Manifest(data []byte) (Metadata, []torrentfiles.File, error) {
 		if !walk(tree, nil) {
 			return meta, nil, ErrInvalid
 		}
-		if len(files) > 1 {
+		if len(v1) == 0 && len(files) > 1 {
 			for i := range files {
 				files[i].Path = name + "/" + files[i].Path
 			}
 		}
 		if len(v1) > 0 {
-			// Hybrid representations must agree, excluding v1 piece-alignment padding.
+			// Use the v1 layout to resolve an optional enclosing torrent name,
+			// including a multi-file representation containing only one file.
+			// Never infer a root from the number of real files alone.
 			real := map[string]int64{}
 			for _, f := range v1 {
 				if !f.Padding {
 					real[f.Path] = f.Size
 				}
 			}
-			for _, f := range files {
-				if size, ok := real[f.Path]; !ok || size != f.Size {
-					return meta, nil, ErrInvalid
+			agrees := func(prefix string) bool {
+				if len(real) != len(files) {
+					return false
 				}
-				delete(real, f.Path)
+				for _, f := range files {
+					if size, ok := real[prefix+f.Path]; !ok || size != f.Size {
+						return false
+					}
+				}
+				return true
 			}
-			if len(real) > 0 {
+			if !agrees("") && !agrees(name+"/") {
 				return meta, nil, ErrInvalid
 			}
 			files = v1

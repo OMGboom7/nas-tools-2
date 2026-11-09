@@ -14,3 +14,14 @@
 后续仍需接入源／目标协议、下载器版本和 v2 任务标识核验、暂停添加、校验／启动、源任务保留文件移除、跨周期动作账本、PT 与范围保护、原历史／通知，以及 React 审核、停止和未知结果查询。可解析 v2 元数据不表示任意目标下载器支持 v2；缩短的 v2 任务标识也不能未经协议核对就当作完整哈希。
 
 本阶段没有启用新后台、发送种子或启动／移除任务，原 Python 插件仍保留。完整计划见 [实施计划](../superpowers/plans/2026-11-06-torrent-transfer.md)。
+
+## 第二阶段：协议适配层
+
+2026-11-09 已编写 qB／Transmission 的独立暂停添加、任务快照、校验和启动方法；尚未接入生产调用者或后台。仅进行编译与静态检查，新增及第一阶段行为夹具仍待整模块接通后集中运行。
+
+- qB 读取应用、API 和实际 libtorrent 版本，按版本选择暂停字段及原目录布局；旧无文件索引 API 使用完整未筛选数组位置，新 API 缺失索引则拒绝。完整 v1／v2 哈希单独保存；libtorrent 2 的纯 v2 和混合任务使用经协议核对的截短控制编号，随后仍要求 properties 的完整身份。依据 [qB 5 添加／properties 源码](https://github.com/qbittorrent/qBittorrent/blob/release-5.0.0/src/webui/api/torrentscontroller.cpp)、[qB 编号转换](https://github.com/qbittorrent/qBittorrent/blob/release-5.0.0/src/base/bittorrent/infohash.cpp) 和 [libtorrent get_best](https://github.com/arvidn/libtorrent/blob/v2.0.11/include/libtorrent/info_hash.hpp)。
+- Transmission 保留旧 RPC 与 JSON-RPC 协商，只在明确的 CSRF 409 后重发；核对回执编号，区分新添加／重复，错误或未知响应不自动再发。目标需要原标签能力（RPC 16+），当前 SHA1 身份协议不发送纯 v2；混合种子沿用原 v1 身份。依据 [官方 RPC](https://github.com/transmission/transmission/blob/main/docs/rpc-spec.md)。
+- 快照绑定任务创建时间、完整身份、目录、原始 qB 标签／TR 标签和逐文件清单／完成量。qB 用两次相同任务读取夹住 properties／文件读取。校验中可读取，但不作为全部完整；聚合进度为 100% 不能代替每个实际文件的证据。私有种子启动前另行核对既有 PT 做种限制，不在启动调用中自动改限制。
+- 元数据读取可使用协议提供的原种子文件名，仅取审核根内的文件；resume 沿用同一原 basename。libtorrent 2 缺失协议的全零 resume 哈希不作为身份，至少一个实际可用协议必须匹配。混合种子只有一个真实文件时，也核对原 v1 文件目录，不能仅凭文件数丢弃原根目录。
+
+添加回执不是任务归属许可，校验调用成功也不是校验周期已经结束。后续持久执行器仍须分别记录意图、冻结实际新增任务、观察本次校验状态，处理丢失应答／重启、外部并发写入、独立启动与源任务移除授权；不能凭一张完整快照直接消费旧未知动作。源任务删除仍未接入。真实下载器版本、v2／混合文件布局、浏览器和候选镜像均尚未验收。

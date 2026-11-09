@@ -178,7 +178,7 @@ func (r *MetainfoRoot) Read(ctx context.Context, hash, name string, useResume bo
 	prepared, prepareErr := torrentmeta.PrepareTransfer(content, nil)
 	var resume []byte
 	if useResume && (prepareErr != nil || prepared.TrackerCount == 0) {
-		data, proof, err := r.read(ctx, hash+".fastresume")
+		data, proof, err := r.read(ctx, strings.TrimSuffix(name, ".torrent")+".fastresume")
 		if err != nil && !os.IsNotExist(err) {
 			return s, ErrState
 		}
@@ -195,6 +195,28 @@ func (r *MetainfoRoot) Read(ctx context.Context, hash, name string, useResume bo
 		return s, ErrState
 	}
 	s.Prepared = prepared
+	return s, nil
+}
+
+// ReadTask resolves the complete metainfo identity before opening a protocol
+// filename. A qB v2/hybrid filename may use its 40-character TorrentID; that
+// filename alone never authorizes a different complete info hash.
+func (r *MetainfoRoot) ReadTask(ctx context.Context, task Task, useResume bool) (Source, error) {
+	if !task.Valid() {
+		return Source{}, ErrState
+	}
+	hash := task.V1Hash
+	if hash == "" {
+		hash = task.V2Hash
+	}
+	name := task.MetainfoFile
+	if name == "" {
+		name = task.WireID + ".torrent"
+	}
+	s, err := r.Read(ctx, hash, name, useResume)
+	if err != nil || !task.Matches(s.Prepared) {
+		return Source{}, ErrState
+	}
 	return s, nil
 }
 func (r *MetainfoRoot) Verify(ctx context.Context, s Source, useResume bool) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"sort"
 	"strconv"
@@ -17,6 +18,8 @@ import (
 // never part of a public JSON response or a persistent progress message.
 type TransferMetadata struct {
 	Metadata
+	V1Hash       string
+	V2Hash       string
 	Files        []torrentfiles.File
 	Private      bool
 	TrackerCount int
@@ -47,6 +50,19 @@ func PrepareTransfer(data, resume []byte) (TransferMetadata, error) {
 		return TransferMetadata{}, ErrInvalid
 	}
 	prepared := TransferMetadata{Metadata: meta, Files: files, Content: bytes.Clone(data), TrackerURLs: []string{}}
+	original, err := transferTopValues(data)
+	if err != nil {
+		return TransferMetadata{}, err
+	}
+	_, v2, hasV1, _ := infoFields(original["info"])
+	if !v2 || hasV1 {
+		h := sha1.Sum(original["info"])
+		prepared.V1Hash = hex.EncodeToString(h[:])
+	}
+	if v2 {
+		h := sha256.Sum256(original["info"])
+		prepared.V2Hash = hex.EncodeToString(h[:])
+	}
 	if flag, exists := info["private"]; exists {
 		n, ok := flag.(int64)
 		if !ok || n != 0 && n != 1 {
@@ -83,10 +99,6 @@ func PrepareTransfer(data, resume []byte) (TransferMetadata, error) {
 		prepared.TrackerCount = len(prepared.TrackerURLs)
 		return prepared, nil
 	}
-	original, err := transferTopValues(data)
-	if err != nil {
-		return TransferMetadata{}, err
-	}
 	if len(tiers) == 0 && len(resume) > 0 {
 		if len(resume) > 8<<20 {
 			return TransferMetadata{}, ErrInvalid
@@ -100,14 +112,24 @@ func PrepareTransfer(data, resume []byte) (TransferMetadata, error) {
 		if !ok {
 			return TransferMetadata{}, ErrInvalid
 		}
-		v1, v2 := sha1.Sum(original["info"]), sha256.Sum256(original["info"])
-		for key, expected := range map[string][]byte{"info-hash": v1[:], "info-hash2": v2[:]} {
+		matched := false
+		for key, expected := range map[string]string{"info-hash": prepared.V1Hash, "info-hash2": prepared.V2Hash} {
 			if raw, exists := state[key]; exists {
 				hash, ok := raw.(string)
-				if !ok || !bytes.Equal([]byte(hash), expected) {
+				length := 20
+				if key == "info-hash2" {
+					length = 32
+				}
+				// Libtorrent 2 writes both fields, with all-zero bytes for an
+				// unavailable protocol. Zero is not an identity attestation.
+				if !ok || len(hash) != length || expected == "" && hash != strings.Repeat("\x00", length) || expected != "" && hex.EncodeToString([]byte(hash)) != expected {
 					return TransferMetadata{}, ErrInvalid
 				}
+				matched = matched || expected != ""
 			}
+		}
+		if !matched {
+			return TransferMetadata{}, ErrInvalid
 		}
 		tiers, err = transferTiers(state["trackers"])
 		if err != nil {

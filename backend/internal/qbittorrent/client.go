@@ -296,6 +296,12 @@ func (client *Client) AddTorrentWithOptions(ctx context.Context, torrent []byte,
 			return err
 		}
 	}
+	return client.addTorrentForm(ctx, torrent, form)
+}
+
+// addTorrentForm sends exactly one already-prepared add. Callers authenticate
+// and validate the form first; an ambiguous response is never retried here.
+func (client *Client) addTorrentForm(ctx context.Context, torrent []byte, form url.Values) error {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for key, values := range form {

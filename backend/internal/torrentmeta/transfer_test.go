@@ -3,6 +3,7 @@ package torrentmeta
 import (
 	"bytes"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -23,8 +24,18 @@ func transferFixture(private bool, announce string) ([]byte, []byte) {
 }
 func transferResume(info []byte, urls ...string) []byte {
 	hash := sha1.Sum(info)
+	_, v2, hasV1, _ := infoFields(info)
 	out := []byte("d9:info-hash20:")
-	out = append(out, hash[:]...)
+	if v2 && !hasV1 {
+		out = append(out, make([]byte, 20)...)
+	} else {
+		out = append(out, hash[:]...)
+	}
+	if v2 {
+		hash := sha256.Sum256(info)
+		out = append(out, []byte("10:info-hash232:")...)
+		out = append(out, hash[:]...)
+	}
 	out = append(out, []byte("8:trackers")...)
 	tiers := [][]string{}
 	for _, u := range urls {
@@ -111,6 +122,21 @@ func TestTransferRepairPreservesV2AndHybridInfoBytes(t *testing.T) {
 		want, _ := Parse(data)
 		if err != nil || got.InfoHash != want.InfoHash || !bytes.Equal(mustTransferInfo(got.Content), rawInfo) {
 			t.Fatal(hybrid, err, got.InfoHash, want.InfoHash)
+		}
+		if len(got.V2Hash) != 64 || hybrid && len(got.V1Hash) != 40 || !hybrid && got.V1Hash != "" {
+			t.Fatal("wrong protocol identities", hybrid)
+		}
+	}
+}
+
+func TestTransferResumeNeedsAnAvailableMatchingHash(t *testing.T) {
+	data, _ := transferFixture(true, "")
+	for _, raw := range [][]byte{
+		[]byte("d8:trackersll22:https://fixture.test/aeee"),
+		append(append([]byte("d9:info-hash20:"), make([]byte, 20)...), []byte("8:trackersll22:https://fixture.test/aeee")...),
+	} {
+		if _, err := PrepareTransfer(data, raw); err == nil {
+			t.Fatal("resume without matching identity accepted")
 		}
 	}
 }

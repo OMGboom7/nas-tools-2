@@ -79,3 +79,15 @@ func TestManifestRejectsMissingListsDuplicateKeysUnsafePathsAndSymlinks(t *testi
 		}
 	}
 }
+
+func TestManifestHybridSingleFileDirectoryUsesOriginalV1Layout(t *testing.T) {
+	info := map[string]any{"name": "Fixture", "meta version": 2, "pieces": strings.Repeat("x", 20), "files": []any{map[string]any{"length": 8, "path": []any{"movie.mkv"}}}, "file tree": map[string]any{"movie.mkv": map[string]any{"": map[string]any{"length": 8}}}}
+	_, files, err := Manifest(manifestMetainfo(info))
+	if err != nil || len(files) != 1 || files[0].Path != "Fixture/movie.mkv" {
+		t.Fatal(files, err)
+	}
+	info["files"] = []any{map[string]any{"length": 9, "path": []any{"movie.mkv"}}}
+	if _, _, err := Manifest(manifestMetainfo(info)); err == nil {
+		t.Fatal("foreign hybrid length accepted")
+	}
+}
