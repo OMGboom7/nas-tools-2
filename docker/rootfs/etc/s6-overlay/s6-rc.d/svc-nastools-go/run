@@ -17,7 +17,9 @@ fi
 export NASTOOL_GO_ADDRESS="${NASTOOL_GO_ADDRESS:-0.0.0.0:${NT_PORT}}"
 export NASTOOL_LEGACY_URL="${NASTOOL_LEGACY_URL:-http://127.0.0.1:${NASTOOL_LEGACY_PORT:-3002}}"
 export NASTOOL_FRONTEND_DIST="${NASTOOL_FRONTEND_DIST:-${WORKDIR}/frontend/dist}"
+go_server=/usr/local/bin/nas-tools-go
+source /usr/local/lib/nas-tools/plugin-ownership.sh "$go_server" || exit 1
 
 exec \
     s6-notifyoncheck -d -n 300 -w 1000 -c "wget -q -O - http://127.0.0.1:${NT_PORT}/api/v1/health >/dev/null" \
-    s6-setuidgid nt /usr/local/bin/nas-tools-go
+    s6-setuidgid nt "$go_server"

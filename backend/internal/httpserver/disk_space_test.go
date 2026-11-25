@@ -3,8 +3,12 @@
 package httpserver
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +17,104 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
+
+func TestManagedDiskSpaceConsumesOldRequestWithoutOtherNativeWorkers(t *testing.T) {
+	_, _, path := nativeServicesFixture(t, "", nil, nil)
+	cfg := config.Config{ApplicationConfigPath: filepath.Join(filepath.Dir(path), "config.yaml"), LegacyBackendURL: "http://127.0.0.1:3002", ManagedDiskSpace: true}
+	noFlask := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Errorf("disk space operation reached Flask: %s", r.URL.Path)
+		return nil, fmt.Errorf("unexpected backend request")
+	})
+	media := t.TempDir()
+	for _, filename := range []string{"Movie.mkv", "Copy.mkv"} {
+		if err := os.WriteFile(filepath.Join(media, filename), []byte("same contents"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	settings, err := systemconfig.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer settings.Close()
+	opts, _ := json.Marshal(map[string]any{"run_now": true, "dry_run": true, "file_size": 0, "path_list": media, "ext_list": ".mkv"})
+	if err := settings.Set(t.Context(), diskConfigKey, string(opts)); err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Set(t.Context(), "UserInstalledPlugins", `["DiskSpaceSaver"]`); err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithTimeout(t.Context(), 15*time.Second)
+	defer stop()
+	h, join, err := newRuntimeHandler(ctx, cfg, noFlask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { stop(); join() }()
+	admin := loginForTest(t, h, "admin", "password")
+	var run diskRun
+	for run.Last == "" {
+		raw, err := settings.Get(ctx, diskControlKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run, err = readDiskRun(raw); err != nil {
+			t.Fatal(err)
+		}
+		if run.Last == "" {
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-ctx.Done():
+				t.Fatal("mixed-mode worker did not finish:", ctx.Err())
+			}
+		}
+	}
+	stop()
+	join()
+	if run.ID == "" || !strings.Contains(run.Last, "查重候选 1 项") {
+		t.Fatal(run)
+	}
+	first, err := os.Stat(filepath.Join(media, "Movie.mkv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.Stat(filepath.Join(media, "Copy.mkv"))
+	if err != nil || os.SameFile(first, second) {
+		t.Fatal("dry run changed duplicate file", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var unrelated int
+	if err := db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE name='GO_ORGANIZATION_JOBS'").Scan(&unrelated); err != nil || unrelated != 0 {
+		t.Fatal("mixed-mode disk worker opened the organization journal", unrelated, err)
+	}
+	h, err = newHandler(cfg, noFlask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const base = "/api/v1/plugins/DiskSpaceSaver"
+	for _, endpoint := range []string{base, base + "/page"} {
+		w := nativeJSONRequest(h, "GET", endpoint, admin, "")
+		if w.Code != 200 || !strings.Contains(w.Body.String(), media) {
+			t.Fatal(endpoint, w.Code, w.Body.String())
+		}
+	}
+	if w := performFormRequest(h, "/api/v1/user/manage", admin, url.Values{"oper": {"add"}, "name": {"viewer"}, "password": {"strong-password"}, "pris": {""}}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	viewer := loginForTest(t, h, "viewer", "strong-password")
+	list := performFormRequest(h, "/api/v1/plugin/list", viewer, nil)
+	if list.Code != 200 || !strings.Contains(list.Body.String(), diskID) || strings.Contains(list.Body.String(), media) {
+		t.Fatal(list.Code, list.Body.String())
+	}
+	if w := nativeJSONRequest(h, "GET", base+"/page", viewer, ""); w.Code != 403 {
+		t.Fatal(w.Code)
+	}
+}
 
 func TestDiskSpacePluginImportsOnceAndPreservesFilesAndSettings(t *testing.T) {
 	f := newIyuuFixture(t)

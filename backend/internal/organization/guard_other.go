@@ -6,5 +6,5 @@ import "context"
 
 type JobGuard struct{}
 
-func (*JobGuard) Close()                                             {}
-func (*Store) AcquireJob(context.Context, string) (*JobGuard, error) { return nil, ErrMode }
+func (*JobGuard) Close()                                                {}
+func (*JobLocks) AcquireJob(context.Context, string) (*JobGuard, error) { return nil, ErrMode }

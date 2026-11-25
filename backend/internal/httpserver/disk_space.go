@@ -26,7 +26,7 @@ var diskKeys = []string{"UserInstalledPlugins", diskConfigKey, diskControlKey}
 
 type diskSpaceAPI struct {
 	login      *siteLoginAPI
-	jobs       *organization.Store
+	jobs       *organization.JobLocks
 	store      *systemconfig.Store
 	configFile string
 }

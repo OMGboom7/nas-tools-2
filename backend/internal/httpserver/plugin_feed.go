@@ -83,11 +83,11 @@ func (service pluginService) serveFeedPlugin(w http.ResponseWriter, r *http.Requ
 	}
 	ctx := r.Context()
 	if (id == autoSubID || id == diskID) && action != "get" && action != "status" {
-		var jobs *organization.Store
+		var jobs *organization.JobLocks
 		if id == diskID {
 			jobs = service.disk.jobs
 		} else {
-			jobs = service.autoSub.jobs
+			jobs = &service.autoSub.jobs.JobLocks
 		}
 		g, err := jobs.AcquireJob(ctx, id)
 		if err != nil {

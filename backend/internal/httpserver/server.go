@@ -51,7 +51,7 @@ func newHandler(cfg config.Config, transport http.RoundTripper) (http.Handler, e
 	return handler, err
 }
 
-// NewWithContext starts production workers only in pure-Go mode. The returned
+// NewWithContext starts the workers owned by this deployment. The returned
 // wait function joins them after ctx cancellation; handler-only New is useful
 // for embedders that do not own background execution.
 func NewWithContext(ctx context.Context, cfg config.Config) (http.Handler, func(), error) {
@@ -110,7 +110,6 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		if a := runner.archivePlugin.autoSub; a != nil {
 			waitAutoSub = startOneShotWorker(workerContext, "自动字幕", a.tick)
 		}
-		waitDisk := startDiskSpace(workerContext, runner.archivePlugin.disk)
 		waitHelper := startDownloaderHelper(workerContext, runner.archivePlugin.helper)
 		waitIyuuSeeds := startIyuuSeeds(workerContext, runner.archivePlugin.iyuu)
 		waitMteamFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
@@ -147,11 +146,15 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitRank()
 			waitRandom()
 			waitAutoSub()
-			waitDisk()
 			waitHelper()
 			waitIyuuSeeds()
 			waitMteamFeed()
 		}
+	}
+	if workerContext != nil && runner.archivePlugin.disk != nil {
+		waitOthers := wait
+		waitDisk := startDiskSpace(workerContext, runner.archivePlugin.disk)
+		wait = func() { waitOthers(); waitDisk() }
 	}
 	return handler, wait, nil
 }
@@ -762,8 +765,17 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{applicationConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	if cfg.DisableLegacy && organization.CopySupported && nativeSiteLogin != nil && organizationJobs != nil && nativeSystemConfig != nil {
-		plugins.disk = &diskSpaceAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, cfg.ApplicationConfigPath}
+		plugins.disk = &diskSpaceAPI{nativeSiteLogin, &organizationJobs.JobLocks, nativeSystemConfig, cfg.ApplicationConfigPath}
 		plugins.autoSub = &autoSubAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, transport}
+	} else if cfg.ManagedDiskSpace {
+		if !organization.CopySupported || nativeSystemConfig == nil || nativeAuth == nil {
+			return nil, fmt.Errorf("disk space worker requires the local configuration and a supported filesystem platform")
+		}
+		locks, err := organization.OpenJobLocks(nativeUserDatabasePath)
+		if err != nil {
+			return nil, fmt.Errorf("open disk space job locks: %w", err)
+		}
+		plugins.disk = &diskSpaceAPI{nativeSiteLogin, locks, nativeSystemConfig, cfg.ApplicationConfigPath}
 	}
 	if nativeSites != nil && nativeSystemConfig != nil && nativeDownloaders != nil {
 		plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport, downloads: &downloads}

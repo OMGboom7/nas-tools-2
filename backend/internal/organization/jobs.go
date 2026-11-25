@@ -184,7 +184,11 @@ type Job struct {
 }
 
 type Store struct {
-	db                *sql.DB
+	db *sql.DB
+	JobLocks
+}
+
+type JobLocks struct {
 	guardRoot         string
 	guardRootIdentity string
 }
@@ -224,23 +228,31 @@ func OpenStore(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	canonical, err := filepath.EvalSymlinks(path)
+	locks, err := OpenJobLocks(path)
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
+	return &Store{db: db, JobLocks: *locks}, nil
+}
+
+// OpenJobLocks shares the same lock namespace with plugins that own their
+// own SQLite tables and do not need an organization journal.
+func OpenJobLocks(path string) (*JobLocks, error) {
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
 	canonical, err = filepath.Abs(canonical)
 	if err != nil {
-		db.Close()
 		return nil, err
 	}
 	parent := filepath.Dir(canonical)
 	info, err := os.Stat(parent)
 	if err != nil {
-		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, guardRoot: parent, guardRootIdentity: Identity(info)}, nil
+	return &JobLocks{guardRoot: parent, guardRootIdentity: Identity(info)}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
 

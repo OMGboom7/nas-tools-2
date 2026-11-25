@@ -30,7 +30,7 @@ func (g *JobGuard) Close() {
 // AcquireJob rejects an active peer immediately; it is not a timeout lease or
 // evidence that an old/uncooperative executor has stopped. All new production
 // mutation paths must hold this guard through filesystem + ledger operations.
-func (s *Store) AcquireJob(ctx context.Context, id string) (*JobGuard, error) {
+func (s *JobLocks) AcquireJob(ctx context.Context, id string) (*JobGuard, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

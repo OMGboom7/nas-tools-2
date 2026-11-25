@@ -15,6 +15,7 @@ type Config struct {
 	SiteCatalogPath       string
 	DefaultCategoryPath   string
 	DisableLegacy         bool
+	ManagedDiskSpace      bool
 	HostsPath             string
 	RcloneConfigFile      string
 	RcloneBinary          string
@@ -48,6 +49,7 @@ func FromEnv() (Config, error) {
 		SiteCatalogPath:       os.Getenv("NASTOOL_SITE_CATALOG"),
 		DefaultCategoryPath:   os.Getenv("NASTOOL_DEFAULT_CATEGORY"),
 		DisableLegacy:         native,
+		ManagedDiskSpace:      os.Getenv("NASTOOL_DISK_SPACE_OWNER") == "go",
 		HostsPath:             os.Getenv("NASTOOL_GO_HOSTS_PATH"),
 		RcloneConfigFile:      os.Getenv("NASTOOL_RCLONE_CONFIG"),
 		RcloneBinary:          envOrDefault("NASTOOL_RCLONE_BINARY", "rclone"),

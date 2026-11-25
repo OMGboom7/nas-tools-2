@@ -237,6 +237,11 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 					subscriptionHistoryError(response, err)
 					return
 				}
+				running, known := p.summary(request.Context(), raw)
+				if id == diskID && !administrator {
+					result[id] = map[string]any{"name": catalog[id].Name, "native": true, "state": running, "stateKnown": known, "actionsAvailable": false}
+					continue
+				}
 				claims, err := service.auth.service.VerifyToken(request.Header.Get("Authorization"))
 				if err != nil {
 					writeAPIError(response, 401, 401, "请重新登录")
@@ -248,7 +253,6 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 					return
 				}
 
-				running, known := p.summary(request.Context(), raw)
 				entry := map[string]any{"name": detail.Name, "version": catalog[id].Version, "state": running, "stateKnown": known, "native": true, "fields": indexerLegacyFields(detail), "config": detail.Values, "fingerprint": detail.Meta.Fingerprint}
 				if detail.Meta.HasPage {
 					entry["page"] = id

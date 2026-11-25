@@ -2,6 +2,7 @@
 # shellcheck shell=bash
 
 umask ${UMASK}
+source /usr/local/lib/nas-tools/plugin-ownership.sh /usr/local/bin/nas-tools-go || exit 1
 
 if [ "${NASTOOL_UI_MODE:-legacy}" = "react" ]; then
     export NASTOOL_LEGACY_PORT="${NASTOOL_LEGACY_PORT:-3002}"
