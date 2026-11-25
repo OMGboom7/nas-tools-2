@@ -219,5 +219,5 @@ func (api *siteSigninAPI) pluginPage(w http.ResponseWriter, r *http.Request, act
 		table.RowActions = append(table.RowActions, nil)
 	}
 	data.Tables = append(data.Tables, table)
-	signinJSON(w, data)
+	writeNativeRecordPage(w, data, false)
 }

@@ -100,7 +100,7 @@ func (s pluginService) serveAutoBackupPlugin(w http.ResponseWriter, r *http.Requ
 				rows = append(rows, []string{run.ID, run.Created, run.Message, run.Archive.Name, strconv.Itoa(run.Pruned)})
 			}
 		}
-		signinJSON(w, pluginPageData{Title: "自动备份记录", Sections: []string{}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "时间", "结果", "归档", "清理数量"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}})
+		writeNativeRecordPage(w, pluginPageData{Title: "自动备份记录", Sections: []string{}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "时间", "结果", "归档", "清理数量"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}}, false)
 	case "save", "legacy-save":
 		var in struct {
 			Fingerprint string                     `json:"fingerprint"`

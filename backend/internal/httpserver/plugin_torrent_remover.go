@@ -76,7 +76,7 @@ func (s pluginService) serveTorrentRemoverPlugin(w http.ResponseWriter, r *http.
 				rows = append(rows, []string{record.ID, record.Definition.Event.Title, record.State, record.Reason})
 			}
 		}
-		signinJSON(w, pluginPageData{Title: "下载任务联动删除记录", Sections: []string{"在插件页审核未来事件范围、停止后台或只读核对未知任务。"}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "媒体", "状态", "说明"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}})
+		writeNativeRecordPage(w, pluginPageData{Title: "下载任务联动删除记录", Sections: []string{"在插件页审核未来事件范围、停止后台或只读核对未知任务。"}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "媒体", "状态", "说明"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}}, false)
 	case "save", "legacy-save":
 		var input struct {
 			Fingerprint string                     `json:"fingerprint"`

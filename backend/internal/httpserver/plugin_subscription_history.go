@@ -131,5 +131,9 @@ func (service pluginService) removeSubscriptionHistory(w http.ResponseWriter, r 
 		subscriptionHistoryError(w, err)
 		return
 	}
+	if r.URL.Path == "/do" {
+		writeJSON(w, 200, map[string]any{"code": 0, "result": nil})
+		return
+	}
 	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "扩展页记录已删除"})
 }

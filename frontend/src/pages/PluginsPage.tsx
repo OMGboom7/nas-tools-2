@@ -18,6 +18,7 @@ import { CookieCloudManager } from "../components/CookieCloudManager";
 type PluginsPageProps = {
   session: AuthSession;
   currentPath: string;
+  pageID?: string;
   onNavigate: (path: string) => void;
   onLogout: () => Promise<void>;
   onSessionExpired: () => void;
@@ -26,14 +27,13 @@ type PluginsPageProps = {
 type PageState = { kind: "loading" } | { kind: "ready"; data: PluginsData } | { kind: "error"; message: string };
 type Filter = "all" | "installed" | "available";
 
-export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSessionExpired }: PluginsPageProps) {
+export function PluginsPage({ session, currentPath, pageID, onNavigate, onLogout, onSessionExpired }: PluginsPageProps) {
   const [state, setState] = useState<PageState>({ kind: "loading" });
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [removing, setRemoving] = useState<PluginSummary>();
   const [editing, setEditing] = useState<PluginSummary>();
-  const [viewing, setViewing] = useState<PluginSummary>();
   const [confirmation, setConfirmation] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -51,6 +51,9 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
   useEffect(() => { void load(); }, [session.token]);
 
   const data = state.kind === "ready" ? state.data : undefined;
+  const viewing = data?.items.find((plugin) => plugin.id === pageID && plugin.installed && plugin.hasPage &&
+    (plugin.actionsAvailable !== false || plugin.nativeHistoryPage || plugin.nativeArchivePage));
+  const closePage = () => onNavigate("/plugins");
   const filtered = useMemo(() => (data?.items || []).filter((plugin) => {
     const needle = query.trim().toLocaleLowerCase();
     const matchesText = !needle || `${plugin.name} ${plugin.description} ${plugin.author}`.toLocaleLowerCase().includes(needle);
@@ -104,6 +107,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
       <header className="services-heading"><div><p className="eyebrow">PLUGIN CATALOG</p><h1>插件管理</h1><p className="summary">查看插件、运行状态并安全编辑配置。扩展页面以结构化只读内容展示，旧版动态脚本和操作事件不会返回浏览器。</p></div>
         <div className="services-heading__actions"><button className="secondary-button" type="button" onClick={() => void load(true)}>刷新</button></div></header>
 
+      {data && pageID && !viewing && <div className="data-warning" role="status">此插件扩展页当前不可用。 <button type="button" onClick={closePage}>返回插件列表</button></div>}
       {notice && <div className={notice.startsWith("错误：") ? "data-warning" : "data-success"} role="status">{notice}</div>}
       {state.kind === "loading" && <div className="plugin-skeleton"><span /><span /><span /></div>}
       {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>插件列表暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></section>}
@@ -111,7 +115,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
         <section className="service-stats" aria-label="插件概览"><div><span>目录插件</span><strong>{data.items.length}</strong><small>个</small></div><div><span>已安装</span><strong>{data.installedCount}</strong><small>个</small></div><div><span>已确认运行</span><strong>{data.runningCount}</strong><small>{data.unknownStateCount ? `另有 ${data.unknownStateCount} 个状态待迁移` : "个"}</small></div></section>
         <div className="plugin-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、简介或作者" aria-label="搜索插件" />
           <select value={filter} onChange={(event) => setFilter(event.target.value as Filter)} aria-label="按安装状态筛选"><option value="all">全部插件</option><option value="installed">已安装</option><option value="available">可安装</option></select><span>显示 {filtered.length} / {data.items.length}</span></div>
-        {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的插件。</div> : <section className="plugin-grid" aria-label="插件列表">{filtered.map((plugin) => <PluginCard key={plugin.id} plugin={plugin} busy={Boolean(busy[plugin.id])} onView={() => setViewing(plugin)} onConfigure={() => setEditing(plugin)} onInstall={() => void install(plugin)} onUninstall={() => { setConfirmation(""); setRemoving(plugin); }} />)}</section>}
+        {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的插件。</div> : <section className="plugin-grid" aria-label="插件列表">{filtered.map((plugin) => <PluginCard key={plugin.id} plugin={plugin} busy={Boolean(busy[plugin.id])} onView={() => onNavigate(`/plugins/${encodeURIComponent(plugin.id)}`)} onConfigure={() => setEditing(plugin)} onInstall={() => void install(plugin)} onUninstall={() => { setConfirmation(""); setRemoving(plugin); }} />)}</section>}
       </>}
       {data?.items.some(p=>p.id==="Webhook"&&p.native&&p.actionsAvailable)&&<EventWebhookReceipts token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="CloudflareSpeedTest"&&p.native&&p.installed)&&<CloudflareManager key={session.token} token={session.token} onSessionExpired={onSessionExpired}/>}
@@ -123,7 +127,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
       {data?.items.some(p=>p.id==="MovieLike"&&p.native&&p.actionsAvailable)&&<MovieLikeManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="MediaSyncDel"&&p.native&&p.actionsAvailable)&&<MediaSyncDeleteManager token={session.token} onSessionExpired={onSessionExpired}/>}
 	  {data?.items.some(p=>p.id==="AutoSignIn"&&p.native&&p.installed)&&<SiteSigninManager key={session.token} session={session} onSessionExpired={onSessionExpired}/>}
-      {viewing?.native && viewing.id === "IYUUAutoSeed" ? <IyuuPluginPage token={session.token} onClose={() => setViewing(undefined)} onSessionExpired={onSessionExpired} /> : viewing && <PluginPageViewer key={viewing.id} session={session} plugin={viewing} onClose={() => setViewing(undefined)} onSessionExpired={onSessionExpired} />}
+      {viewing?.native && viewing.id === "IYUUAutoSeed" ? <IyuuPluginPage token={session.token} onClose={closePage} onSessionExpired={onSessionExpired} /> : viewing && <PluginPageViewer key={viewing.id} session={session} plugin={viewing} onClose={closePage} onSessionExpired={onSessionExpired} />}
       {editing && <PluginConfigEditor session={session} plugin={editing} onClose={() => setEditing(undefined)} onSaved={() => void configured(editing)} onSessionExpired={onSessionExpired} />}
       {removing && <UninstallDialog plugin={removing} value={confirmation} busy={Boolean(busy[removing.id])} onChange={setConfirmation} onClose={() => setRemoving(undefined)} onConfirm={() => void confirmUninstall()} />}
     </div>

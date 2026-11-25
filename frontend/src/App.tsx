@@ -99,8 +99,9 @@ export function App() {
     return <NotificationsPage session={session} currentPath="/notifications" onNavigate={handleNavigate}
       onLogout={handleLogout} onSessionExpired={handleSessionExpired} />;
   }
-  if (path === "/plugins" && session.user.userpris.includes("插件")) {
-    return <PluginsPage session={session} currentPath="/plugins" onNavigate={handleNavigate}
+  const pluginRoute = /^\/plugins(?:\/([A-Za-z][A-Za-z0-9_]{0,79}))?$/.exec(path);
+  if (pluginRoute && session.user.userpris.includes("插件")) {
+    return <PluginsPage session={session} currentPath="/plugins" pageID={pluginRoute[1]} onNavigate={handleNavigate}
       onLogout={handleLogout} onSessionExpired={handleSessionExpired} />;
   }
   return <DashboardPage session={session} currentPath="/" onNavigate={handleNavigate}

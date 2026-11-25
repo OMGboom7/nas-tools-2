@@ -390,7 +390,7 @@ func (s pluginService) writeIndexerPage(w http.ResponseWriter, id string, values
 		table.RowActions = append(table.RowActions, nil)
 	}
 	data.Tables = append(data.Tables, table)
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
+	writeNativeRecordPage(w, data, false)
 }
 
 func (m *nativeIndexerPlugins) tick(ctx context.Context, now time.Time) error {

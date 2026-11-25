@@ -35,6 +35,10 @@ make python-exit-status
 
 ## 当前基线
 
+2026-11-25 原 `/do` 的 `get_plugin_page` 已由 Go 生成原客户端读取的标题和 HTML。浏览器可从页面中的链接打开对应的 React 扩展页，登录、刷新和返回后仍按插件编号定位。表格和说明经过 HTML 转义，原命令同时返回分页和行操作数据。无页面或未安装的可见内置插件沿用空页面响应。读取使用 Go 登录令牌，并核对目录权限和安装记录。[扩展页命令](../../backend/internal/httpserver/plugin_page_command.go)
+
+原 `run_plugin_method` 已接通豆瓣同步、豆瓣榜单和电影随机订阅的历史删除、媒体库归档文件删除及已有的 IYUU 绑定。历史键按原始数字文本读取。归档的原具名命令支持只给完整原文件名，沿用 Go 的安装记录、归档目录和普通文件校验；带确认与文件标识的请求会复核两者，React 使用此方式。隔离 Chrome 在实际 Go 进程重启前后从旧格式响应进入 React，验证了刷新、取消删除、关闭、浏览器返回和无效链接。真实文件删除仅用临时回归样例验证。本批 1016 项 HTTP 测试、其余 Go 包的测试或编译、静态检查、Linux amd64 静态构建、361 项前端测试及生产构建通过。[回归用例](../../backend/internal/httpserver/plugin_page_command_test.go)
+
 2026-11-25 Go 已接管原 `/do` 中的 `install_plugin`、`uninstall_plugin`、`update_plugin_config` 和 `get_plugin_state`。使用 Go 登录令牌的客户端可以沿用原 JSON 命令。React、旧表单接口和这四条命令现在共用各插件的安装、配置、状态和权限处理。完整配置仍按对应插件的旧语义保存。Go-only 下管理员可以识别缺少 Go 实现的已安装扩展；原安装记录与配置保留。普通账户查询目录外的编号得到 404。[插件分派](../../backend/internal/httpserver/plugin_dispatch.go)和[兼容测试](../../backend/internal/httpserver/plugin_dispatch_test.go)
 
 隔离 Go 服务使用临时账户和数据库保存制作组配置并安装插件，React 使用的目录接口显示其已运行。实际停止服务并重新启动后，用旧命令再次读取状态、卸载，目录随即更新。本批通过 1014 项 HTTP 测试、其余 Go 包的测试或编译、Go 静态检查、Linux amd64 静态构建、361 项前端测试和生产构建。过渡部署仍有 6 个实际 Flask 调用点，分别涉及目录、已安装列表、安装／卸载、保存配置、扩展页和页面操作；通用代理、第三方插件的实际运行、候选镜像和存量生产切换仍待处理。

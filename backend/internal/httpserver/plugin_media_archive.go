@@ -127,5 +127,9 @@ func (s pluginService) removeArchiveRecord(w http.ResponseWriter, r *http.Reques
 		archivePageError(w, err)
 		return
 	}
+	if r.URL.Path == "/do" {
+		writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"code": 0, "data": true}})
+		return
+	}
 	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "归档文件已删除"})
 }

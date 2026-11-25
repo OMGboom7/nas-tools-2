@@ -97,7 +97,7 @@ func (s pluginService) serveCookieCloudPlugin(w http.ResponseWriter, r *http.Req
 		page := pluginPageData{Title: "CookieCloud 同步记录", Sections: []string{}, ReadOnly: true,
 			Tables: []pluginPageTable{{Columns: []string{"原记录编号", "时间", "状态", "结果", "更新", "新增"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}},
 		}
-		signinJSON(w, page)
+		writeNativeRecordPage(w, page, false)
 	case "save", "legacy-save":
 		var input struct {
 			Fingerprint string                     `json:"fingerprint"`

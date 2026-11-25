@@ -647,5 +647,5 @@ func (api *libraryScraper) writePluginPage(w http.ResponseWriter, r *http.Reques
 		table.RowActions = append(table.RowActions, nil)
 	}
 	data.Tables = append(data.Tables, table)
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
+	writeNativeRecordPage(w, data, false)
 }

@@ -48,89 +48,59 @@ type pluginPageActionRequest struct {
 	Confirmation string `json:"confirmation"`
 }
 
+func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, id string, legacy bool) bool {
+	r.SetPathValue("id", id)
+	switch {
+	case s.autoSub != nil && id == autoSubID:
+		s.autoSub.page(w, r, s, legacy)
+	case s.disk != nil && id == diskID:
+		s.disk.page(w, r, s, legacy)
+	case s.helper != nil && id == helperID:
+		s.helperPage(w, r, legacy)
+	case s.iyuu != nil && id == "IYUUAutoSeed":
+		s.iyuu.partnerPage(w, r, legacy)
+	case s.nativeArchivePage(id):
+		s.serveArchivePage(w, r, legacy)
+	case s.nativeSubscriptionHistory(id):
+		s.subscriptionHistoryPage(w, r, id, legacy)
+	case s.nativeTorrentRemover(id):
+		s.serveTorrentRemoverPlugin(w, r, "page")
+	case s.nativeTorrentMark(id):
+		s.serveTorrentMarkPlugin(w, r, "page")
+	case s.nativeSyncTimer(id):
+		s.serveSyncTimerPlugin(w, r, "page")
+	case s.nativeAutoBackup(id):
+		s.serveAutoBackupPlugin(w, r, "page")
+	case s.nativeCookieCloud(id):
+		s.serveCookieCloudPlugin(w, r, "page")
+	case s.nativeSignin(id):
+		s.serveSigninPlugin(w, r, "page")
+	case s.nativeMovieLike(id):
+		s.serveMovieLikePlugin(w, r, "page")
+	case s.nativeMediaSyncDelete(id):
+		s.serveMediaSyncDeletePlugin(w, r, "page")
+	case s.nativeSpeedLimiter(id):
+		s.serveSpeedLimiterPlugin(w, r, "page")
+	case s.nativeEventWebhook(id):
+		s.serveEventWebhookPlugin(w, r, "page")
+	case s.nativeMediaRefresh(id):
+		s.serveMediaRefreshPlugin(w, r, "page")
+	case s.nativeLibrary(id):
+		s.serveLibraryPlugin(w, r, "page")
+	case s.nativeSubtitle(id):
+		s.serveSubtitlePlugin(w, r, "page")
+	case s.nativeOpenSubtitles(id):
+		s.serveOpenSubtitlePlugin(w, r, "page")
+	case s.nativeIndexer(id):
+		s.serveIndexerPlugin(w, r, "page")
+	default:
+		return false
+	}
+	return true
+}
+
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
-	if service.autoSub != nil && request.PathValue("id") == autoSubID {
-		service.autoSub.page(response, request, service, false)
-		return
-	}
-	if service.disk != nil && request.PathValue("id") == diskID {
-		service.disk.page(response, request, service, false)
-		return
-	}
-	if service.helper != nil && request.PathValue("id") == helperID {
-		service.helperPage(response, request, false)
-		return
-	}
-	if service.iyuu != nil && request.PathValue("id") == "IYUUAutoSeed" {
-		service.iyuu.partnerPage(response, request, false)
-		return
-	}
-	if service.nativeArchivePage(strings.TrimSpace(request.PathValue("id"))) {
-		service.serveArchivePage(response, request, false)
-		return
-	}
-	if id := strings.TrimSpace(request.PathValue("id")); service.nativeSubscriptionHistory(id) {
-		service.subscriptionHistoryPage(response, request, id, false)
-		return
-	}
-	if service.nativeTorrentRemover(request.PathValue("id")) {
-		service.serveTorrentRemoverPlugin(response, request, "page")
-		return
-	}
-	if service.nativeTorrentMark(request.PathValue("id")) {
-		service.serveTorrentMarkPlugin(response, request, "page")
-		return
-	}
-	if service.nativeSyncTimer(request.PathValue("id")) {
-		service.serveSyncTimerPlugin(response, request, "page")
-		return
-	}
-	if service.nativeAutoBackup(request.PathValue("id")) {
-		service.serveAutoBackupPlugin(response, request, "page")
-		return
-	}
-	if service.nativeCookieCloud(request.PathValue("id")) {
-		service.serveCookieCloudPlugin(response, request, "page")
-		return
-	}
-	if service.nativeSignin(request.PathValue("id")) {
-		service.serveSigninPlugin(response, request, "page")
-		return
-	}
-	if service.nativeMovieLike(request.PathValue("id")) {
-		service.serveMovieLikePlugin(response, request, "page")
-		return
-	}
-	if service.nativeMediaSyncDelete(request.PathValue("id")) {
-		service.serveMediaSyncDeletePlugin(response, request, "page")
-		return
-	}
-	if service.nativeSpeedLimiter(request.PathValue("id")) {
-		service.serveSpeedLimiterPlugin(response, request, "page")
-		return
-	}
-	if service.nativeEventWebhook(request.PathValue("id")) {
-		service.serveEventWebhookPlugin(response, request, "page")
-		return
-	}
-	if service.nativeMediaRefresh(request.PathValue("id")) {
-		service.serveMediaRefreshPlugin(response, request, "page")
-		return
-	}
-	if service.nativeLibrary(request.PathValue("id")) {
-		service.serveLibraryPlugin(response, request, "page")
-		return
-	}
-	if service.nativeSubtitle(request.PathValue("id")) {
-		service.serveSubtitlePlugin(response, request, "page")
-		return
-	}
-	if service.nativeOpenSubtitles(request.PathValue("id")) {
-		service.serveOpenSubtitlePlugin(response, request, "page")
-		return
-	}
-	if service.nativeIndexer(request.PathValue("id")) {
-		service.serveIndexerPlugin(response, request, "page")
+	if service.serveNativePage(response, request, strings.TrimSpace(request.PathValue("id")), false) {
 		return
 	}
 	if service.unavailablePluginRoute(response, request) {
@@ -340,6 +310,10 @@ func cleanPluginPageText(value any, limit int) string {
 // The legacy form endpoint uses snake-case action keys; the React client
 // consumes the typed page directly. Both expose the same rows and cursor.
 func writeNativeRecordPage(w http.ResponseWriter, data pluginPageData, legacy bool) {
+	if command, ok := w.(pluginCommandPageWriter); ok {
+		command.writePage(data)
+		return
+	}
 	if !legacy {
 		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
 		return

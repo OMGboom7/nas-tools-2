@@ -53,7 +53,12 @@ func (s pluginService) legacyCommandRoutes(reads map[string]http.HandlerFunc, ne
 			writeAPIError(w, 410, 410, "旧文件名恢复入口已迁移，请在服务页上传 ZIP 并按提示离线恢复")
 			return
 		}
-		if s.iyuu != nil && envelope.Cmd == "run_plugin_method" && s.iyuu.legacyBind(w, r, envelope.Data) {
+		if envelope.Cmd == "get_plugin_page" {
+			s.commandPage(w, r, envelope.Data)
+			return
+		}
+		if envelope.Cmd == "run_plugin_method" {
+			s.commandPageMethod(w, r, envelope.Data)
 			return
 		}
 		if s.pluginCommand(w, r, envelope.Cmd, envelope.Data) {
