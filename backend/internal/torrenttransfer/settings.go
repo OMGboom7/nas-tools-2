@@ -264,7 +264,10 @@ func NormalizeRemote(raw string) (string, error) {
 	return path.Clean(value), nil
 }
 func underRemote(candidate, root string) bool {
-	return candidate == root || root == "/" && strings.HasPrefix(candidate, "/") && !strings.HasPrefix(candidate, "//") || strings.HasPrefix(candidate, strings.TrimRight(root, "/")+"/")
+	if root == "/" {
+		return strings.HasPrefix(candidate, "/") && !strings.HasPrefix(candidate, "//")
+	}
+	return candidate == root || strings.HasPrefix(candidate, strings.TrimRight(root, "/")+"/")
 }
 func MapDirectory(directory, from, to string) (string, error) {
 	if directory == "" {
