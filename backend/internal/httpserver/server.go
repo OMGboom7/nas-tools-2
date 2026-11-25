@@ -103,6 +103,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitDoubanSync := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣同步", runner.archivePlugin.doubanSync.tick)
 		waitRandom := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "电影随机订阅", runner.archivePlugin.doubanSync.movieRandomTick)
 		waitRank := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣榜单", runner.archivePlugin.doubanSync.rankTick)
+		waitMteamFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
 		waitArchive := startMediaArchiveWorker(workerContext, runner.archivePlugin)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
 		wait = func() {
@@ -135,6 +136,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitDoubanSync()
 			waitRank()
 			waitRandom()
+			waitMteamFeed()
 		}
 	}
 	return handler, wait, nil
@@ -736,6 +738,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{archiveConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
+	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
+		plugins.mteamFeed = &mteamFeedService{system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, limits: siteLimits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}
+	}
 	plugins.cookieCloud = cloudCookies
 	plugins.torrentMark = markAPI
 	plugins.torrentTransfer = &transferAPI

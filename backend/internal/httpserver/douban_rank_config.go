@@ -16,29 +16,6 @@ const rankControlKey = "GoDoubanRank"
 
 var rankKeys = []string{"UserInstalledPlugins", rankSettingsKey, rankControlKey, "DefaultRssSettingMOV", "DefaultRssSettingTV"}
 
-// Subscription plugins expose the same installation and optimistic-edit protocol.
-// Their settings, schedules and execution state belong to separate keys.
-type subscriptionPlugin struct {
-	id, name, control string
-	keys              []string
-	detail            func(string, map[string]string) (pluginConfigDetail, error)
-	summary           func(context.Context, map[string]string) (bool, bool)
-	changes           func(context.Context, string, map[string]string, map[string]json.RawMessage, []string, time.Time) (map[string]string, error)
-}
-
-func (api *doubanSyncAPI) plugin(id string) subscriptionPlugin {
-	if id == movieRandomID {
-		return subscriptionPlugin{id, "电影随机订阅", movieRandomControlKey, movieRandomKeys, movieRandomDetail, api.movieRandomSummary, api.movieRandomChanges}
-	}
-	if id == douban.RankPlugin {
-		return subscriptionPlugin{id, "豆瓣榜单订阅", rankControlKey, rankKeys, rankDetail, api.rankSummary, api.rankChanges}
-	}
-	return subscriptionPlugin{douban.SyncPlugin, "豆瓣同步", doubanControlKey, doubanKeys, func(actor string, raw map[string]string) (pluginConfigDetail, error) {
-		cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
-		return doubanDetail(actor, raw, cfg), err
-	}, api.summary, api.changes}
-}
-
 func rankDetail(actor string, raw map[string]string) (pluginConfigDetail, error) {
 	cfg, err := douban.ReadRankSettings(raw[rankSettingsKey])
 	if err != nil {

@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"maps"
-	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,9 +46,6 @@ type doubanSyncAPI struct {
 
 func (api *doubanSyncAPI) available() bool {
 	return api != nil && api.plugins.system != nil && api.login.pureGo && api.login.guards != nil && *api.login.guards != nil
-}
-func (s pluginService) nativeSubscriptionPlugin(id string) bool {
-	return (id == douban.SyncPlugin || id == douban.RankPlugin || id == movieRandomID) && s.doubanSync.available()
 }
 func (api *doubanSyncAPI) scope(ctx context.Context, actor string, raw map[string]string) (string, error) {
 	auth, cfg, err := api.login.authority(actor)
@@ -189,107 +184,4 @@ func (api *doubanSyncAPI) changes(ctx context.Context, actor string, raw map[str
 	}
 	control, err := json.Marshal(c)
 	return map[string]string{doubanSettingsKey: string(b), doubanControlKey: string(control)}, err
-}
-
-func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, id, action string) {
-	p := api.plugin(id)
-	if !api.plugins.historyReader(w, r) {
-		return
-	}
-	claims, err := api.login.auth.service.VerifyToken(r.Header.Get("Authorization"))
-	if err != nil {
-		writeAPIError(w, 401, 401, "请重新登录")
-		return
-	}
-	ctx := r.Context()
-	raw, err := api.plugins.system.ReadMany(ctx, p.keys)
-	if err != nil {
-		subscriptionHistoryError(w, err)
-		return
-	}
-	ids, err := decodeInstalledPlugins(raw["UserInstalledPlugins"])
-	if err != nil {
-		subscriptionHistoryError(w, err)
-		return
-	}
-	installed := slices.Contains(ids, p.id)
-	changes := map[string]string{}
-	switch action {
-	case "install", "uninstall":
-		if action == "install" && !installed {
-			ids = append(ids, p.id)
-			changes[p.control] = "{}"
-		}
-		if action == "uninstall" {
-			ids = slices.DeleteFunc(ids, func(id string) bool { return id == p.id })
-			changes[p.control] = "{}"
-		}
-		b, err := json.Marshal(ids)
-		if err != nil || len(ids) > 1024 {
-			writeAPIError(w, 409, 409, "已安装插件列表无效")
-			return
-		}
-		changes["UserInstalledPlugins"] = string(b)
-	default:
-		if !installed {
-			writeAPIError(w, 404, 404, "未安装该订阅插件")
-			return
-		}
-		switch action {
-		case "get":
-			detail, err := p.detail(claims.Username, raw)
-			if err != nil {
-				writeAPIError(w, 409, 409, "原订阅插件设置无效")
-				return
-			}
-			signinJSON(w, detail)
-			return
-		case "status":
-			running, known := p.summary(ctx, raw)
-			writeJSON(w, 200, map[string]any{"code": 0, "state": running, "stateKnown": known})
-			return
-		case "save", "legacy-save":
-			var in struct {
-				Fingerprint string
-				Values      map[string]json.RawMessage
-				ClearConfig []string
-			}
-			want := sitelogin.Hash([]any{claims.Username, raw})
-			if action == "legacy-save" {
-				if json.Unmarshal([]byte(r.FormValue("config")), &in.Values) != nil {
-					writeAPIError(w, 400, 400, "订阅插件设置无效")
-					return
-				}
-				in.Fingerprint = r.FormValue("fingerprint")
-				if in.Fingerprint == "" {
-					in.Fingerprint = want
-				}
-			} else if !siteLoginJSON(w, r, &in) {
-				return
-			}
-			if in.Values == nil || in.Fingerprint != want {
-				writeAPIError(w, 409, 409, "设置已变化，请刷新")
-				return
-			}
-			changes, err = p.changes(ctx, claims.Username, raw, in.Values, in.ClearConfig, time.Now())
-			if err != nil {
-				writeAPIError(w, 400, 400, "请核对插件设置、来源和执行周期")
-				return
-			}
-		default:
-			writeAPIError(w, 404, 404, "未知订阅插件操作")
-			return
-		}
-	}
-	err = api.plugins.system.UpdateMany(ctx, p.keys, func(current map[string]string) (map[string]string, error) {
-		if !maps.Equal(current, raw) {
-			return nil, douban.ErrSettings
-		}
-		return changes, nil
-	})
-	if err != nil {
-		writeAPIError(w, 409, 409, "豆瓣设置未保存，请刷新核对")
-		return
-	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": p.name + "设置已保存"})
 }

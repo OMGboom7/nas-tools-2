@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	mteamFeed         *mteamFeedService
 	doubanSync        *doubanSyncAPI
 	archiveMedia      *mediaSyncAPI
 	archiveConfigPath string
@@ -128,12 +129,12 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 		service.serveSyncTimerPlugin(response, request, action)
 		return
 	}
-	if service.nativeSubscriptionPlugin(request.PathValue("id")) {
+	if service.nativeFeedPlugin(request.PathValue("id")) {
 		action := "uninstall"
 		if install {
 			action = "install"
 		}
-		service.doubanSync.serve(response, request, request.PathValue("id"), action)
+		service.serveFeedPlugin(response, request, request.PathValue("id"), action)
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {

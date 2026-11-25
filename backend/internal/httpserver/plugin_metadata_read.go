@@ -226,8 +226,8 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
 				continue
 			}
-			if service.nativeSubscriptionPlugin(id) {
-				p := service.doubanSync.plugin(id)
+			if service.nativeFeedPlugin(id) {
+				p := service.feedPlugin(id)
 				raw, err := service.system.ReadMany(request.Context(), p.keys)
 				if err != nil {
 					subscriptionHistoryError(response, err)
@@ -245,7 +245,11 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				}
 
 				running, known := p.summary(request.Context(), raw)
-				result[id] = map[string]any{"name": detail.Name, "version": catalog[id].Version, "page": id, "state": running, "stateKnown": known, "native": true, "fields": indexerLegacyFields(detail), "config": detail.Values, "fingerprint": detail.Meta.Fingerprint}
+				entry := map[string]any{"name": detail.Name, "version": catalog[id].Version, "state": running, "stateKnown": known, "native": true, "fields": indexerLegacyFields(detail), "config": detail.Values, "fingerprint": detail.Meta.Fingerprint}
+				if detail.Meta.HasPage {
+					entry["page"] = id
+				}
+				result[id] = entry
 				continue
 			}
 			if service.nativeArchiveRunner(id) {

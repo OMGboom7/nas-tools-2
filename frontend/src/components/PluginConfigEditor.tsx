@@ -111,6 +111,7 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
     {state.kind === "ready" && plugin.id === "TorrentRemover" && <p className="editor-note">保存会撤销原联动删除授权。请回到插件页审核下载器范围，启用后仅接收新的源文件删除事实。</p>}
     {state.kind === "ready" && plugin.id === "TorrentMark" && <p className="editor-note">保存会撤销原种子标记授权。请回到插件页核对下载器后启用。</p>}
     {state.kind === "ready" && plugin.id === "SyncTimer" && <p className="editor-note">保存会撤销此前的定时授权。请到整理页的自动同步区域审核来源并启用。</p>}
+    {state.kind === "ready" && plugin.id === "MteamRssGen" && plugin.native && <p className="editor-note">刷流任务的 RSS 地址是 <code>http://127.0.0.1:8001/rss_pub.xml</code>。启用后，能访问此端口的设备均可读取订阅。每次读取时按所选类别查询馒头站点。</p>}
     {state.kind === "ready" && plugin.id === "MovieRandom" && plugin.native && <p className="editor-note">每次最多新增一部电影订阅，沿用电影订阅默认设置。遇到已入库或已订阅的影片时，会继续选片。</p>}
     {state.kind === "ready" && plugin.id === "DoubanRank" && plugin.native && <p className="editor-note">榜单按 TMDB 年份和评分筛选。已入库或已订阅的条目会写入历史，新订阅沿用对应的电影或剧集默认设置。</p>}
     {state.kind === "ready" && plugin.id === "DoubanSync" && plugin.native && <p className="editor-note">仅开启自动搜索时，会先查媒体库，再将缺少的电影或剧集直接提交到下载器。仅开启订阅会沿用电影或电视剧的默认订阅设置。两项都开启时先查库存，再为缺少的媒体创建订阅。两项都关闭时只记录豆瓣标记。</p>}

@@ -66,8 +66,8 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 		service.serveSyncTimerPlugin(response, request, "get")
 		return
 	}
-	if service.nativeSubscriptionPlugin(request.PathValue("id")) {
-		service.doubanSync.serve(response, request, request.PathValue("id"), "get")
+	if service.nativeFeedPlugin(request.PathValue("id")) {
+		service.serveFeedPlugin(response, request, request.PathValue("id"), "get")
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {
@@ -174,8 +174,8 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 		service.serveSyncTimerPlugin(response, request, "save")
 		return
 	}
-	if service.nativeSubscriptionPlugin(request.PathValue("id")) {
-		service.doubanSync.serve(response, request, request.PathValue("id"), "save")
+	if service.nativeFeedPlugin(request.PathValue("id")) {
+		service.serveFeedPlugin(response, request, request.PathValue("id"), "save")
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {

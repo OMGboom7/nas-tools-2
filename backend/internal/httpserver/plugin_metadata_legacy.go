@@ -57,12 +57,12 @@ func (service pluginService) metadataLegacyRoute(action string, fallback http.Ha
 			service.serveSyncTimerPlugin(response, probe, kind)
 			return
 		}
-		if service.nativeSubscriptionPlugin(id) {
+		if service.nativeFeedPlugin(id) {
 			kind := action
 			if kind == "config" {
 				kind = "legacy-save"
 			}
-			service.doubanSync.serve(response, probe, id, kind)
+			service.serveFeedPlugin(response, probe, id, kind)
 			return
 		}
 		if service.nativeArchiveRunner(id) {
