@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from config import run_go_helper
+from config import Config, run_go_helper
 
 
 class IndexerConf(object):
@@ -115,3 +115,29 @@ def plugin_search(kind, host, api_key, indexer, keyword, page):
         return json.loads(raw)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return None
+
+
+def catalog_resources(indexer, keyword=None, page=None, mtype=None, html=None):
+    definition = {"id": indexer.id, "domain": indexer.domain, "parser": indexer.parser or "",
+                  "torrents": indexer.torrents, "search": indexer.search_config,
+                  "category": indexer.category, "browse": indexer.browse}
+    try:
+        config = Config()
+        query = {"definition": definition, "limit": int(config.get_config("pt").get("site_search_result_num") or 100)}
+        if html is None:
+            scheme = indexer.domain.partition(":")[0].lower()
+            proxy = (config.get_proxies() or {}).get(scheme) if indexer.proxy else None
+            if indexer.proxy and not proxy:
+                return True, []
+            query.update({"cookie": indexer.cookie or "", "ua": indexer.ua or config.get_ua(),
+                          "proxy": proxy, "page": int(page or 0), "kind": mtype.name.lower() if mtype else ""})
+            if isinstance(keyword, list):
+                query["terms"] = keyword
+            else:
+                query["keyword"] = keyword or ""
+        else:
+            query["html"] = html
+        page_data = run_go_helper("catalog-resources", payload=json.dumps(query, ensure_ascii=False).encode(), timeout=35)
+        return False, json.loads(page_data)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return True, []

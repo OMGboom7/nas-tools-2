@@ -1440,8 +1440,6 @@ if __name__ == "__main__":
     """
     手工转移时，使用命名行调用
     """
-    Config().init_syspath()
-
     parser = argparse.ArgumentParser(description='文件转移工具')
     parser.add_argument('-m', '--mode', dest='mode', required=True,
                         help='转移模式：link copy softlink move rclone rclonecopy minio miniocopy')

@@ -1,32 +1,19 @@
 # coding: utf-8
-import copy
 import time
 from urllib.parse import quote
 
-from pyquery import PyQuery
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as es
 from selenium.webdriver.support.wait import WebDriverWait
 
 from app.helper import ChromeHelper
-from app.indexer.client._spider import TorrentSpider
+from app.indexer.indexerConf import catalog_resources
 from app.utils import ExceptionUtils
-from config import Config
 
 
 class RenderSpider(object):
-    torrentspider = None
-    torrents_info_array = []
-    result_num = 100
-
     def __init__(self, indexer):
-        self.torrentspider = TorrentSpider()
         self._indexer = indexer
-        self.init_config()
-
-    def init_config(self):
-        self.torrents_info_array = []
-        self.result_num = Config().get_config('pt').get('site_search_result_num') or 100
 
     def search(self, keyword, page=None, mtype=None):
         """
@@ -58,11 +45,6 @@ class RenderSpider(object):
             search_button = params.get('submit')
             # 预执行脚本
             pre_script = params.get('script')
-            # referer
-            if params.get('referer'):
-                referer = self._indexer.domain + params.get('referer').replace('{keyword}', quote(keyword))
-            else:
-                referer = self._indexer.domain
             if not search_input or not search_button:
                 return True, []
             # 使用浏览器打开页面
@@ -70,9 +52,6 @@ class RenderSpider(object):
                                 cookie=self._indexer.cookie,
                                 ua=self._indexer.ua,
                                 proxy=self._indexer.proxy):
-                return True, []
-            cloudflare = chrome.pass_cloudflare()
-            if not cloudflare:
                 return True, []
             # 模拟搜索操作
             try:
@@ -94,16 +73,11 @@ class RenderSpider(object):
                 ExceptionUtils.exception_traceback(e)
                 return True, []
         else:
-            # referer
-            referer = self._indexer.domain
             # 使用浏览器获取HTML文本
             if not chrome.visit(url=search_url,
                                 cookie=self._indexer.cookie,
                                 ua=self._indexer.ua,
                                 proxy=self._indexer.proxy):
-                return True, []
-            cloudflare = chrome.pass_cloudflare()
-            if not cloudflare:
                 return True, []
         # 等待页面加载完成
         time.sleep(5)
@@ -114,20 +88,4 @@ class RenderSpider(object):
         # 重新获取Cookie和UA
         self._indexer.cookie = chrome.get_cookies()
         self._indexer.ua = chrome.get_ua()
-        # 设置抓虫参数
-        self.torrentspider.setparam(keyword=keyword,
-                                    indexer=self._indexer,
-                                    referer=referer,
-                                    page=page,
-                                    mtype=mtype)
-        # 种子筛选器
-        torrents_selector = self._indexer.torrents.get('list', {}).get('selector', '')
-        if not torrents_selector:
-            return False, []
-        # 解析HTML文本
-        html_doc = PyQuery(html_text)
-        for torn in html_doc(torrents_selector):
-            self.torrents_info_array.append(copy.deepcopy(self.torrentspider.Getinfo(PyQuery(torn))))
-            if len(self.torrents_info_array) >= int(self.result_num):
-                break
-        return False, self.torrents_info_array
+        return catalog_resources(self._indexer, html=html_text)

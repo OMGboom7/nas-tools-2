@@ -2,15 +2,13 @@ import copy
 import datetime
 import json
 import subprocess
-import time
 
 import log
 from app.conf import SystemConfig
 from app.helper import ProgressHelper, ChromeHelper, DbHelper
 from app.indexer.client._base import _IIndexClient
-from app.indexer.client._haidan import HaiDanSpider
+from app.indexer.indexerConf import catalog_resources
 from app.indexer.client._render_spider import RenderSpider
-from app.indexer.client._spider import TorrentSpider
 from app.indexer.client._torrentleech import TorrentLeech
 from app.indexer.client._plugins import PluginsSpider
 from app.sites import Sites
@@ -194,21 +192,11 @@ class BuiltinIndexer(_IIndexClient):
                     mtype=match_media.type if match_media and match_media.tmdb_info else None)
             elif indexer.parser == "TorrentLeech":
                 error_flag, result_array = TorrentLeech(indexer).search(keyword=search_word)
-            elif indexer.parser == "HaiDanSpider":
-                error_flag, result_array = self.__spider_search(
-                    spider=HaiDanSpider(),
-                    keyword=search_word,
-                    indexer=indexer,
-                    mtype=match_media.type if match_media and match_media.tmdb_info else None)
+            elif indexer.parser != "HaiDanSpider" and PluginsSpider().status(indexer=indexer):
+                error_flag, result_array = PluginsSpider().search(keyword=search_word, indexer=indexer)
             else:
-                if PluginsSpider().status(indexer=indexer):
-                    error_flag, result_array = PluginsSpider().search(keyword=search_word, indexer=indexer)
-                else:
-                    error_flag, result_array = self.__spider_search(
-                        spider=TorrentSpider(),
-                        keyword=search_word,
-                        indexer=indexer,
-                        mtype=match_media.type if match_media and match_media.tmdb_info else None)
+                kind = match_media.type if match_media and match_media.tmdb_info else None
+                error_flag, result_array = catalog_resources(indexer, search_word, mtype=kind)
         except Exception as err:
             error_flag = True
             print(str(err))
@@ -291,27 +279,10 @@ class BuiltinIndexer(_IIndexClient):
         elif indexer.parser == "TorrentLeech":
             error_flag, result_array = TorrentLeech(indexer).search(keyword=keyword,
                                                             page=page)
-        elif indexer.parser == "HaiDanSpider":
-            error_flag, result_array = self.__spider_search(spider=HaiDanSpider(),
-                                                            indexer=indexer,
-                                                            page=page,
-                                                            keyword=keyword)
-            # spider = HaiDanSpider()
-            # spider.setparam(indexer=indexer,
-            #                 keyword=keyword,
-            #                 page=page)
-            # error_flag, result_array = spider.search()
+        elif indexer.parser != "HaiDanSpider" and PluginsSpider().status(indexer=indexer):
+            error_flag, result_array = PluginsSpider().search(keyword=keyword, indexer=indexer, page=page)
         else:
-            if PluginsSpider().status(indexer=indexer):
-                error_flag, result_array = PluginsSpider().search(keyword=keyword, 
-                                                                  indexer=indexer, 
-                                                                  page=page)
-
-            else:
-                error_flag, result_array = self.__spider_search(spider=TorrentSpider(),
-                                                                indexer=indexer,
-                                                                page=page,
-                                                                keyword=keyword)
+            error_flag, result_array = catalog_resources(indexer, keyword, page)
         # 索引花费的时间
         seconds = round((datetime.datetime.now() - start_time).seconds, 1)
 
@@ -345,39 +316,3 @@ class BuiltinIndexer(_IIndexClient):
         except (OSError, ValueError, TypeError, subprocess.SubprocessError):
             log.warn(f"【INDEXER】{indexer.name} 获取站点资源失败")
             return True, []
-
-    @staticmethod
-    def __spider_search(spider, indexer, keyword=None, page=None, mtype=None, timeout=30):
-        """
-        根据关键字搜索单个站点
-        :param: indexer: 站点配置
-        :param: keyword: 关键字
-        :param: page: 页码
-        :param: mtype: 媒体类型
-        :param: timeout: 超时时间
-        :return: 是否发生错误, 种子列表
-        """
-        log.debug(f"spider search start {indexer.name}")
-
-        spider.setparam(indexer=indexer,
-                        keyword=keyword,
-                        page=page,
-                        mtype=mtype)
-        spider.start()
-
-        # 循环判断是否获取到数据
-        sleep_count = 0
-        while not spider.is_complete:
-            sleep_count += 1
-            time.sleep(0.5)
-            if sleep_count > timeout:
-                break
-        # 是否发生错误
-        result_flag = spider.is_error
-        # 种子列表
-        result_array = spider.torrents_info_array.copy()
-        # 重置状态
-        spider.torrents_info_array.clear()
-
-        log.debug(f"spider search end  {indexer.name}")
-        return result_flag, result_array

@@ -15,9 +15,6 @@ config_data = [('config/config.yaml', str(project / 'backend/internal/config/def
                ('config/default-category.yaml', str(project / 'config/default-category.yaml'), 'DATA')]
 script_data = [(str(file.relative_to(project)), str(file), 'DATA')
                for file in (project / 'scripts/sqls').glob('*.sql')]
-pathex_tp = [str(project / 'third_party' / line) for line in
-             (project / 'third_party.txt').read_text().splitlines() if line]
-
 # <<< START HIDDENIMPORTS PART
 def collect_local_submodules(package):
     import os
@@ -77,7 +74,7 @@ datas = collect_datas()
 block_cipher = None
 a = Analysis(
     ['./../run.py'],
-    pathex=pathex_tp,
+    pathex=[],
     binaries=[(str(project / 'backend/bin' / helper_name), '.')],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -92,7 +89,6 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 a.datas += [('./nas-tools.ico', './nas-tools.ico', 'DATA')]
-a.datas += [('third_party.txt', str(project / 'third_party.txt'), 'DATA')]
 exe = EXE(
     pyz,
     a.scripts,

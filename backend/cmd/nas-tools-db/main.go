@@ -18,6 +18,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "catalog-resources" {
+		if err := builtinindexer.CatalogPageCommand(context.Background(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("catalog resource page unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "mteam-rss-server" {
 		if err := httpserver.RunMTeamRSS(config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("M-Team RSS service could not run", "error", err)

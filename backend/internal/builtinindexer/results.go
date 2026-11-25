@@ -3,7 +3,7 @@ package builtinindexer
 import (
 	"context"
 	"encoding/json"
-	"math"
+	"math/big"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
+	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 	"golang.org/x/net/html"
 )
 
@@ -29,6 +30,60 @@ type torrentRules struct {
 	Fields map[string]FieldSpec `json:"fields"`
 }
 
+type resultTable struct {
+	doc    Document
+	rules  torrentRules
+	rows   []*html.Node
+	groups map[*html.Node]*html.Node
+}
+
+func selectResultTable(ctx context.Context, definition indexercatalog.Definition, body []byte) (resultTable, error) {
+	var rules torrentRules
+	if json.Unmarshal(definition.Torrents, &rules) != nil || len(rules.Fields) == 0 {
+		return resultTable{}, ErrConfig
+	}
+	if definition.Parser == "HaiDanSpider" {
+		normalizeHaiDanID(rules.Fields)
+	}
+	doc, err := ParseDocument(ctx, body)
+	if err != nil {
+		return resultTable{}, err
+	}
+	blocked, err := trackerLoginPage(ctx, doc)
+	if err != nil {
+		return resultTable{}, err
+	}
+	if blocked {
+		return resultTable{}, ErrResponse
+	}
+	rows, err := Select(ctx, doc.Root, rules.List.Selector)
+	if err != nil {
+		return resultTable{}, err
+	}
+	groups := map[*html.Node]*html.Node{}
+	if definition.Parser == "HaiDanSpider" {
+		torrents := []*html.Node{}
+		for _, group := range rows {
+			children, err := Select(ctx, group, "div.torrent_wrap")
+			if err != nil {
+				return resultTable{}, err
+			}
+			for _, child := range children {
+				if groups[child] != nil {
+					return resultTable{}, ErrResponse
+				}
+				groups[child] = group
+				torrents = append(torrents, child)
+			}
+		}
+		if len(rows) != 0 && len(torrents) == 0 {
+			return resultTable{}, ErrResponse
+		}
+		rows = torrents
+	}
+	return resultTable{doc, rules, rows, groups}, nil
+}
+
 func ParseResults(ctx context.Context, plan Plan, body []byte, options ResultOptions) ([]externalindexer.Resource, error) {
 	if plan.URL == nil || plan.Definition.ID == "" || options.Limit < 1 || options.Limit > 2000 || !validDateClock(options.Now) {
 		return nil, ErrConfig
@@ -37,55 +92,16 @@ func ParseResults(ctx context.Context, plan Plan, body []byte, options ResultOpt
 	if err != nil || base.User != nil || base.Hostname() == "" || (base.Scheme != "http" && base.Scheme != "https") || !sameOrigin(base, plan.URL) {
 		return nil, ErrConfig
 	}
-	var rules torrentRules
-	if json.Unmarshal(plan.Definition.Torrents, &rules) != nil || len(rules.Fields) == 0 {
-		return nil, ErrConfig
-	}
-	if plan.Definition.Parser == "HaiDanSpider" {
-		normalizeHaiDanID(rules.Fields)
-	}
-	doc, err := ParseDocument(ctx, body)
+	table, err := selectResultTable(ctx, plan.Definition, body)
 	if err != nil {
 		return nil, err
-	}
-	blocked, err := trackerLoginPage(ctx, doc)
-	if err != nil {
-		return nil, err
-	}
-	if blocked {
-		return nil, ErrResponse
-	}
-	rows, err := Select(ctx, doc.Root, rules.List.Selector)
-	if err != nil {
-		return nil, err
-	}
-	groups := map[*html.Node]*html.Node{}
-	if plan.Definition.Parser == "HaiDanSpider" {
-		torrents := []*html.Node{}
-		for _, group := range rows {
-			children, err := Select(ctx, group, "div.torrent_wrap")
-			if err != nil {
-				return nil, err
-			}
-			for _, child := range children {
-				if groups[child] != nil {
-					return nil, ErrResponse
-				}
-				groups[child] = group
-				torrents = append(torrents, child)
-			}
-		}
-		if len(rows) != 0 && len(torrents) == 0 {
-			return nil, ErrResponse
-		}
-		rows = torrents
 	}
 	resources := []externalindexer.Resource{}
-	if len(rows) == 0 {
+	if len(table.rows) == 0 {
 		if options.EmptySelector == "" {
 			return nil, ErrResponse
 		}
-		markers, err := Select(ctx, doc.Root, options.EmptySelector)
+		markers, err := Select(ctx, table.doc.Root, options.EmptySelector)
 		if err != nil {
 			return nil, err
 		}
@@ -94,15 +110,15 @@ func ParseResults(ctx context.Context, plan Plan, body []byte, options ResultOpt
 		}
 		return resources, nil
 	}
-	for _, row := range rows {
+	for _, row := range table.rows {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		roots := map[string]*html.Node{}
-		if group := groups[row]; group != nil {
+		if group := table.groups[row]; group != nil {
 			roots["title_optional"] = group
 		}
-		fields, err := resolveFields(context.WithValue(ctx, dateClockKey{}, options.Now), row, rules.Fields, roots)
+		fields, err := resolveFields(context.WithValue(ctx, dateClockKey{}, options.Now), row, table.rules.Fields, roots)
 		if err != nil {
 			return nil, err
 		}
@@ -210,7 +226,7 @@ func resultURL(base *url.URL, raw string, download bool) (string, error) {
 	return u.String(), nil
 }
 
-var sizePattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)\s*(B|KB|KiB|MB|MiB|GB|GiB|TB|TiB)?$`)
+var sizePattern = regexp.MustCompile(`(?i)^((?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?)\s*(B|KB|KiB|MB|MiB|GB|GiB|TB|TiB|PB|PiB)?$`)
 var imdbPattern = regexp.MustCompile(`^tt[0-9]+$`)
 
 // SizeBytes is the shared bounded tracker/RSS size decoder. Empty or malformed
@@ -218,25 +234,48 @@ var imdbPattern = regexp.MustCompile(`^tt[0-9]+$`)
 func SizeBytes(raw string) (int64, error) { return resultSize(raw) }
 
 func resultSize(raw string) (int64, error) {
+	return parseByteCount(raw, false)
+}
+
+func parseByteCount(raw string, round bool) (int64, error) {
 	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\n", ""))
-	if raw == "" {
+	if len(raw) > 128 {
 		return 0, ErrResponse
 	}
 	match := sizePattern.FindStringSubmatch(raw)
 	if match == nil {
 		return 0, ErrResponse
 	}
-	number, err := strconv.ParseFloat(match[1], 64)
-	if err != nil {
+	number, ok := new(big.Rat).SetString(strings.ReplaceAll(match[1], ",", ""))
+	if !ok {
 		return 0, ErrResponse
 	}
-	powers := map[string]int{"": 0, "B": 0, "KB": 1, "KIB": 1, "MB": 2, "MIB": 2, "GB": 3, "GIB": 3, "TB": 4, "TIB": 4}
-	// Legacy tracker sizes use binary units even when labelled GB/MB.
-	bytes := number * math.Pow(1024, float64(powers[strings.ToUpper(match[2])]))
-	if math.IsNaN(bytes) || math.IsInf(bytes, 0) || bytes < 0 || bytes >= float64(math.MaxInt64) {
+	power := 0
+	switch strings.ToUpper(match[2]) {
+	case "KB", "KIB":
+		power = 1
+	case "MB", "MIB":
+		power = 2
+	case "GB", "GIB":
+		power = 3
+	case "TB", "TIB":
+		power = 4
+	case "PB", "PIB":
+		power = 5
+	}
+	numerator := new(big.Int).Lsh(number.Num(), uint(10*power))
+	var amount, remainder big.Int
+	amount.QuoRem(numerator, number.Denom(), &remainder)
+	if round {
+		half := remainder.Lsh(&remainder, 1).Cmp(number.Denom())
+		if half > 0 || (half == 0 && amount.Bit(0) != 0) {
+			amount.Add(&amount, big.NewInt(1))
+		}
+	}
+	if !amount.IsInt64() {
 		return 0, ErrResponse
 	}
-	return int64(bytes), nil
+	return amount.Int64(), nil
 }
 
 func resultCount(raw string) (*int64, error) {

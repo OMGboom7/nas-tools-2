@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
@@ -14,6 +16,13 @@ import (
 )
 
 func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, selected map[string]bool, keyword string) ([]externalindexer.Resource, error) {
+	return service.searchBuiltinPage(ctx, selected, keyword, nil)
+}
+
+func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Context, selected map[string]bool, keyword string, page *int) (resources []externalindexer.Resource, retErr error) {
+	if page != nil && len(selected) != 1 {
+		return nil, errNativeSearchSelection
+	}
 	if service.catalogPath == "" || service.sites == nil || service.config == nil {
 		return nil, errors.New("native builtin indexers are unavailable")
 	}
@@ -50,6 +59,17 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		authenticated := cookie != ""
 		if definition.Parser == "MTeamSpider" {
 			authenticated = key != ""
+		}
+		if page != nil {
+			if !configured || (definition.Parser != "" && definition.Parser != "HaiDanSpider") {
+				return nil, builtinindexer.ErrConfig
+			}
+			started := time.Now()
+			defer func() {
+				if err := service.sites.RecordBuiltinRequest(ctx, originalSite.Name, started, retErr == nil); err != nil {
+					slog.Warn("could not record site resource request statistics")
+				}
+			}()
 		}
 		if (!definition.Public || !public) && (!configured || !authenticated) {
 			return nil, errors.New("selected tracker requires a configured session")
@@ -97,7 +117,20 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 				return nil, builtinindexer.ErrConfig
 			}
 		}
-		plan, err := builtinindexer.Build(definition, keyword, 0, "")
+		var plan builtinindexer.Plan
+		limit := 2000 - len(results)
+		if page == nil {
+			plan, err = builtinindexer.Build(definition, keyword, 0, "")
+		} else {
+			limit = 100
+			if raw := text(objectValue(configuration["pt"])["site_search_result_num"]); raw != "" && raw != "0" {
+				limit, err = strconv.Atoi(raw)
+				if err != nil || limit < 1 || limit > 2000 {
+					return nil, builtinindexer.ErrConfig
+				}
+			}
+			plan, err = builtinindexer.BuildResourcePage(definition, keyword, *page)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +176,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		if err != nil {
 			return nil, err
 		}
-		items, err := builtinindexer.ParseResults(ctx, plan, body, builtinindexer.ResultOptions{Now: now, Limit: 2000 - len(results), EmptySelector: empty})
+		items, err := builtinindexer.ParseResults(ctx, plan, body, builtinindexer.ResultOptions{Now: now, Limit: limit, EmptySelector: empty})
 		if err != nil {
 			return nil, err
 		}

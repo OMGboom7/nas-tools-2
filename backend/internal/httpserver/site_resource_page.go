@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
+	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 )
 
@@ -58,7 +59,7 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 			for i := range catalog.Indexers {
 				item := &catalog.Indexers[i]
 				host := indexercatalog.Domain(item.Domain)
-				if (item.Parser != "MTeamSpider" && item.Parser != "TNodeSpider") || (item.ID != id && host != domain && !strings.EqualFold(host, id)) {
+				if (item.Parser != "" && item.Parser != "HaiDanSpider" && item.Parser != "MTeamSpider" && item.Parser != "TNodeSpider") || (item.ID != id && host != domain && !strings.EqualFold(host, id)) {
 					continue
 				}
 				if def != nil {
@@ -103,12 +104,21 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
 		var rows []any
-		if external {
+		catalogPage := def != nil && (def.Parser == "" || def.Parser == "HaiDanSpider")
+		if external || catalogPage {
 			if !slices.Contains(user.Permissions, "资源搜索") {
 				writeAPIError(w, 403, 403, "需要资源搜索权限")
 				return
 			}
-			rows, err = s.externalSitePage(ctx, id, probe.PostForm.Get("keyword"), page, strconv.FormatInt(user.ID, 10)+":"+user.Name)
+			var items []externalindexer.Resource
+			if external {
+				items, err = s.fetchSelectedResources(ctx, probe.PostForm.Get("keyword"), []string{id}, &page)
+			} else {
+				items, err = s.searchBuiltinPage(ctx, map[string]bool{def.ID: true}, probe.PostForm.Get("keyword"), &page)
+			}
+			if err == nil {
+				rows, err = s.cachedSitePage(items, strconv.FormatInt(user.ID, 10)+":"+user.Name)
+			}
 		} else {
 			rows, err = s.readSiteResourcePage(ctx, *def, page, keyword)
 		}
@@ -173,11 +183,7 @@ func (s *nativeExternalResourceSearch) readSiteResourcePage(ctx context.Context,
 
 // External enclosure and details URLs can both carry the provider's API key.
 // The existing downloads endpoint accepts the owner-bound resourceId.
-func (s *nativeExternalResourceSearch) externalSitePage(ctx context.Context, id, keyword string, page int, owner string) ([]any, error) {
-	items, err := s.fetchSelectedResources(ctx, keyword, []string{id}, &page)
-	if err != nil {
-		return nil, err
-	}
+func (s *nativeExternalResourceSearch) cachedSitePage(items []externalindexer.Resource, owner string) ([]any, error) {
 	ids, err := s.resources.Put(owner, items)
 	if err != nil {
 		return nil, err

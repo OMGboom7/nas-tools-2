@@ -18,7 +18,7 @@ func ResolveFields(ctx context.Context, root *html.Node, rules map[string]FieldS
 	return resolveFields(ctx, root, rules, nil)
 }
 
-func resolveFields(ctx context.Context, root *html.Node, rules map[string]FieldSpec, roots map[string]*html.Node) (map[string]string, error) {
+func resolveFields(ctx context.Context, root *html.Node, rules map[string]FieldSpec, roots map[string]*html.Node, requested ...string) (map[string]string, error) {
 	// Use one instant for the entire resource, not a new clock read per field.
 	ctx = context.WithValue(ctx, dateClockKey{}, dateClock(ctx))
 	if err := ctx.Err(); err != nil {
@@ -101,7 +101,12 @@ func resolveFields(ctx context.Context, root *html.Node, rules map[string]FieldS
 		state[name] = 2
 		return nil
 	}
-	for name := range rules {
+	if len(requested) == 0 {
+		for name := range rules {
+			requested = append(requested, name)
+		}
+	}
+	for _, name := range requested {
 		if err := resolve(name, 0); err != nil {
 			return nil, err
 		}

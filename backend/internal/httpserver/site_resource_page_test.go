@@ -2,10 +2,12 @@ package httpserver
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -256,5 +258,44 @@ func TestExternalSiteResourcePageScopeAndPrivateLinks(t *testing.T) {
 	}
 	if reply = performFormRequest(h, path, token, form); strings.Contains(reply.Body.String(), `"success":true`) || calls != 6 {
 		t.Fatal(reply.Body.String(), calls)
+	}
+}
+
+func TestCatalogSiteResourcePageWithoutLegacy(t *testing.T) {
+	dir := t.TempDir()
+	catalog := filepath.Join(dir, "catalog.bin")
+	const definitions = `{"indexer":[{"id":"generic","name":"Catalog","domain":"https://tracker.test/","search":{"paths":[{"path":"search"}],"params":{"q":"{keyword}"}},"browse":{"path":"recent/{page}","start":1},"torrents":{"list":{"selector":"article"},"fields":{"title":{"selector":"h2"},"download":{"selector":"a","attribute":"href"},"size":{"selector":"span"}}}}]}`
+	if err := os.WriteFile(catalog, []byte(base64.StdEncoding.EncodeToString([]byte(definitions))), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hits := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hits++
+		if r.URL.Host != "tracker.test" || r.Header.Get("Cookie") != "fixture-session" {
+			t.Fatal(r.URL)
+		}
+		if hits == 1 && r.URL.Path != "/recent/3" || hits == 2 && (r.URL.Path != "/search" || r.URL.Query().Get("page") != "2" || r.URL.Query().Get("q") != "A & B") {
+			t.Fatal(r.URL)
+		}
+		return jsonResponse(r, `<article><h2>Fixture</h2><a href="/download?passkey=private-fixture"></a><span>2 GiB</span></article>`), nil
+	})
+	_, sites, token := nativeSiteFixtureAt(t, dir, transport, catalog)
+	if _, err := sites.Upsert(t.Context(), siteconfig.Site{Name: "Configured", SignURL: "https://tracker.test/login", Cookie: "fixture-session"}); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(config.Config{ApplicationConfigPath: filepath.Join(dir, "config.yaml"), SiteCatalogPath: catalog, DisableLegacy: true}, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keyword := range []string{"", "A & B"} {
+		form := url.Values{"id": {"generic"}, "page": {"2"}, "keyword": {keyword}}
+		reply := performFormRequest(handler, "/api/v1/site/resources", token, form)
+		body := reply.Body.String()
+		if reply.Code != 200 || !strings.Contains(body, `"success":true`) || !strings.Contains(body, `"size":2147483648`) || !strings.Contains(body, "go-search-") || strings.Contains(body, "private-fixture") || strings.Contains(body, "fixture-session") {
+			t.Fatal(reply.Code, body)
+		}
+	}
+	if hits != 2 {
+		t.Fatal(hits)
 	}
 }

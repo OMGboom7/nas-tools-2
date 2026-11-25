@@ -103,10 +103,19 @@ func scalar(raw json.RawMessage) (string, error) {
 }
 
 func Build(definition indexercatalog.Definition, keyword string, page int, kind string) (Plan, error) {
+	return buildPage(definition, keyword, page, kind, false, false)
+}
+
+// BuildResourcePage accepts the empty keyword used for browsing recent releases.
+func BuildResourcePage(definition indexercatalog.Definition, keyword string, page int) (Plan, error) {
+	return buildPage(definition, keyword, page, "", keyword == "", false)
+}
+
+func buildPage(definition indexercatalog.Definition, keyword string, page int, kind string, browse, batch bool) (Plan, error) {
 	if definition.Parser != "" && definition.Parser != "HaiDanSpider" || definition.Encoding != "" && !strings.EqualFold(definition.Encoding, "UTF-8") {
 		return Plan{}, ErrUnsupported
 	}
-	if page < 0 || page > 10000 || len(keyword) > 1024 || strings.TrimSpace(keyword) == "" || !utf8.ValidString(keyword) || strings.ContainsFunc(keyword, unicode.IsControl) {
+	if page < 0 || page > 10000 || len(keyword) > 1024 || (!browse && strings.TrimSpace(keyword) == "") || !utf8.ValidString(keyword) || strings.ContainsFunc(keyword, unicode.IsControl) {
 		return Plan{}, ErrConfig
 	}
 	if kind != "" && kind != "movie" && kind != "tv" && kind != "anime" {
@@ -135,10 +144,23 @@ func Build(definition indexercatalog.Definition, keyword string, page int, kind 
 			}
 		}
 	}
+	var listing struct {
+		Path  string
+		Start json.RawMessage
+	}
+	if browse && len(definition.Browse) > 0 && json.Unmarshal(definition.Browse, &listing) != nil {
+		return Plan{}, ErrConfig
+	}
+	if path < 0 && listing.Path != "" {
+		path = 0
+	}
 	if path < 0 {
 		return Plan{}, ErrUnsupported
 	}
 	selected := configuration.Paths[path]
+	if listing.Path != "" {
+		selected.Path, selected.Method = listing.Path, "get"
+	}
 	chrome := strings.EqualFold(selected.Method, "chrome")
 	if selected.Method != "" && !strings.EqualFold(selected.Method, "get") && !chrome {
 		return Plan{}, ErrUnsupported
@@ -147,9 +169,28 @@ func Build(definition indexercatalog.Definition, keyword string, page int, kind 
 		return Plan{}, ErrConfig
 	}
 	values := url.Values{}
-	pathVariables := map[string]string{"keyword": url.QueryEscape(keyword), "page": strconv.Itoa(page)}
-	if len(configuration.Params) > 0 {
-		values.Set("search_mode", "0")
+	pathVariables := map[string]string{"keyword": strings.ReplaceAll(url.QueryEscape(keyword), "+", "%20"), "page": strconv.Itoa(page)}
+	if browse {
+		if listing.Path == "" && page != 0 {
+			values.Set("page", strconv.Itoa(page))
+		}
+		if len(listing.Start) != 0 && string(listing.Start) != "null" {
+			raw, err := scalar(listing.Start)
+			if err != nil {
+				return Plan{}, ErrConfig
+			}
+			start, err := strconv.Atoi(raw)
+			if err != nil || start < 0 || start > 10000 {
+				return Plan{}, ErrConfig
+			}
+			pathVariables["page"] = strconv.Itoa(start + page)
+		}
+	} else if len(configuration.Params) > 0 {
+		mode := "0"
+		if batch {
+			mode = "1"
+		}
+		values.Set("search_mode", mode)
 		values.Set("page", strconv.Itoa(page))
 		values.Set("notnewword", "1")
 		for key, raw := range configuration.Params {

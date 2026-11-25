@@ -44,6 +44,15 @@ func TestHaiDanUsesGroupAndIndividualTorrentTitles(t *testing.T) {
 	if resources[0].PageURL != "https://www.haidan.video/details.php?group_id=5&torrent_id=10" || resources[0].DownloadFactor == nil || *resources[0].DownloadFactor != 0 || resources[1].DownloadFactor == nil || *resources[1].DownloadFactor != 0.5 {
 		t.Fatal(resources)
 	}
+	legacy, err := CatalogPage(t.Context(), CatalogPageRequest{Definition: definition, Limit: 2, HTML: &body}, nil)
+	if err != nil || len(legacy) != 2 {
+		t.Fatal(legacy, err)
+	}
+	for i, item := range legacy {
+		if item.(map[string]any)["title"] != resources[i].Title {
+			t.Fatal(item, resources[i])
+		}
+	}
 	options.Limit = 1
 	resources, err = ParseResults(context.Background(), plan, []byte(body), options)
 	if err != nil || len(resources) != 1 {
