@@ -22,10 +22,10 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 )
 
-type mteamHTTPStatus int
+type MTeamHTTPStatus int
 
-func (s mteamHTTPStatus) Error() string { return http.StatusText(int(s)) }
-func (s mteamHTTPStatus) Unwrap() error { return ErrResponse }
+func (s MTeamHTTPStatus) Error() string { return http.StatusText(int(s)) }
+func (s MTeamHTTPStatus) Unwrap() error { return ErrResponse }
 
 type mteamLocator struct {
 	address, api *url.URL
@@ -143,7 +143,7 @@ func fetchMTeamFile(ctx context.Context, raw, key, ua string, transport http.Rou
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return empty, mteamHTTPStatus(resp.StatusCode)
+		return empty, MTeamHTTPStatus(resp.StatusCode)
 	}
 	content, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
 	if err != nil || len(content) > 8<<20 {
@@ -235,7 +235,7 @@ func MTeamDownloadCommand(ctx context.Context, in io.Reader, out io.Writer) erro
 		}
 	}
 	f, err := fetchMTeamFile(ctx, q.URL, q.Key, q.UA, transport)
-	var status mteamHTTPStatus
+	var status MTeamHTTPStatus
 	if errors.As(err, &status) {
 		return json.NewEncoder(out).Encode(map[string]int{"status": int(status)})
 	}

@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
@@ -28,9 +30,6 @@ func checkSiteConnection(ctx context.Context, site siteconfig.Site, app map[stri
 }
 
 func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app map[string]any, transport http.RoundTripper, admit func(context.Context) error, renderers ...browserruntime.Renderer) (bool, string, bool) {
-	if strings.TrimSpace(site.Cookie) == "" {
-		return false, "未配置站点Cookie", false
-	}
 	note := map[string]any{}
 	if site.Note != "" && site.Note != "null" && json.Unmarshal([]byte(site.Note), &note) != nil {
 		return false, "站点配置无效", false
@@ -42,6 +41,20 @@ func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app 
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Hostname() == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return false, "未配置有效站点地址", false
+	}
+	origin, isMTeam := builtinindexer.MTeamFeedOrigin(raw)
+	if isMTeam && strings.TrimSpace(site.APIKey) == "" {
+		return false, "未配置站点API Key", false
+	}
+	if !isMTeam {
+		// A tracker configured with an unsupported scheme or port must not fall
+		// through to the ordinary HTML check and send its session cookie.
+		if _, knownHost := builtinindexer.MTeamFeedOrigin("https://" + parsed.Hostname()); knownHost {
+			return false, "未配置有效站点地址", false
+		}
+	}
+	if !isMTeam && strings.TrimSpace(site.Cookie) == "" {
+		return false, "未配置站点Cookie", false
 	}
 	if text(note["proxy"]) == "Y" {
 		transport, err = siteProxyTransport(transport, objectValue(app["proxies"]), parsed.Scheme)
@@ -56,24 +69,26 @@ func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app 
 	if userAgent == "" {
 		userAgent = defaultSiteUserAgent
 	}
-	method := http.MethodGet
-	if strings.Contains(strings.ToLower(parsed.Hostname()), "m-team") {
-		if strings.TrimSpace(site.APIKey) == "" {
-			return false, "未配置站点API Key", false
+	if isMTeam {
+		if admit != nil && admit(ctx) != nil {
+			return false, "站点限流等待被取消或配置无效", false
 		}
-		hostname := parsed.Hostname()
-		index := strings.Index(strings.ToLower(hostname), "m-team")
-		parsed.Host = strings.Replace(parsed.Host, hostname, "api."+hostname[index:], 1)
-		parsed.Path = "/api/member/profile"
-		method = http.MethodPost
-	} else {
-		parsed.Path = "/"
-		if strings.Contains(strings.ToLower(parsed.Hostname()), "1ptba") || strings.Contains(strings.ToLower(parsed.Hostname()), "zmpt") {
-			parsed.Path = "/index.php"
+		err := builtinindexer.CheckMTeamProfile(ctx, origin, site.APIKey, userAgent, transport)
+		var status builtinindexer.MTeamHTTPStatus
+		if errors.As(err, &status) {
+			return false, "连接失败，状态码：" + text(int(status)), false
 		}
+		if err != nil {
+			return false, "连接失败", false
+		}
+		return true, "连接成功", false
+	}
+	parsed.Path = "/"
+	if strings.Contains(strings.ToLower(parsed.Hostname()), "1ptba") || strings.Contains(strings.ToLower(parsed.Hostname()), "zmpt") {
+		parsed.Path = "/index.php"
 	}
 	parsed.RawQuery, parsed.Fragment = "", ""
-	if method == http.MethodGet && (note["chrome"] == "Y" || truthy(note["chrome"])) {
+	if note["chrome"] == "Y" || truthy(note["chrome"]) {
 		if len(renderers) == 0 || renderers[0] == nil || !renderers[0].Available() {
 			return false, "原生浏览器不可用，请检查浏览器安装和运行权限", true
 		}
@@ -107,15 +122,12 @@ func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app 
 			return http.ErrUseLastResponse
 		},
 	}
-	request, err := http.NewRequestWithContext(ctx, method, parsed.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
 		return false, "站点地址无效", false
 	}
 	request.Header.Set("User-Agent", userAgent)
 	request.Header.Set("Cookie", site.Cookie)
-	if method == http.MethodPost {
-		request.Header.Set("X-API-KEY", site.APIKey)
-	}
 	if admit != nil {
 		if err := admit(ctx); err != nil {
 			return false, "站点限流等待被取消或配置无效", false
@@ -133,15 +145,6 @@ func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app 
 	contents, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil || len(contents) > limit {
 		return false, "站点响应过大或读取失败", false
-	}
-	if method == http.MethodPost {
-		var payload struct {
-			Data json.RawMessage `json:"data"`
-		}
-		if json.Unmarshal(contents, &payload) != nil || len(payload.Data) == 0 || string(payload.Data) == "null" || string(payload.Data) == "false" || string(payload.Data) == "{}" {
-			return false, "连接失败", false
-		}
-		return true, "连接成功", false
 	}
 	if !siteHTMLLoggedIn(contents) {
 		return false, "Cookie失效", false

@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
@@ -430,34 +429,7 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 				}
 			}
 			if text(note["parse"]) == "Y" || truthy(note["parse"]) {
-				batch.catalogOnce.Do(func() { batch.catalog, batch.catalogErr = indexercatalog.Load(service.catalogPath) })
-				if batch.catalogErr != nil {
-					return fail(batch.catalogErr)
-				}
-				rules, err := subscriptionDetailRules(batch.catalog, resource.PageURL)
-				if err != nil {
-					return fail(err)
-				}
-				var body []byte
-				var render bool
-				if raw := rules["RENDER"]; len(raw) > 0 {
-					var v any
-					if json.Unmarshal(raw, &v) != nil {
-						return fail(errSubscriptionRSSUnsupported)
-					}
-					render = truthy(v) || text(v) == "Y"
-				}
-				if render || note["chrome"] == "Y" || truthy(note["chrome"]) {
-					var session *browserruntime.Session
-					body, session, err = batch.api.fetchRenderedDetail(ctx, site, resource.PageURL)
-					resource.Browser = session
-				} else {
-					body, err = batch.api.fetchDocument(ctx, site, resource.PageURL, note, true)
-				}
-				if err != nil {
-					return fail(err)
-				}
-				resource, err = parseSubscriptionDetail(ctx, body, resource.Title, rules, resource)
+				resource, err = batch.torrentDetail(ctx, site, note, resource)
 				if err != nil {
 					return fail(err)
 				}

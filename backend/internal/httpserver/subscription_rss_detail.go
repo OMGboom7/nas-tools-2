@@ -8,7 +8,9 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
@@ -18,6 +20,62 @@ import (
 )
 
 var errSubscriptionRSSUnsupported = errors.New("subscription RSS feature is not migrated")
+
+func (batch *subscriptionRSSBatch) torrentDetail(ctx context.Context, site siteconfig.Site, note map[string]any, resource externalindexer.Resource) (externalindexer.Resource, error) {
+	service := batch.api.runner.planner.runner.download.service
+	origin := site.SignURL
+	if origin == "" {
+		origin = site.RSSURL
+	}
+	if _, ok := builtinindexer.MTeamFeedOrigin(origin); ok {
+		if !builtinindexer.MTeamDownloadMatches(origin, resource.PageURL) || builtinindexer.IsSignedMTeamDownload(resource.PageURL) || strings.TrimSpace(resource.Title) == "" {
+			return resource, errors.New("invalid M-Team subscription detail")
+		}
+		if resource.HitAndRun != nil && *resource.HitAndRun {
+			return resource, errSubscriptionRSSUnsupported
+		}
+		cfg, err := service.configStore.Snapshot()
+		if err != nil {
+			return resource, err
+		}
+		ua, transport, err := service.mteamSiteRequest(ctx, site, cfg, false)
+		if err != nil {
+			return resource, err
+		}
+		resource, _, err = builtinindexer.MTeamTorrentDetail(ctx, resource, site.APIKey, ua, time.Now(), transport)
+		return resource, err
+	}
+	batch.catalogOnce.Do(func() {
+		batch.catalog, batch.catalogErr = indexercatalog.Load(batch.api.runner.planner.runner.recognition.service.catalogPath)
+	})
+	if batch.catalogErr != nil {
+		return resource, batch.catalogErr
+	}
+	rules, err := subscriptionDetailRules(batch.catalog, resource.PageURL)
+	if err != nil {
+		return resource, err
+	}
+	var body []byte
+	var render bool
+	if raw := rules["RENDER"]; len(raw) > 0 {
+		var v any
+		if json.Unmarshal(raw, &v) != nil {
+			return resource, errSubscriptionRSSUnsupported
+		}
+		render = truthy(v) || text(v) == "Y"
+	}
+	if render || note["chrome"] == "Y" || truthy(note["chrome"]) {
+		var session *browserruntime.Session
+		body, session, err = batch.api.fetchRenderedDetail(ctx, site, resource.PageURL)
+		resource.Browser = session
+	} else {
+		body, err = batch.api.fetchDocument(ctx, site, resource.PageURL, note, true)
+	}
+	if err != nil {
+		return resource, err
+	}
+	return parseSubscriptionDetail(ctx, body, resource.Title, rules, resource)
+}
 
 func subscriptionDetailRules(catalog indexercatalog.Catalog, page string) (map[string]json.RawMessage, error) {
 	domain := indexercatalog.Domain(page)

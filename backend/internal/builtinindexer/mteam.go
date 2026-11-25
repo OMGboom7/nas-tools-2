@@ -63,7 +63,7 @@ func mteamRequest(ctx context.Context, api *url.URL, endpoint, key, ua, contentT
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return nil, mteamHTTPStatus(response.StatusCode)
+		return nil, MTeamHTTPStatus(response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil || len(data) > 4<<20 || !utf8.Valid(data) {
@@ -77,7 +77,8 @@ func mteamRequest(ctx context.Context, api *url.URL, endpoint, key, ua, contentT
 		return nil, ErrResponse
 	}
 	code := strings.TrimSpace(string(envelope.Code))
-	if code != "0" && code != `"0"` {
+	// Older member/profile responses omit code and are verified by account identity.
+	if code != "0" && code != `"0"` && !(endpoint == "/api/member/profile" && len(envelope.Code) == 0) {
 		return nil, ErrResponse
 	}
 	return envelope.Data, nil
@@ -190,15 +191,21 @@ func mteamPage(ctx context.Context, definition indexercatalog.Definition, key, u
 				return nil, ErrResponse
 			}
 		}
-		promotions := map[string][2]float64{"NORMAL": {1, 1}, "PERCENT_50": {1, 0.5}, "PERCENT_70": {1, 0.7}, "FREE": {1, 0}, "_2X_FREE": {2, 0}, "_2X": {2, 1}, "_2X_PERCENT_50": {2, 0.5}}
-		if factors, ok := promotions[row.Status.Discount]; ok {
-			up, down := factors[0], factors[1]
-			free := down == 0
-			resource.UploadFactor = &up
-			resource.DownloadFactor = &down
-			resource.Freeleech = &free
-		}
+		setMTeamPromotion(&resource, row.Status.Discount)
 		rows = append(rows, mteamResult{Resource: resource, size: row.Size, seeders: row.Status.Seeders, peers: row.Status.Leechers})
 	}
 	return rows, nil
+}
+
+var mteamPromotions = map[string][2]float64{"NORMAL": {1, 1}, "PERCENT_50": {1, 0.5}, "PERCENT_70": {1, 0.7}, "FREE": {1, 0}, "_2X_FREE": {2, 0}, "_2X": {2, 1}, "_2X_PERCENT_50": {2, 0.5}}
+
+func setMTeamPromotion(resource *externalindexer.Resource, discount string) {
+	resource.Freeleech, resource.DownloadFactor, resource.UploadFactor = nil, nil, nil
+	if factors, ok := mteamPromotions[discount]; ok {
+		up, down := factors[0], factors[1]
+		free := down == 0
+		resource.UploadFactor = &up
+		resource.DownloadFactor = &down
+		resource.Freeleech = &free
+	}
 }

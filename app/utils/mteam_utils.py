@@ -1,7 +1,9 @@
+import json
+import subprocess
 from urllib.parse import urlparse
 
 from app.utils import RequestUtils
-from config import Config
+from config import Config, run_go_helper
 
 
 class MteamUtils:
@@ -14,37 +16,43 @@ class MteamUtils:
         return str(parsed_url.scheme) + "://" + 'api.' + last_domain
 
     @staticmethod
-    def get_mteam_torrent_info(torrent_url, ua=None, proxy=False):
-        api = "%s/api/torrent/detail"
-        api = api % MteamUtils.get_api_url(torrent_url)
-        torrent_id = torrent_url.split('/')[-1]
-        req = MteamUtils.buildRequestUtils(api_key=MteamUtils.get_api_key(torrent_url), headers=ua, proxies=proxy).post_res(url=api, params={"id": torrent_id})
+    def is_site(url):
+        try:
+            host = urlparse(url).hostname or ""
+        except ValueError:
+            return False
+        return host in ("kp.m-team.info", "m-team.cc", "m-team.io") or host.endswith((".m-team.cc", ".m-team.io"))
 
-        if req and req.status_code == 200:
-            return req.json().get("data")
+    @staticmethod
+    def _inspect(command, url, key, ua, proxy):
+        proxy_url = (Config().get_proxies() or {}).get("https") if proxy else None
+        if proxy and not proxy_url:
+            return {}
+        query = {"url": url, "key": key, "ua": ua or Config().get_ua(), "proxy": proxy_url}
+        try:
+            reply = run_go_helper(command, payload=json.dumps(query).encode(), timeout=20)
+            return json.loads(reply)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return {}
 
+    @staticmethod
+    def torrent_attributes(url, ua=None, proxy=False):
+        result = MteamUtils._inspect("mteam-detail", url, MteamUtils.get_api_key(url), ua, proxy)
+        if "free" in result:
+            return result
         return None
 
     @staticmethod
     def test_connection(site_info):
-        api = "%s/api/member/profile"
-        site_url = site_info.get("signurl")
-        api = api % MteamUtils.get_api_url(site_url)
-        site_api_key = site_info.get("api_key")
-        ua = site_info.get("ua")
-        res = MteamUtils.buildRequestUtils(
-            headers=ua,
-            api_key=site_api_key,
-            proxies=Config().get_proxies() if site_info.get("proxy") else None,
-            timeout=15
-        ).post_res(url=api)
-        if res:
-            if res.status_code == 200:
-                user_info = res.json()
-                if user_info and user_info.get("data"):
-                    return True, "连接成功"
-            else:
-                return False, "连接失败：" + str(res.status_code)
+        url = site_info.get("signurl") or site_info.get("rssurl")
+        key = site_info.get("api_key")
+        if not key:
+            return False, "未配置站点API Key"
+        result = MteamUtils._inspect("mteam-profile", url, key, site_info.get("ua"), site_info.get("proxy"))
+        if result.get("ok"):
+            return True, "连接成功"
+        if "status" in result:
+            return False, f"连接失败，状态码：{result['status']}"
         return False, "连接失败"
 
     @staticmethod

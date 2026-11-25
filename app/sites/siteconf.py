@@ -115,26 +115,8 @@ class SiteConf:
         if not torrent_url:
             return ret_attr
 
-        if torrent_url.find('m-team') != -1:
-            info = MteamUtils.get_mteam_torrent_info(torrent_url, ua, proxy)
-            if info:
-                status = info.get('status')
-                discount = status.get('discount')
-                if discount == 'FREE':
-                    ret_attr["free"] = True
-                elif discount == '_2X_FREE':
-                    ret_attr["free"] = True
-                    ret_attr["2xfree"] = True
-                ret_attr["free_deadline"] = status.get('toppingEndTime')
-                ret_attr["peer_count"] = int(status.get("seeders"))
-
-                # 限免种子包含在 mallSingleFree 中
-                mallSingleFree = status.get('mallSingleFree')
-                if mallSingleFree and mallSingleFree.get('endDate'):
-                    endDay = mallSingleFree.get('endDate')
-                    ret_attr["free"] = True
-                    ret_attr["free_deadline"] = endDay
-            return ret_attr
+        if MteamUtils.is_site(torrent_url):
+            return MteamUtils.torrent_attributes(torrent_url, ua, proxy) or ret_attr
 
         xpath_strs = self.get_grap_conf(torrent_url)
         if not xpath_strs:

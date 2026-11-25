@@ -276,6 +276,8 @@ class Sites:
         site_info = self.get_sites(siteid=site_id)
         if not site_info:
             return False, "站点不存在", 0
+        if MteamUtils.is_site(site_info.get("signurl") or site_info.get("rssurl")):
+            return self.mteam_test_connection(site_info)
         site_cookie = site_info.get("cookie")
         if not site_cookie:
             return False, "未配置站点Cookie", 0
@@ -306,12 +308,8 @@ class Sites:
             if SiteHelper.is_logged_in(html_text):
                 return True, "连接成功", seconds
             else:
-                if site_url.find("m-team") != -1:
-                    return self.mteam_test_connection(site_info)
                 return False, "Cookie失效", seconds
         else:
-            if site_url.find("m-team") != -1:
-                return self.mteam_test_connection(site_info)
             # 计时
             start_time = datetime.now()
             res = RequestUtils(cookies=site_cookie,
@@ -332,8 +330,8 @@ class Sites:
     def mteam_test_connection(self, site_info):
         start_time = datetime.now()
         result, reason = MteamUtils.test_connection(site_info)
-        seconds = int((datetime.now() - start_time).microseconds / 1000)
-        return result, reason, seconds
+        elapsed_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+        return result, reason, elapsed_ms
 
     @staticmethod
     def __get_site_note_items(note):

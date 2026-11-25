@@ -85,11 +85,11 @@ func FetchMTeamFeedCategory(ctx context.Context, origin, key, ua, mode string, m
 		}
 		var freeUntil time.Time
 		if row.Status.Discount != "FREE" && row.Status.Discount != "_2X_FREE" {
-			var free struct{ EndDate string }
-			if json.Unmarshal(row.Status.MallSingleFree, &free) != nil || free.EndDate == "" {
+			deadline, err := mteamSaleDeadline(row.Status.MallSingleFree)
+			if err != nil || deadline == "" {
 				continue
 			}
-			end, err := time.ParseInLocation(time.DateTime, free.EndDate, now.Location())
+			end, err := time.ParseInLocation(time.DateTime, deadline, now.Location())
 			if err != nil || now.After(end) {
 				continue
 			}

@@ -70,12 +70,12 @@ func TestNativeSiteConnectionDoesNotFollowRedirectWithCookie(t *testing.T) {
 
 func TestNativeMTeamConnectionUsesAPIKey(t *testing.T) {
 	handler, store, token := nativeSiteFixture(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodPost || request.URL.String() != "https://api.m-team.cc/api/member/profile" || request.Header.Get("X-API-KEY") != "private-key" {
+		if request.Method != http.MethodPost || request.URL.String() != "https://api.m-team.cc/api/member/profile" || request.Header.Get("X-API-KEY") != "private-key" || request.Header.Get("Cookie") != "" {
 			t.Fatalf("unexpected M-Team request: %s %s", request.Method, request.URL)
 		}
 		return jsonResponse(request, `{"data":{"username":"member"}}`), nil
 	}))
-	item, err := store.Upsert(context.Background(), siteconfig.Site{Name: "M-Team", SignURL: "https://m-team.cc/details/1", Cookie: "session=secret", APIKey: "private-key"})
+	item, err := store.Upsert(context.Background(), siteconfig.Site{Name: "M-Team", SignURL: "https://m-team.cc/details/1", Note: `{"chrome":"Y"}`, APIKey: "private-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,5 +131,31 @@ func TestSiteConnectionTestRejectsInvalidID(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNativeMTeamConnectionCredentialScopeAndLimits(t *testing.T) {
+	for _, raw := range []string{"http://kp.m-team.cc/login", "https://kp.m-team.cc:8443/login", "https://kp.m-team.cc/login"} {
+		site := siteconfig.Site{SignURL: raw, APIKey: "key", Cookie: "session=private"}
+		calls := 0
+		ok, _, _ := checkSiteConnectionAdmitted(t.Context(), site, nil, roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Fatal("unexpected outbound request")
+			return nil, nil
+		}), func(context.Context) error { calls++; return context.Canceled })
+		if ok || raw == "https://kp.m-team.cc/login" && calls != 1 || raw != "https://kp.m-team.cc/login" && calls != 0 {
+			t.Fatal(raw, ok, calls)
+		}
+	}
+	site := siteconfig.Site{SignURL: "https://m-team.example/login", APIKey: "private-key", Cookie: "session=ordinary"}
+	calls := 0
+	ok, _, _ := checkSiteConnection(t.Context(), site, nil, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.Method != "GET" || r.URL.Host != "m-team.example" || r.Header.Get("x-api-key") != "" {
+			t.Fatal("unexpected credentials or origin")
+		}
+		return jsonResponse(r, `<a href="/logout">logout</a>`), nil
+	}))
+	if !ok || calls != 1 {
+		t.Fatal(ok, calls)
 	}
 }

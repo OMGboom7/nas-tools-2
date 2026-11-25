@@ -488,3 +488,60 @@ func TestSubscriptionRSSScheduleCompatibilityHotReloadAndCancellation(t *testing
 		t.Fatal("cancelled feed submitted", f.adds, f.queries)
 	}
 }
+
+func TestSubscriptionRSSMTeamDetailFromConfiguredAccount(t *testing.T) {
+	const title = "Movie.2026.1080p.WEB-DL"
+	detailPage := "https://kp.m-team.cc/detail/77"
+	enclosure := testMagnet
+	f := newSubscriptionFeedFixture(t, false, "", func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(r, "<rss><channel>"+subscriptionFeedItem(title, enclosure, detailPage, "")+"</channel></rss>"), nil
+	})
+	base := f.transport
+	calls := 0
+	id := "78"
+	f.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "api.m-team.cc" {
+			calls++
+			if r.URL.Path != "/api/torrent/detail" || r.URL.RawQuery != "id=77" || r.Method != "POST" || r.Header.Get("x-api-key") != "fixture-key" || r.Header.Get("Cookie") != "" || r.UserAgent() != "fixture-agent" {
+				t.Fatal("unexpected M-Team detail request", r.URL)
+			}
+			return jsonResponse(r, `{"code":0,"data":{"id":"`+id+`","name":"`+title+`","status":{"discount":"_2X_FREE","seeders":"12"}}}`), nil
+		}
+		return base.RoundTrip(r)
+	})
+	var err error
+	f.handler, err = buildHandler(config.Config{ApplicationConfigPath: f.path, DisableLegacy: true}, f.transport, &f.runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites, err := f.runner.download.sites.List(t.Context())
+	if err != nil || len(sites) != 1 {
+		t.Fatal(sites, err)
+	}
+	site := sites[0]
+	site.SignURL, site.APIKey, site.Note = "https://kp.m-team.cc/login", "fixture-key", `{"parse":"Y","chrome":"Y","ua":"fixture-agent"}`
+	if _, err := f.runner.download.sites.Upsert(t.Context(), site); err != nil {
+		t.Fatal(err)
+	}
+	run := func(want string) {
+		t.Helper()
+		got := performFormRequest(f.handler, "/api/v1/subscriptions/rss/run", f.token, url.Values{})
+		if got.Code != 200 || !strings.Contains(got.Body.String(), want) {
+			t.Fatal(got.Code, got.Body.String())
+		}
+	}
+	run(`"failed":1`)
+	detailPage = "https://other.m-team.cc/detail/77"
+	run(`"failed":1`)
+	detailPage, enclosure = "https://kp.m-team.cc/detail/77", "https://kp.m-team.cc/detail/78"
+	run(`"failed":1`)
+	if f.adds != 0 || calls != 1 {
+		t.Fatal(f.adds, calls)
+	}
+	id, enclosure = "77", testMagnet
+	run(`"submitted":1`)
+	run(`"submitted":0`)
+	if f.adds != 1 || calls != 2 {
+		t.Fatal(f.adds, calls)
+	}
+}

@@ -68,22 +68,11 @@ class MteamSiteUserInfo(_ISiteUserInfo):
         return "M-Team" in html_text
 
     def _parse_logged_in(self, html_text):
-        api = "%s/api/member/profile"
-        api = api % MteamUtils.get_api_url(self.site_url)
-        res = MteamUtils.buildRequestUtils(
-            headers=self._ua,
-            api_key=MteamUtils.get_api_key(self.site_url),
-            timeout=15
-        ).post_res(url=api)
-        if res:
-            if res.status_code == 200:
-                user_info = res.json()
-                if user_info and user_info.get("data"):
-                    return True, "获取用户信息成功"
-            else:
-                return False, f"获取用户信息失败：{res.status_code}"
-
-        return False, "连接馒头失败"
+        ok, message = MteamUtils.test_connection({
+            "signurl": self.site_url, "api_key": MteamUtils.get_api_key(self.site_url),
+            "ua": self._ua, "proxy": self._proxy,
+        })
+        return (True, "获取用户信息成功") if ok else (False, message)
 
     def get_user_profile(self):
         api = "%s/api/member/profile"
