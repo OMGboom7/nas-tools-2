@@ -77,6 +77,7 @@ func (service downloadService) submitRecorded(ctx context.Context, actor, magnet
 }
 
 type classicDownloadResult struct {
+	receipt string
 	history downloaderconfig.ClassicAcknowledgement
 	reused  bool
 }
@@ -138,13 +139,23 @@ func (service downloadService) submitWithReceipt(ctx context.Context, actor, mag
 			return "", true, err
 		}
 	}
-	receipt, created, err := service.downloaders.ReserveManual(ctx, d)
+	var receipt downloaderconfig.ManualSubmission
+	var created bool
+	var err error
+	if classic == nil {
+		receipt, created, err = service.downloaders.ReserveManual(ctx, d)
+	} else {
+		receipt, created, err = service.downloaders.ReserveClassic(ctx, d, classic.history)
+		classic.receipt = receipt.ID
+		service.classic = classic
+	}
 	if err != nil {
 		return "", true, err
 	}
 	if !created {
 		if classic != nil {
 			classic.reused = true
+			service.removeClassicMarker(ctx, item, receipt.TaskID, receipt.ID)
 		}
 		return receipt.TaskID, true, nil
 	}
@@ -179,6 +190,11 @@ func (service downloadService) submitWithReceipt(ctx context.Context, actor, mag
 		if !aria2.ValidGID(id) {
 			return "", true, downloaderconfig.ErrManualPending
 		}
+	} else if classic != nil && item.Type == "qbittorrent" {
+		// AddClassic verifies the full identity before returning the client's wire ID.
+		if !qbittorrent.ValidHash(id) {
+			return "", true, downloaderconfig.ErrManualPending
+		}
 	} else if item.Type != "pikpak" && id != hash {
 		return "", true, downloaderconfig.ErrManualPending
 	}
@@ -188,6 +204,9 @@ func (service downloadService) submitWithReceipt(ctx context.Context, actor, mag
 	}
 	if err := service.downloaders.CompleteWithHistory(persist, receipt, id, "acknowledged", actor, history); err != nil {
 		return "", true, downloaderconfig.ErrManualPending
+	}
+	if classic != nil {
+		service.removeClassicMarker(ctx, item, id, receipt.ID)
 	}
 	return id, true, nil
 }
@@ -302,6 +321,15 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 		return
 	}
 	d := receipt.Definition
+	var classic *downloaderconfig.ClassicAcknowledgement
+	if strings.HasPrefix(d.Actor, "classic:") {
+		history, e := service.downloaders.ClassicPendingHistory(ctx, receipt.ID)
+		if e != nil {
+			writeAPIError(w, 409, 409, "original classic history is unavailable; pending receipt retained")
+			return
+		}
+		classic = &history
+	}
 	item, err := service.downloaders.Get(ctx, d.DownloaderID)
 	if err != nil || item.Enabled == 0 || bus.Hash(item) != d.ConfigDigest {
 		writeAPIError(w, 409, 409, "original downloader configuration changed; pending receipt retained")
@@ -318,12 +346,16 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 			return
 		}
 	}
+	taskID := d.InfoHash
 	found := false
 	switch item.Type {
 	case "qbittorrent":
 		client, e := qbittorrent.New(text(configuration["host"]), text(configuration["port"]), text(configuration["username"]), text(configuration["password"]), service.client.Transport)
 		if e != nil {
 			err = e
+		} else if classic != nil {
+			taskID, err = client.VerifyClassic(ctx, receipt.ID, torrentmeta.TransferMetadata{V1Hash: classic.V1Hash, V2Hash: classic.V2Hash})
+			found = err == nil
 		} else {
 			found, err = client.HasTorrent(ctx, d.InfoHash)
 		}
@@ -346,7 +378,7 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 		writeAPIError(w, 409, 409, "positive exact-task presence not established; pending receipt retained")
 		return
 	}
-	if err := service.downloaders.CompleteManual(ctx, receipt, d.InfoHash, "verified_present", actor); err != nil {
+	if err := service.downloaders.CompleteWithHistory(ctx, receipt, taskID, "verified_present", actor, classic); err != nil {
 		writeAPIError(w, 409, 409, "verified task receipt could not be committed; no resubmission")
 		return
 	}
@@ -356,4 +388,16 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 		return
 	}
 	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": publicManual(receipt)})
+}
+
+// Cleanup is repeatable after the receipt is durable. A failed cleanup must
+// never turn an acknowledged task into a second add.
+func (service downloadService) removeClassicMarker(ctx context.Context, item downloaderconfig.Downloader, taskID, receipt string) {
+	if item.Type != "qbittorrent" {
+		return
+	}
+	client, err := service.qbProfileClient(item)
+	if err == nil {
+		_ = client.RemoveClassicMarker(ctx, taskID, receipt)
+	}
 }

@@ -28,6 +28,35 @@ type TransferMetadata struct {
 	TrackerURLs  []string `json:"-"`
 }
 
+// ClassicIdentity hashes the original info dictionary without changing tracker data.
+func ClassicIdentity(data []byte) (TransferMetadata, error) {
+	original, err := transferTopValues(data)
+	if err != nil {
+		return TransferMetadata{}, err
+	}
+	return transferIdentity(original["info"])
+}
+
+func transferIdentity(info []byte) (TransferMetadata, error) {
+	if len(info) < 2 || info[0] != 'd' {
+		return TransferMetadata{}, ErrInvalid
+	}
+	name, v2, hasV1, ok := infoFields(info)
+	if !ok || name == "" {
+		return TransferMetadata{}, ErrInvalid
+	}
+	var m TransferMetadata
+	if !v2 || hasV1 {
+		h := sha1.Sum(info)
+		m.V1Hash = hex.EncodeToString(h[:])
+	}
+	if v2 {
+		h := sha256.Sum256(info)
+		m.V2Hash = hex.EncodeToString(h[:])
+	}
+	return m, nil
+}
+
 // PrepareTransfer repairs only missing outer tracker fields, preferring the
 // torrent's existing tiers over the matching qBittorrent resume file. The raw
 // info dictionary is copied verbatim, including for v2/hybrid metainfo.
@@ -54,15 +83,11 @@ func PrepareTransfer(data, resume []byte) (TransferMetadata, error) {
 	if err != nil {
 		return TransferMetadata{}, err
 	}
-	_, v2, hasV1, _ := infoFields(original["info"])
-	if !v2 || hasV1 {
-		h := sha1.Sum(original["info"])
-		prepared.V1Hash = hex.EncodeToString(h[:])
+	identity, err := transferIdentity(original["info"])
+	if err != nil {
+		return TransferMetadata{}, err
 	}
-	if v2 {
-		h := sha256.Sum256(original["info"])
-		prepared.V2Hash = hex.EncodeToString(h[:])
-	}
+	prepared.V1Hash, prepared.V2Hash = identity.V1Hash, identity.V2Hash
 	if flag, exists := info["private"]; exists {
 		n, ok := flag.(int64)
 		if !ok || n != 0 && n != 1 {

@@ -156,21 +156,32 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		}
 		hash = metadata.InfoHash
 	}
-	if hash != "" && service.downloaders != nil {
-		if p, err := service.downloaders.FindFileSelection(ctx, item.ID, hash); err != nil {
+	// qBittorrent with libtorrent 2 can address a hybrid or v2 task by the
+	// first 20 bytes of its v2 hash. Honor reservations under either identity.
+	hashes := []string{hash}
+	if service.classic != nil && item.Type == "qbittorrent" {
+		if v2 := service.classic.history.V2Hash; len(v2) == 64 && v2[:40] != hash {
+			hashes = append(hashes, v2[:40])
+		}
+	}
+	for _, guardHash := range hashes {
+		if guardHash == "" || service.downloaders == nil {
+			continue
+		}
+		if p, err := service.downloaders.FindFileSelection(ctx, item.ID, guardHash); err != nil {
 			return "", true, err
 		} else if p != nil {
 			if _, own := ctx.Value(selectionHookKey{}).(selectionHook); !own {
 				return "", true, downloaderconfig.ErrFileSelectionPending
 			}
 		}
-		guarded, close, err := service.seedingGuard(ctx, item.ID, hash)
+		guarded, close, err := service.seedingGuard(ctx, item.ID, guardHash)
 		if err != nil {
 			return "", true, errPTAdmissionBlocked
 		}
 		defer close()
 		ctx = guarded
-		policies, _, err := service.downloaders.SeedingPolicies(ctx, item.ID, hash)
+		policies, _, err := service.downloaders.SeedingPolicies(ctx, item.ID, guardHash)
 		if err != nil || len(policies) > 0 && options.Seeding == nil {
 			return "", true, errPTAdmissionBlocked
 		}
@@ -214,6 +225,14 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		if err != nil {
 			return "", true, err
 		}
+		if service.classic != nil {
+			var dirs []qbittorrent.ClassicDirectory
+			if json.Unmarshal([]byte(item.DownloadDir), &dirs) != nil {
+				return "", true, qbittorrent.ErrConfiguration
+			}
+			id, err := client.AddClassic(ctx, magnet, torrent, addOptions, text(configuration["torrent_management"]), dirs, service.classic.receipt, torrentmeta.TransferMetadata{V1Hash: service.classic.history.V1Hash, V2Hash: service.classic.history.V2Hash})
+			return id, true, err
+		}
 		if torrent != nil {
 			metadata, err := torrentmeta.Parse(torrent)
 			if err != nil {
@@ -254,7 +273,7 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		}
 		addOptions := aria2.AddOptions{DownloadDir: options.SavePath, Paused: options.Paused, UploadLimitKB: options.UploadLimitKB, DownloadLimitKB: options.DownloadLimitKB}
 		open := aria2.New
-		if service.classicAria2 {
+		if service.classic != nil {
 			open = aria2.NewClassic
 		}
 		client, err := open(host, port, text(configuration["secret"]), service.client.Transport)

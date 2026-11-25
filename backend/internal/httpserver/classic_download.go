@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
@@ -23,7 +24,10 @@ import (
 // The local caller resolves its user, media and directory using the original
 // entry point. The Go process reads the actual client endpoint from the volume.
 type classicRequest struct {
-	UploadLimitKB, DownloadLimitKB                    int
+	UploadLimitKB, DownloadLimitKB, SeedingTimeLimit  int
+	RatioLimit                                        float64
+	Category, ClientType                              string
+	Tags                                              []string
 	Notice                                            downloadhistory.Notice
 	Downloader                                        int64
 	Channel, Sender, Source, Title, Directory, Magnet string
@@ -62,26 +66,49 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		if _, _, err := torrentmeta.DownloadLayout(q.Torrent); err != nil {
 			return err
 		}
-	} else {
-		q.Magnet = classicAria2Magnet(q.Magnet)
-		if q.Magnet == "" {
-			return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
-		}
 	}
 	store, err := downloaderconfig.Open(dbPath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
+	// Before other classic clients were supported the bridge omitted the type.
+	if q.ClientType == "" {
+		q.ClientType = "aria2"
+	}
 	item, err := store.Get(ctx, q.Downloader)
-	if err != nil || item.Enabled == 0 || item.Type != "aria2" {
+	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || (item.Type != "aria2" && item.Type != "qbittorrent" && item.Type != "transmission") {
 		return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
+	}
+	if q.Torrent == nil {
+		switch item.Type {
+		case "aria2":
+			q.Magnet = classicAria2Magnet(q.Magnet)
+		default:
+			q.Magnet = classicTorrentMagnet(q.Magnet, item.Type == "qbittorrent")
+		}
+		if q.Magnet == "" {
+			return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
+		}
 	}
 	// A long-running classic client may have calculated its paths from stale settings.
 	if !sameClassicJSON(item.Config, q.Config) || !sameClassicJSON(item.DownloadDir, q.Directories) {
 		return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
 	}
-	service := downloadService{client: http.DefaultClient, downloaders: store, classicAria2: true}
+	service := downloadService{client: http.DefaultClient, downloaders: store}
+	if item.Type == "qbittorrent" {
+		var identity torrentmeta.TransferMetadata
+		if q.Torrent != nil {
+			identity, err = torrentmeta.ClassicIdentity(q.Torrent)
+		} else {
+			u, _ := url.Parse(q.Magnet)
+			identity.V1Hash, identity.V2Hash, err = torrentmeta.MagnetTopics(u.Query()["xt"])
+		}
+		if err != nil {
+			return err
+		}
+		q.History.V1Hash, q.History.V2Hash = identity.V1Hash, identity.V2Hash
+	}
 	if organization.CopySupported {
 		guards, err := organization.OpenStore(dbPath)
 		if err != nil {
@@ -92,7 +119,7 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 	}
 	q.History.Title, q.History.Text = q.Notice.Render()
 	result := classicDownloadResult{history: q.History}
-	options := downloadAddOptions{SavePath: q.Directory, Paused: q.Paused, UploadLimitKB: q.UploadLimitKB, DownloadLimitKB: q.DownloadLimitKB}
+	options := downloadAddOptions{SavePath: q.Directory, Paused: q.Paused, UploadLimitKB: q.UploadLimitKB, DownloadLimitKB: q.DownloadLimitKB, Tags: q.Tags, Category: q.Category, RatioLimit: q.RatioLimit, SeedingTimeLimit: q.SeedingTimeLimit, ApplyTransmissionLimits: item.Type == "transmission"}
 	actor := "classic:" + bus.Hash([]string{q.Channel, q.Sender})
 	task, handled, err := service.submitWithReceipt(ctx, actor, q.Magnet, q.Torrent, &item, options, q.Title, q.Source, nil, nil, &result)
 	reply := map[string]any{}
@@ -105,6 +132,31 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		reply["task"], reply["reused"] = task, result.reused
 	}
 	return json.NewEncoder(out).Encode(reply)
+}
+
+// Preserve all tracker parameters and both advertised identities for clients
+// that understand hybrid magnets. Transmission needs a v1 identity.
+func classicTorrentMagnet(raw string, allowPureV2 bool) string {
+	if validMagnet(raw) {
+		return raw
+	}
+	if len(raw) > 4096 || !strings.HasPrefix(raw, "magnet:?") || strings.IndexFunc(raw, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0 {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Fragment != "" {
+		return ""
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return ""
+	}
+	topics := q["xt"]
+	v1, v2, err := torrentmeta.MagnetTopics(topics)
+	if err != nil || v2 == "" || !(len(topics) == 2 && v1 != "" || len(topics) == 1 && allowPureV2) {
+		return ""
+	}
+	return raw
 }
 
 // aria2 understands the v1 identity of a hybrid torrent. Preserve its tracker

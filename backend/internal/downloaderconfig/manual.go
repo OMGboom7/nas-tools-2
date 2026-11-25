@@ -40,6 +40,7 @@ type ManualSubmission struct {
 func manualSchema(ctx context.Context, tx *sql.Tx) error {
 	for _, query := range []string{
 		`CREATE TABLE IF NOT EXISTS GO_MANUAL_DOWNLOAD_SUBMISSIONS(ID TEXT PRIMARY KEY,DOCUMENT TEXT NOT NULL,STATE TEXT NOT NULL,TASK_ID TEXT NOT NULL DEFAULT '',REASON TEXT NOT NULL DEFAULT '',CREATED TEXT NOT NULL,UPDATED TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS GO_CLASSIC_PENDING_HISTORY(SUBMISSION_ID TEXT PRIMARY KEY,DOCUMENT TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS GO_MANUAL_DOWNLOAD_SCOPES(SCOPE TEXT PRIMARY KEY,SUBMISSION_ID TEXT NOT NULL UNIQUE)`,
 	} {
 		if _, err := tx.ExecContext(ctx, query); err != nil {
@@ -81,16 +82,20 @@ func scanManual(row interface{ Scan(...any) error }) (ManualSubmission, error) {
 // ReserveManual returns created=false only for an identical acknowledged scope.
 // Pending records never expire; source URL/token/torrent bytes are not stored.
 func (s *Store) ReserveManual(ctx context.Context, d ManualDefinition) (ManualSubmission, bool, error) {
-	return s.reserveManual(ctx, d, nil)
+	return s.reserveManual(ctx, d, nil, nil)
+}
+
+func (s *Store) ReserveClassic(ctx context.Context, d ManualDefinition, classic ClassicAcknowledgement) (ManualSubmission, bool, error) {
+	return s.reserveManual(ctx, d, nil, &classic)
 }
 
 func (s *Store) ReserveDirectFiles(ctx context.Context, d ManualDefinition, selection FileSelectionDefinition) (ManualSubmission, bool, error) {
 	if d.Direct == nil || selection.Version != 3 || d.ProfileDigest != selection.ProfileFingerprint() || d.InfoHash != selection.InfoHash || d.ConfigDigest != selection.ConfigDigest || d.DownloaderID != selection.DownloaderID {
 		return ManualSubmission{}, false, ErrManualPending
 	}
-	return s.reserveManual(ctx, d, &selection)
+	return s.reserveManual(ctx, d, &selection, nil)
 }
-func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection *FileSelectionDefinition) (ManualSubmission, bool, error) {
+func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection *FileSelectionDefinition, classic *ClassicAcknowledgement) (ManualSubmission, bool, error) {
 	if d.DownloaderID < 1 || d.Actor == "" || d.Title == "" || len(d.InfoHash) != 40 && len(d.InfoHash) != 64 || len(d.ConfigDigest) != 64 || len(d.OptionsDigest) != 64 {
 		return ManualSubmission{}, false, ErrManualPending
 	}
@@ -175,6 +180,15 @@ func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return r, false, ErrManualPending
 	}
+	if classic != nil {
+		raw, err := json.Marshal(classic)
+		if err != nil {
+			return r, false, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO GO_CLASSIC_PENDING_HISTORY(SUBMISSION_ID,DOCUMENT) VALUES(?,?)`, r.ID, string(raw)); err != nil {
+			return r, false, err
+		}
+	}
 	if selection != nil {
 		if err := ReserveFileSelectionTx(ctx, tx, *selection); err != nil {
 			return r, false, err
@@ -205,6 +219,11 @@ func (s *Store) RejectManual(ctx context.Context, r ManualSubmission, attempted 
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return ErrManualPending
 	}
+	if strings.HasPrefix(r.Definition.Actor, "classic:") {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM GO_CLASSIC_PENDING_HISTORY WHERE SUBMISSION_ID=?`, r.ID); err != nil {
+			return err
+		}
+	}
 	if m := r.Definition.Direct; attempted && m != nil {
 		reason := "下载器未接收这次提交，请核对下载设置和连接状态。"
 		data := map[string]any{"media_info": map[string]any{"title": m.Name, "year": m.Year, "tmdb_id": m.TMDBID}, "reason": reason}
@@ -222,9 +241,20 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 // ClassicAcknowledgement contains private history fields for the original table.
 // They never enter the public receipt or the notification data.
 type ClassicAcknowledgement struct {
+	V1Hash, V2Hash           string
 	Media                    downloadhistory.Media
 	Path                     *string
 	Title, Text, Image, Link string
+}
+
+func (s *Store) ClassicPendingHistory(ctx context.Context, id string) (ClassicAcknowledgement, error) {
+	var history ClassicAcknowledgement
+	var raw string
+	if err := s.database.QueryRowContext(ctx, `SELECT DOCUMENT FROM GO_CLASSIC_PENDING_HISTORY WHERE SUBMISSION_ID=?`, id).Scan(&raw); err != nil {
+		return history, err
+	}
+	err := json.Unmarshal([]byte(raw), &history)
+	return history, err
 }
 
 func (s *Store) CompleteWithHistory(ctx context.Context, r ManualSubmission, taskID, proof, actor string, classic *ClassicAcknowledgement) error {
@@ -247,6 +277,11 @@ func (s *Store) CompleteWithHistory(ctx context.Context, r ManualSubmission, tas
 		return ErrManualPending
 	}
 	d := r.Definition
+	if classic != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM GO_CLASSIC_PENDING_HISTORY WHERE SUBMISSION_ID=?`, r.ID); err != nil {
+			return err
+		}
+	}
 	if err := VerifyDownloadProfile(ctx, tx, d.ProfileDigest); err != nil {
 		return err
 	}

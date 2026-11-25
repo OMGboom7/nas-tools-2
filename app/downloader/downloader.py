@@ -249,7 +249,7 @@ class Downloader:
             log.info(f"【Downloader】下载器 {downloader_conf.get('name')} 未启用")
             return None
         ctype = downloader_conf.get("type")
-        config = downloader_conf.get("config")
+        config = dict(downloader_conf.get("config") or {})
         config["download_dir"] = downloader_conf.get("download_dir")
         config["name"] = downloader_conf.get("name")
         with client_lock:
@@ -375,7 +375,7 @@ class Downloader:
             downloader_id = download_attr.get("downloader")
         downloader_conf = self.get_downloader_conf(downloader_id)
         sender = receipt_sender or (user_name if in_from == SearchType.WEB else None)
-        recorded = bool(sender and downloader_conf and downloader_conf.get("type") == "aria2")
+        recorded = bool(sender and downloader_conf and downloader_conf.get("type") in ("aria2", "qbittorrent", "transmission"))
         downloader = None if recorded else self.__get_client(downloader_id)
 
         if not downloader_conf or (not recorded and not downloader):
@@ -401,7 +401,7 @@ class Downloader:
                 tags = []
                 if tag:
                     if isinstance(tag, list):
-                        tags = tag
+                        tags = list(tag)
                     else:
                         tags = [tag]
             # 添加站点tag
@@ -461,13 +461,14 @@ class Downloader:
             download_id = None
             if recorded:
                 try:
-                    receipt = self.__submit_recorded_aria2(
+                    receipt = self.__submit_recorded_download(
                         media_info, content, in_from, sender, user_name, downloader_conf, download_setting_name,
-                        download_dir, save_dir, is_paused, upload_limit, download_limit)
+                        download_dir, save_dir, is_paused, upload_limit, download_limit,
+                        tags, category, ratio_limit, seeding_time_limit)
                 except (OSError, subprocess.SubprocessError, ValueError):
                     return downloader_id, None, None, "无法确认下载提交结果，请检查下载回执"
                 if receipt.get("rejected"):
-                    reason = "下载设置无效或已变更，下载器未接收任务"
+                    reason = "未添加下载，请核对下载器设置及是否已存在相同任务"
                     __download_fail(reason)
                     return downloader_id, None, None, reason
                 if receipt.get("pending"):
@@ -570,19 +571,25 @@ class Downloader:
             log.error(f"【Downloader】下载器 {downloader_name} 添加任务出错：%s" % str(e))
             return None, None, None, str(e)
 
-    def __submit_recorded_aria2(self, media_info, content, in_from, sender, user_name, downloader_conf,
-                                download_setting_name, download_dir, save_dir, is_paused, upload_limit, download_limit):
+    def __submit_recorded_download(self, media_info, content, in_from, sender, user_name, downloader_conf,
+                                   download_setting_name, download_dir, save_dir, is_paused, upload_limit, download_limit,
+                                   tags, category, ratio_limit, seeding_time_limit):
         media_info.user_name = user_name
         notice = self.message.download_notice_fields(in_from, media_info, download_setting_name, downloader_conf["name"])
         domain = Config().get_domain()
         request = {
-            "downloader": int(downloader_conf["id"]), "config": downloader_conf["config"],
+            "downloader": int(downloader_conf["id"]), "clientType": downloader_conf["type"], "config": downloader_conf["config"],
             "directories": downloader_conf["download_dir"], "sender": str(sender), "channel": in_from.name,
             "source": in_from.value, "title": media_info.org_string, "directory": download_dir or "", "paused": is_paused,
             "uploadLimitKB": int(upload_limit or 0), "downloadLimitKB": int(download_limit or 0), "notice": notice,
             "history": {"media": download_history_media(media_info), "path": save_dir,
                         "image": media_info.get_message_image() or "", "link": domain + "?next=downloading" if domain else ""},
         }
+        if downloader_conf["type"] in ("qbittorrent", "transmission"):
+            request.update(tags=tags, ratioLimit=round(float(ratio_limit or 0), 2),
+                           seedingTimeLimit=int(seeding_time_limit or 0))
+        if downloader_conf["type"] == "qbittorrent":
+            request["category"] = category or ""
         if isinstance(content, str):
             request["magnet"] = content
         else:

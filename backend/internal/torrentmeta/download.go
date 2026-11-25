@@ -78,7 +78,14 @@ func MagnetInfoHash(raw string) string {
 	if err != nil {
 		return ""
 	}
-	return v1TopicHash(u.Query().Get("xt"))
+	v1, v2, err := MagnetTopics(u.Query()["xt"])
+	if err != nil {
+		return ""
+	}
+	if v1 != "" {
+		return v1
+	}
+	return v2
 }
 
 // MagnetTopics checks conflicting v1/v2 identities and normalizes base32 btih.
