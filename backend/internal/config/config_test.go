@@ -2,6 +2,27 @@ package config
 
 import "testing"
 
+func TestStandaloneServerModes(t *testing.T) {
+	t.Setenv("NASTOOL_CONFIG", "")
+	for _, tt := range []struct{ flag, target, want string }{
+		{"", "", ""},
+		{"", "http://localhost:3002", "http://localhost:3002"},
+		{"true", "http://localhost:3002", ""},
+		{"false", "", "http://127.0.0.1:3000"},
+	} {
+		t.Setenv("NASTOOL_DISABLE_LEGACY", tt.flag)
+		t.Setenv("NASTOOL_LEGACY_URL", tt.target)
+		cfg, err := FromEnv()
+		if err != nil || cfg.LegacyBackendURL != tt.want || cfg.DisableLegacy != (tt.want == "") || cfg.ApplicationConfigPath != "/config/config.yaml" {
+			t.Fatal("unexpected service mode", tt, err)
+		}
+	}
+	t.Setenv("NASTOOL_DISABLE_LEGACY", "typo")
+	if _, err := FromEnv(); err == nil {
+		t.Fatal("invalid mode accepted")
+	}
+}
+
 func TestMinioRequiresExplicitGoOnlyAccountAndTrustPaths(t *testing.T) {
 	t.Setenv("NASTOOL_MINIO_CONFIG", "/config/mc/config.json")
 	t.Setenv("NASTOOL_MINIO_CA", "/config/mc/ca.pem")

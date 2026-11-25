@@ -24,23 +24,36 @@ type Config struct {
 }
 
 func FromEnv() (Config, error) {
+	legacyURL := os.Getenv("NASTOOL_LEGACY_URL")
+	native := legacyURL == ""
+	switch os.Getenv("NASTOOL_DISABLE_LEGACY") {
+	case "":
+	case "true":
+		native = true
+	case "false":
+		native = false
+	default:
+		return Config{}, fmt.Errorf("NASTOOL_DISABLE_LEGACY must be true or false")
+	}
+	if native {
+		legacyURL = ""
+	} else if legacyURL == "" {
+		legacyURL = "http://127.0.0.1:3000"
+	}
 	cfg := Config{
 		Address:               envOrDefault("NASTOOL_GO_ADDRESS", ":3001"),
-		LegacyBackendURL:      envOrDefault("NASTOOL_LEGACY_URL", "http://127.0.0.1:3000"),
+		LegacyBackendURL:      legacyURL,
 		FrontendDist:          os.Getenv("NASTOOL_FRONTEND_DIST"),
-		ApplicationConfigPath: os.Getenv("NASTOOL_CONFIG"),
+		ApplicationConfigPath: ApplicationPath(),
 		SiteCatalogPath:       os.Getenv("NASTOOL_SITE_CATALOG"),
 		DefaultCategoryPath:   os.Getenv("NASTOOL_DEFAULT_CATEGORY"),
-		DisableLegacy:         os.Getenv("NASTOOL_DISABLE_LEGACY") == "true",
+		DisableLegacy:         native,
 		HostsPath:             os.Getenv("NASTOOL_GO_HOSTS_PATH"),
 		RcloneConfigFile:      os.Getenv("NASTOOL_RCLONE_CONFIG"),
 		RcloneBinary:          envOrDefault("NASTOOL_RCLONE_BINARY", "rclone"),
 		MinioConfigFile:       os.Getenv("NASTOOL_MINIO_CONFIG"),
 		MinioCAFile:           os.Getenv("NASTOOL_MINIO_CA"),
 		BrowserBinary:         envOrDefault("NASTOOL_BROWSER_BINARY", "auto"),
-	}
-	if cfg.DisableLegacy {
-		cfg.LegacyBackendURL = ""
 	}
 	if cfg.HostsPath != "" && (!filepath.IsAbs(cfg.HostsPath) || !cfg.DisableLegacy) {
 		return Config{}, fmt.Errorf("NASTOOL_GO_HOSTS_PATH requires an absolute path and NASTOOL_DISABLE_LEGACY=true")
@@ -59,6 +72,10 @@ func FromEnv() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func ApplicationPath() string {
+	return envOrDefault("NASTOOL_CONFIG", "/config/config.yaml")
 }
 
 func envOrDefault(name, fallback string) string {

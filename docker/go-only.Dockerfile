@@ -54,7 +54,8 @@ RUN apk add --no-cache ca-certificates tzdata libgomp libstdc++ ffmpeg whisper.c
     && test -x /usr/bin/chromium \
     && test -u /usr/lib/chromium/chrome-sandbox \
     && addgroup -S -g 911 nt \
-    && adduser -S -u 911 -G nt -h /app nt
+    && adduser -S -u 911 -G nt -h /app nt \
+    && mkdir -p /config && chown nt:nt /config
 WORKDIR /app
 COPY --from=frontend-builder /build/frontend/dist /app/frontend/dist
 COPY --from=ct2-builder /build/out/nastool-ct2-whisper /usr/local/bin/nastool-ct2-whisper

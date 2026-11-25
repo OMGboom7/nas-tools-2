@@ -55,6 +55,9 @@ func newHandler(cfg config.Config, transport http.RoundTripper) (http.Handler, e
 // wait function joins them after ctx cancellation; handler-only New is useful
 // for embedders that do not own background execution.
 func NewWithContext(ctx context.Context, cfg config.Config) (http.Handler, func(), error) {
+	if cfg.ApplicationConfigPath == "" {
+		return nil, nil, fmt.Errorf("the server requires a local application configuration on the data host")
+	}
 	return newRuntimeHandler(ctx, cfg, http.DefaultTransport)
 }
 

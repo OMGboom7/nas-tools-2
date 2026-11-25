@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -23,7 +25,7 @@ func main() {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
-		if err := restoreCommand(ctx, os.Args[2:], os.Getenv("NASTOOL_CONFIG"), os.Stdout); err != nil {
+		if err := restoreCommand(ctx, os.Args[2:], config.ApplicationPath(), os.Stdout); err != nil {
 			slog.Error("backup restore", "error", err)
 			os.Exit(1)
 		}
@@ -35,9 +37,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	release, err := backuprestore.HoldStartup(cfg.ApplicationConfigPath)
+	release, err := holdApplication(cfg)
 	if err != nil {
-		slog.Error("configuration directory unavailable", "error", err)
+		slog.Error("cannot start with application configuration", "path", cfg.ApplicationConfigPath, "error", err)
 		os.Exit(1)
 	}
 	defer release()
@@ -66,7 +68,7 @@ func main() {
 		shutdown <- server.Shutdown(ctx)
 	}()
 
-	slog.Info("Go migration gateway started", "address", cfg.Address, "legacy", cfg.LegacyBackendURL)
+	slog.Info("Go server started", "address", cfg.Address, "native", cfg.DisableLegacy)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		cancelWorkers()
 		waitWorkers()
@@ -82,4 +84,38 @@ func main() {
 		// graceful shutdown deadline.
 		os.Exit(1)
 	}
+}
+
+func holdApplication(cfg config.Config) (func(), error) {
+	path := cfg.ApplicationConfigPath
+	if path == "" {
+		return nil, errors.New("set NASTOOL_CONFIG to the application configuration on the data host")
+	}
+	if cfg.DisableLegacy && os.Getenv("NASTOOL_CONFIG") != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			return nil, err
+		}
+	}
+	release, err := backuprestore.HoldStartup(path)
+	if err != nil || !cfg.DisableLegacy {
+		return release, err
+	}
+	created, err := config.InitializeApplication(path)
+	if err == nil {
+		_, err = config.LoadApplication(path)
+	}
+	if err == nil {
+		if created {
+			slog.Info("initial configuration created; read app.login_user and app.login_password from this file to sign in", "path", path)
+		}
+		return release, nil
+	}
+	release()
+	if !errors.Is(err, config.ErrMissingAPIKey) {
+		return nil, err
+	}
+	if err := backuprestore.PrepareStartup(path, func() error { return config.InitializeSigningKey(path) }); err != nil {
+		return nil, fmt.Errorf("initialize security.api_key (or set it in the original configuration): %w", err)
+	}
+	return backuprestore.HoldStartup(path)
 }

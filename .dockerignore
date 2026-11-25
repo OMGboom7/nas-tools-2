@@ -9,6 +9,8 @@
 **/node_modules
 /frontend/dist
 /backend/bin
+/.nastool-dev
+**/*.pre-go-key.bak
 /build
 /venv
 /config/config.yaml

@@ -1,7 +1,11 @@
 .PHONY: backend-dev backend-test backend-build frontend-install frontend-dev frontend-build production-build production-up production-down go-only-build python-exit-status python-exit-enforce
 
 backend-dev:
-	cd backend && go run ./cmd/server
+	@root="$$PWD"; cd backend && \
+		NASTOOL_CONFIG="$${NASTOOL_CONFIG:-$$root/.nastool-dev/config.yaml}" \
+		NASTOOL_SITE_CATALOG="$${NASTOOL_SITE_CATALOG:-$$root/web/backend/user.sites.bin}" \
+		NASTOOL_DEFAULT_CATEGORY="$${NASTOOL_DEFAULT_CATEGORY:-$$root/config/default-category.yaml}" \
+		go run ./cmd/server
 
 backend-test:
 	cd backend && go test ./...

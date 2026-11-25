@@ -7,5 +7,5 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ../config:/config
+      - ${NASTOOL_CONFIG_DIR:-../config}:/config
     restart: unless-stopped

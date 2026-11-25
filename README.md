@@ -2,6 +2,8 @@
 
 > React + Go 渐进重构正在 `codex/react-go-refactor` 分支进行，开发方式与迁移约定见 [迁移文档](docs/migration/react-go.md)。
 
+本地开发时，在两个终端分别运行 `make backend-dev` 和 `make frontend-dev`。Go 默认独立运行，首次登录使用仓库下 `.nastool-dev/config.yaml` 中生成的账户和密码。
+
 新架构生产镜像可通过 `make production-build` 构建，或使用 `make production-up` 启动。该镜像由 Go 接管外部 Web 端口并托管 React，Python 服务仅在容器内部提供兼容接口；部署与回退步骤见 [生产切换说明](docs/migration/react-go.md#生产部署与回退)。
 
 另有不含 Python 的 Go-only 候选镜像（`make go-only-build`），用于迁移回归测试。它对尚未迁移的接口明确报错，目前不能替代完整生产镜像；覆盖范围和使用限制见 [Python 退出计划](docs/migration/python-exit.md)。

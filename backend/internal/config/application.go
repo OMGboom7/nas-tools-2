@@ -1,12 +1,15 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
+
+var ErrMissingAPIKey = errors.New("application config security.api_key is required for native authentication")
 
 // Application contains the small, typed subset of config.yaml needed by the
 // Go runtime. More sections can move here as their Python owners are replaced.
@@ -42,7 +45,7 @@ func LoadApplication(path string) (Application, error) {
 		return Application{}, fmt.Errorf("application config app.login_password is required")
 	}
 	if application.Security.APIKey == "" {
-		return Application{}, fmt.Errorf("application config security.api_key is required for native authentication")
+		return Application{}, ErrMissingAPIKey
 	}
 	return application, nil
 }

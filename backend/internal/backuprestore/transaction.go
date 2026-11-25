@@ -34,6 +34,21 @@ func (w Workspace) journal() string { return filepath.Join(w.private(), "transac
 
 // HoldStartup checks the journal before normal startup can open SQLite.
 func HoldStartup(configPath string) (func(), error) {
+	return holdStartup(configPath, false)
+}
+
+// PrepareStartup changes existing configuration before opening the databases.
+// Other serving Go processes and offline restore operations share this lock.
+func PrepareStartup(configPath string, prepare func() error) error {
+	release, err := holdStartup(configPath, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return prepare()
+}
+
+func holdStartup(configPath string, exclusive bool) (func(), error) {
 	if configPath == "" {
 		return func() {}, nil
 	}
@@ -42,13 +57,16 @@ func HoldStartup(configPath string) (func(), error) {
 		return nil, err
 	}
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		if exclusive {
+			return nil, errors.ErrUnsupported
+		}
 		_, err := os.Lstat(w.private())
 		if errors.Is(err, os.ErrNotExist) {
 			return func() {}, nil
 		}
 		return nil, ErrHold
 	}
-	lock, err := w.lock(false)
+	lock, err := w.lock(exclusive)
 	if err != nil {
 		return nil, err
 	}
