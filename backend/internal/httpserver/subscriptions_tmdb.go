@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type nativeSubscriptionMetadata struct {
@@ -38,56 +35,15 @@ func (service subscriptionService) fetchNativeSubscriptionMetadata(ctx context.C
 	if err != nil {
 		return nil, err
 	}
-	app := objectValue(snapshot["app"])
-	media := objectValue(snapshot["media"])
-	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
-	if key == "" {
-		return nil, errors.New("TMDB API key is unavailable")
-	}
-	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
-	if host == "" {
-		host = "api.themoviedb.org"
-	}
-	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
-		return nil, errors.New("invalid TMDB domain")
-	}
-	language := strings.TrimSpace(text(media["tmdb_language"]))
-	if language == "" {
-		language = "zh"
-	}
-	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
-		return nil, errors.New("invalid TMDB language")
-	}
 	kind := "movie"
 	if input.Type == "TV" {
 		kind = "tv"
 	}
-	endpoint := url.URL{Scheme: "https", Host: host, Path: "/3/" + kind + "/" + input.MediaID}
-	if endpoint.Hostname() == "" {
-		return nil, errors.New("invalid TMDB domain")
-	}
-	endpoint.RawQuery = url.Values{"api_key": {key}, "language": {language}}.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	contents, err := requestTMDBDetail(ctx, snapshot, service.client.Transport, "/"+kind+"/"+input.MediaID, "", nil, 2<<20)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Accept", "application/json")
-	client := *service.client
-	client.Timeout = 15 * time.Second
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	upstream, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer upstream.Body.Close()
-	if upstream.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB status %d", upstream.StatusCode)
-	}
-	contents, err := io.ReadAll(io.LimitReader(upstream.Body, 2<<20+1))
-	if err != nil || len(contents) > 2<<20 {
-		return nil, errors.New("TMDB response is unavailable or too large")
-	}
-	return subscriptionMetadataFromJSON(input, contents, app)
+	return subscriptionMetadataFromJSON(input, contents, objectValue(snapshot["app"]))
 }
 
 func subscriptionMetadataFromJSON(input subscriptionUpsertRequest, contents []byte, app map[string]any) (*nativeSubscriptionMetadata, error) {

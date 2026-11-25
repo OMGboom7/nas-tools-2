@@ -46,54 +46,13 @@ func fetchNativeTMDBDetailsLanguage(ctx context.Context, store *config.Store, tr
 	if err != nil {
 		return detail, err
 	}
-	app, media := objectValue(snapshot["app"]), objectValue(snapshot["media"])
-	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
-	if key == "" {
-		return detail, errors.New("TMDB API key is unavailable")
-	}
-	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
-	if host == "" {
-		host = "api.themoviedb.org"
-	}
-	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
-		return detail, errors.New("invalid TMDB domain")
-	}
-	language := strings.TrimSpace(text(media["tmdb_language"]))
-	if overrideLanguage != "" {
-		language = overrideLanguage
-	}
-	if language == "" {
-		language = "zh"
-	}
-	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
-		return detail, errors.New("invalid TMDB language")
-	}
-	endpoint := url.URL{Scheme: "https", Host: host, Path: "/3/" + kind + "/" + id}
-	if endpoint.Hostname() == "" {
-		return detail, errors.New("invalid TMDB domain")
-	}
-	query := url.Values{"api_key": {key}, "language": {language}}
+	extra := map[string]string{}
 	if kind == "tv" {
-		query.Set("append_to_response", "external_ids")
+		extra["append_to_response"] = "external_ids"
 	}
-	endpoint.RawQuery = query.Encode()
-	probe, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	contents, err := requestTMDBDetail(ctx, snapshot, transport, "/"+kind+"/"+id, overrideLanguage, extra, 2<<20)
 	if err != nil {
 		return detail, err
-	}
-	probe.Header.Set("Accept", "application/json")
-	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	upstream, err := client.Do(probe)
-	if err != nil {
-		return detail, err
-	}
-	defer upstream.Body.Close()
-	if upstream.StatusCode != http.StatusOK {
-		return detail, errors.New("TMDB returned non-success status")
-	}
-	contents, err := io.ReadAll(io.LimitReader(upstream.Body, (2<<20)+1))
-	if err != nil || len(contents) > 2<<20 {
-		return detail, errors.New("TMDB details are unavailable or too large")
 	}
 	if err := json.Unmarshal(contents, &detail); err != nil || strconv.FormatInt(detail.ID, 10) != id {
 		return detail, errors.New("invalid TMDB details")
@@ -117,6 +76,94 @@ func fetchNativeTMDBDetailsLanguage(ctx context.Context, store *config.Store, tr
 		}
 	}
 	return detail, nil
+}
+
+func requestTMDBDetail(ctx context.Context, snapshot map[string]any, transport http.RoundTripper, path, overrideLanguage string, extra map[string]string, limit int64) ([]byte, error) {
+	app, media := objectValue(snapshot["app"]), objectValue(snapshot["media"])
+	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
+	if key == "" {
+		return nil, errors.New("TMDB API key is unavailable")
+	}
+	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
+	if host == "" {
+		host = "api.themoviedb.org"
+	}
+	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
+		return nil, errors.New("invalid TMDB domain")
+	}
+	language := strings.TrimSpace(text(media["tmdb_language"]))
+	if overrideLanguage != "" {
+		language = overrideLanguage
+	}
+	if language == "" {
+		language = "zh"
+	}
+	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
+		return nil, errors.New("invalid TMDB language")
+	}
+	endpoint := url.URL{Scheme: "https", Host: host, Path: "/3" + path}
+	if endpoint.Hostname() == "" {
+		return nil, errors.New("invalid TMDB domain")
+	}
+	query := url.Values{"api_key": {key}, "language": {language}}
+	for k, v := range extra {
+		query.Set(k, v)
+	}
+	endpoint.RawQuery = query.Encode()
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	probe, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, errors.New("invalid TMDB detail address")
+	}
+	probe.Header.Set("Accept", "application/json")
+	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	upstream, err := client.Do(probe)
+	if err == nil && upstream.StatusCode == http.StatusTooManyRequests {
+		if delay, ok := tmdbRetryDelay(upstream.Header, time.Now()); ok {
+			upstream.Body.Close()
+			deadline, _ := ctx.Deadline()
+			if delay >= time.Until(deadline) {
+				return nil, errors.New("TMDB rate limit exceeds request deadline")
+			}
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			upstream, err = client.Do(probe.Clone(ctx))
+		}
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, errors.New("TMDB detail request failed")
+	}
+	defer upstream.Body.Close()
+	if upstream.StatusCode != http.StatusOK {
+		return nil, errors.New("TMDB returned non-success status")
+	}
+	contents, err := io.ReadAll(io.LimitReader(upstream.Body, limit+1))
+	if err != nil || int64(len(contents)) > limit {
+		return nil, errors.New("TMDB details are unavailable or too large")
+	}
+	return contents, nil
+}
+
+func tmdbRetryDelay(header http.Header, now time.Time) (time.Duration, bool) {
+	if value := header.Get("Retry-After"); value != "" {
+		if seconds, err := strconv.ParseUint(value, 10, 31); err == nil {
+			return time.Duration(seconds) * time.Second, true
+		}
+		date, err := http.ParseTime(value)
+		return max(0, date.Sub(now)), err == nil
+	}
+	seconds, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64)
+	if err != nil || seconds <= 0 {
+		return 0, false
+	}
+	return max(0, time.Unix(seconds, 0).Sub(now)), true
 }
 
 func validNamingIMDbID(id string) bool {

@@ -35,6 +35,16 @@ func simplified(s string) (string, bool) {
 	chineseConverter.mu.Unlock()
 	return out, err == nil
 }
+
+// IsSimplifiedChinese reports whether the title already uses simplified characters.
+func IsSimplifiedChinese(title string) bool {
+	if !strings.ContainsFunc(title, func(r rune) bool { return r >= '一' && r <= '鿿' }) {
+		return false
+	}
+	converted, ok := simplified(title)
+	return ok && converted == title
+}
+
 func chineseName(s string) (string, bool) {
 	if !strings.ContainsFunc(s, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
 		return "", false

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -195,47 +194,9 @@ func (api mediaDetailAPI) tmdbJSON(ctx context.Context, path string, output any)
 	if err != nil {
 		return err
 	}
-	app, media := objectValue(snapshot["app"]), objectValue(snapshot["media"])
-	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
-	if key == "" {
-		return errors.New("TMDB configuration unavailable")
-	}
-	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
-	if host == "" {
-		host = "api.themoviedb.org"
-	}
-	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
-		return errors.New("invalid TMDB host")
-	}
-	language := strings.TrimSpace(text(media["tmdb_language"]))
-	if language == "" {
-		language = "zh"
-	}
-	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
-		return errors.New("invalid TMDB language")
-	}
-	endpoint := url.URL{Scheme: "https", Host: host, Path: "/3" + path}
-	if endpoint.Hostname() == "" {
-		return errors.New("invalid TMDB endpoint")
-	}
-	endpoint.RawQuery = url.Values{"api_key": {key}, "language": {language}}.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	raw, err := requestTMDBDetail(ctx, snapshot, api.service.client.Transport, path, "", nil, 2<<20)
 	if err != nil {
 		return err
-	}
-	request.Header.Set("Accept", "application/json")
-	client := http.Client{Transport: api.service.client.Transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return errors.New("TMDB response unavailable")
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
-	if err != nil || len(raw) > 2<<20 {
-		return errors.New("TMDB response too large")
 	}
 	return json.Unmarshal(raw, output)
 }

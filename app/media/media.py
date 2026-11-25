@@ -1,4 +1,5 @@
 import difflib
+import hashlib
 import json
 import subprocess
 import os
@@ -6,6 +7,9 @@ import random
 import re
 import traceback
 from functools import lru_cache
+from threading import RLock
+
+from cachetools import TTLCache, cached
 
 import zhconv
 from lxml import etree
@@ -20,6 +24,18 @@ from app.utils import PathUtils, EpisodeFormat, RequestUtils, NumberUtils, Strin
 from app.utils.types import MediaType, MatchMode
 from config import Config, run_go_helper, KEYWORD_BLACKLIST, KEYWORD_SEARCH_WEIGHT_3, KEYWORD_SEARCH_WEIGHT_2, KEYWORD_SEARCH_WEIGHT_1, \
     KEYWORD_STR_SIMILARITY_THRESHOLD, KEYWORD_DIFF_SCORE_THRESHOLD
+
+
+@cached(cache=TTLCache(maxsize=512, ttl=6 * 60 * 60), lock=RLock())
+def _tmdb_detail_bytes(payload, config_revision):
+    # A config change (including provider, language, key or proxy) invalidates the entry.
+    return run_go_helper("tmdb-detail", payload=payload, timeout=25)
+
+
+def _tmdb_detail(query):
+    with open(os.environ["NASTOOL_CONFIG"], "rb") as config_file:
+        revision = hashlib.sha256(config_file.read()).digest()
+    return AsObj(**json.loads(_tmdb_detail_bytes(json.dumps(query).encode(), revision)))
 
 
 class Media:
@@ -580,45 +596,15 @@ class Media:
         :param append_to_response: 附加信息
         :param chinese: 是否转换中文标题
         """
-        if not self.tmdb:
-            log.error("【Meta】TMDB API Key 未设置！")
+        query = {"kind": "movie" if mtype == MediaType.MOVIE else "tv", "id": str(tmdbid),
+                 "language": language or "", "append": append_to_response, "localize": bool(chinese)}
+        try:
+            info = _tmdb_detail(query)
+            info["media_type"] = MediaType.MOVIE if query["kind"] == "movie" else MediaType.TV
+            return info
+        except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
+            log.warn("【Meta】TMDB 媒体详情暂不可用")
             return None
-        # 设置语言
-        self.__set_language(language)
-        if mtype == MediaType.MOVIE:
-            tmdb_info = self.__get_tmdb_movie_detail(tmdbid, append_to_response)
-            if tmdb_info:
-                tmdb_info['media_type'] = MediaType.MOVIE
-        else:
-            tmdb_info = self.__get_tmdb_tv_detail(tmdbid, append_to_response)
-            if tmdb_info:
-                tmdb_info['media_type'] = MediaType.TV
-        if tmdb_info:
-            # 转换genreid
-            tmdb_info['genre_ids'] = self.__get_genre_ids_from_detail(tmdb_info.get('genres'))
-            # 转换中文标题
-            if chinese:
-                tmdb_info = self.__update_tmdbinfo_cn_title(tmdb_info)
-
-        return tmdb_info
-
-    def __update_tmdbinfo_cn_title(self, tmdb_info):
-        """
-        更新TMDB信息中的中文名称
-        """
-        # 查找中文名
-        org_title = tmdb_info.get("title") \
-            if tmdb_info.get("media_type") == MediaType.MOVIE \
-            else tmdb_info.get("name")
-        if not StringUtils.is_chinese(org_title) \
-                and self._default_language == 'zh':
-            cn_title = self.__get_tmdb_chinese_title(tmdbinfo=tmdb_info)
-            if cn_title and cn_title != org_title:
-                if tmdb_info.get("media_type") == MediaType.MOVIE:
-                    tmdb_info['title'] = cn_title
-                else:
-                    tmdb_info['name'] = cn_title
-        return tmdb_info
 
     def get_tmdb_infos(self, title, year=None, mtype: MediaType = None, language=None, page=1):
         """
@@ -1097,361 +1083,12 @@ class Media:
             return []
         return self.__dict_tmdbinfos(self.trending.all_week(page=page))
 
-    def __get_tmdb_movie_detail(self, tmdbid, append_to_response=None):
-        """
-        获取电影的详情
-        :param tmdbid: TMDB ID
-        :return: TMDB信息
-        """
-        """
-        {
-          "adult": false,
-          "backdrop_path": "/r9PkFnRUIthgBp2JZZzD380MWZy.jpg",
-          "belongs_to_collection": {
-            "id": 94602,
-            "name": "穿靴子的猫（系列）",
-            "poster_path": "/anHwj9IupRoRZZ98WTBvHpTiE6A.jpg",
-            "backdrop_path": "/feU1DWV5zMWxXUHJyAIk3dHRQ9c.jpg"
-          },
-          "budget": 90000000,
-          "genres": [
-            {
-              "id": 16,
-              "name": "动画"
-            },
-            {
-              "id": 28,
-              "name": "动作"
-            },
-            {
-              "id": 12,
-              "name": "冒险"
-            },
-            {
-              "id": 35,
-              "name": "喜剧"
-            },
-            {
-              "id": 10751,
-              "name": "家庭"
-            },
-            {
-              "id": 14,
-              "name": "奇幻"
-            }
-          ],
-          "homepage": "",
-          "id": 315162,
-          "imdb_id": "tt3915174",
-          "original_language": "en",
-          "original_title": "Puss in Boots: The Last Wish",
-          "overview": "时隔11年，臭屁自大又爱卖萌的猫大侠回来了！如今的猫大侠（安东尼奥·班德拉斯 配音），依旧幽默潇洒又不拘小节、数次“花式送命”后，九条命如今只剩一条，于是不得不请求自己的老搭档兼“宿敌”——迷人的软爪妞（萨尔玛·海耶克 配音）来施以援手来恢复自己的九条生命。",
-          "popularity": 8842.129,
-          "poster_path": "/rnn30OlNPiC3IOoWHKoKARGsBRK.jpg",
-          "production_companies": [
-            {
-              "id": 33,
-              "logo_path": "/8lvHyhjr8oUKOOy2dKXoALWKdp0.png",
-              "name": "Universal Pictures",
-              "origin_country": "US"
-            },
-            {
-              "id": 521,
-              "logo_path": "/kP7t6RwGz2AvvTkvnI1uteEwHet.png",
-              "name": "DreamWorks Animation",
-              "origin_country": "US"
-            }
-          ],
-          "production_countries": [
-            {
-              "iso_3166_1": "US",
-              "name": "United States of America"
-            }
-          ],
-          "release_date": "2022-12-07",
-          "revenue": 260725470,
-          "runtime": 102,
-          "spoken_languages": [
-            {
-              "english_name": "English",
-              "iso_639_1": "en",
-              "name": "English"
-            },
-            {
-              "english_name": "Spanish",
-              "iso_639_1": "es",
-              "name": "Español"
-            }
-          ],
-          "status": "Released",
-          "tagline": "",
-          "title": "穿靴子的猫2",
-          "video": false,
-          "vote_average": 8.614,
-          "vote_count": 2291
-        }
-        """
-        if not self.movie:
-            return {}
-        try:
-            log.info("【Meta】正在查询TMDB电影：%s ..." % tmdbid)
-            tmdbinfo = self.movie.details(tmdbid, append_to_response)
-            if tmdbinfo:
-                log.info(f"【Meta】{tmdbid} 查询结果：{tmdbinfo.get('title')}")
-            return tmdbinfo or {}
-        except Exception as e:
-            print(str(e))
-            return None
-
-    def __get_tmdb_tv_detail(self, tmdbid, append_to_response=None):
-        """
-        获取电视剧的详情
-        :param tmdbid: TMDB ID
-        :return: TMDB信息
-        """
-        """
-        {
-          "adult": false,
-          "backdrop_path": "/uDgy6hyPd82kOHh6I95FLtLnj6p.jpg",
-          "created_by": [
-            {
-              "id": 35796,
-              "credit_id": "5e84f06a3344c600153f6a57",
-              "name": "Craig Mazin",
-              "gender": 2,
-              "profile_path": "/uEhna6qcMuyU5TP7irpTUZ2ZsZc.jpg"
-            },
-            {
-              "id": 1295692,
-              "credit_id": "5e84f03598f1f10016a985c0",
-              "name": "Neil Druckmann",
-              "gender": 2,
-              "profile_path": "/bVUsM4aYiHbeSYE1xAw2H5Z1ANU.jpg"
-            }
-          ],
-          "episode_run_time": [],
-          "first_air_date": "2023-01-15",
-          "genres": [
-            {
-              "id": 18,
-              "name": "剧情"
-            },
-            {
-              "id": 10765,
-              "name": "Sci-Fi & Fantasy"
-            },
-            {
-              "id": 10759,
-              "name": "动作冒险"
-            }
-          ],
-          "homepage": "https://www.hbo.com/the-last-of-us",
-          "id": 100088,
-          "in_production": true,
-          "languages": [
-            "en"
-          ],
-          "last_air_date": "2023-01-15",
-          "last_episode_to_air": {
-            "air_date": "2023-01-15",
-            "episode_number": 1,
-            "id": 2181581,
-            "name": "当你迷失在黑暗中",
-            "overview": "在一场全球性的流行病摧毁了文明之后，一个顽强的幸存者负责照顾一个 14 岁的小女孩，她可能是人类最后的希望。",
-            "production_code": "",
-            "runtime": 81,
-            "season_number": 1,
-            "show_id": 100088,
-            "still_path": "/aRquEWm8wWF1dfa9uZ1TXLvVrKD.jpg",
-            "vote_average": 8,
-            "vote_count": 33
-          },
-          "name": "最后生还者",
-          "next_episode_to_air": {
-            "air_date": "2023-01-22",
-            "episode_number": 2,
-            "id": 4071039,
-            "name": "虫草变异菌",
-            "overview": "",
-            "production_code": "",
-            "runtime": 55,
-            "season_number": 1,
-            "show_id": 100088,
-            "still_path": "/jkUtYTmeap6EvkHI4n0j5IRFrIr.jpg",
-            "vote_average": 10,
-            "vote_count": 1
-          },
-          "networks": [
-            {
-              "id": 49,
-              "name": "HBO",
-              "logo_path": "/tuomPhY2UtuPTqqFnKMVHvSb724.png",
-              "origin_country": "US"
-            }
-          ],
-          "number_of_episodes": 9,
-          "number_of_seasons": 1,
-          "origin_country": [
-            "US"
-          ],
-          "original_language": "en",
-          "original_name": "The Last of Us",
-          "overview": "不明真菌疫情肆虐之后的美国，被真菌感染的人都变成了可怕的怪物，乔尔（Joel）为了换回武器答应将小女孩儿艾莉（Ellie）送到指定地点，由此开始了两人穿越美国的漫漫旅程。",
-          "popularity": 5585.639,
-          "poster_path": "/nOY3VBFO0VnlN9nlRombnMTztyh.jpg",
-          "production_companies": [
-            {
-              "id": 3268,
-              "logo_path": "/tuomPhY2UtuPTqqFnKMVHvSb724.png",
-              "name": "HBO",
-              "origin_country": "US"
-            },
-            {
-              "id": 11073,
-              "logo_path": "/aCbASRcI1MI7DXjPbSW9Fcv9uGR.png",
-              "name": "Sony Pictures Television Studios",
-              "origin_country": "US"
-            },
-            {
-              "id": 23217,
-              "logo_path": "/kXBZdQigEf6QiTLzo6TFLAa7jKD.png",
-              "name": "Naughty Dog",
-              "origin_country": "US"
-            },
-            {
-              "id": 115241,
-              "logo_path": null,
-              "name": "The Mighty Mint",
-              "origin_country": "US"
-            },
-            {
-              "id": 119645,
-              "logo_path": null,
-              "name": "Word Games",
-              "origin_country": "US"
-            },
-            {
-              "id": 125281,
-              "logo_path": "/3hV8pyxzAJgEjiSYVv1WZ0ZYayp.png",
-              "name": "PlayStation Productions",
-              "origin_country": "US"
-            }
-          ],
-          "production_countries": [
-            {
-              "iso_3166_1": "US",
-              "name": "United States of America"
-            }
-          ],
-          "seasons": [
-            {
-              "air_date": "2023-01-15",
-              "episode_count": 9,
-              "id": 144593,
-              "name": "第 1 季",
-              "overview": "",
-              "poster_path": "/aUQKIpZZ31KWbpdHMCmaV76u78T.jpg",
-              "season_number": 1
-            }
-          ],
-          "spoken_languages": [
-            {
-              "english_name": "English",
-              "iso_639_1": "en",
-              "name": "English"
-            }
-          ],
-          "status": "Returning Series",
-          "tagline": "",
-          "type": "Scripted",
-          "vote_average": 8.924,
-          "vote_count": 601
-        }
-        """
-        if not self.tv:
-            return {}
-        try:
-            log.info("【Meta】正在查询TMDB电视剧：%s ..." % tmdbid)
-            tmdbinfo = self.tv.details(tmdbid, append_to_response)
-            if tmdbinfo:
-                log.info(f"【Meta】{tmdbid} 查询结果：{tmdbinfo.get('name')}")
-            return tmdbinfo or {}
-        except Exception as e:
-            print(str(e))
-            return None
-
     def get_tmdb_tv_season_detail(self, tmdbid, season: int):
-        """
-        获取电视剧季的详情
-        :param tmdbid: TMDB ID
-        :param season: 季，数字
-        :return: TMDB信息
-        """
-        """
-        {
-          "_id": "5e614cd3357c00001631a6ef",
-          "air_date": "2023-01-15",
-          "episodes": [
-            {
-              "air_date": "2023-01-15",
-              "episode_number": 1,
-              "id": 2181581,
-              "name": "当你迷失在黑暗中",
-              "overview": "在一场全球性的流行病摧毁了文明之后，一个顽强的幸存者负责照顾一个 14 岁的小女孩，她可能是人类最后的希望。",
-              "production_code": "",
-              "runtime": 81,
-              "season_number": 1,
-              "show_id": 100088,
-              "still_path": "/aRquEWm8wWF1dfa9uZ1TXLvVrKD.jpg",
-              "vote_average": 8,
-              "vote_count": 33,
-              "crew": [
-                {
-                  "job": "Writer",
-                  "department": "Writing",
-                  "credit_id": "619c370063536a00619a08ee",
-                  "adult": false,
-                  "gender": 2,
-                  "id": 35796,
-                  "known_for_department": "Writing",
-                  "name": "Craig Mazin",
-                  "original_name": "Craig Mazin",
-                  "popularity": 15.211,
-                  "profile_path": "/uEhna6qcMuyU5TP7irpTUZ2ZsZc.jpg"
-                },
-              ],
-              "guest_stars": [
-                {
-                  "character": "Marlene",
-                  "credit_id": "63c4ca5e5f2b8d00aed539fc",
-                  "order": 500,
-                  "adult": false,
-                  "gender": 1,
-                  "id": 1253388,
-                  "known_for_department": "Acting",
-                  "name": "Merle Dandridge",
-                  "original_name": "Merle Dandridge",
-                  "popularity": 21.679,
-                  "profile_path": "/lKwHdTtDf6NGw5dUrSXxbfkZLEk.jpg"
-                }
-              ]
-            },
-          ],
-          "name": "第 1 季",
-          "overview": "",
-          "id": 144593,
-          "poster_path": "/aUQKIpZZ31KWbpdHMCmaV76u78T.jpg",
-          "season_number": 1
-        }
-        """
-        if not self.tv:
-            return {}
+        """获取一季的剧集、图片和演职员资料。"""
         try:
-            log.info("【Meta】正在查询TMDB电视剧：%s，季：%s ..." % (tmdbid, season))
-            tmdbinfo = self.tv.season_details(tmdbid, season)
-            return tmdbinfo or {}
-        except Exception as e:
-            print(str(e))
+            return _tmdb_detail({"kind": "tv", "id": str(tmdbid), "season": int(season)})
+        except (KeyError, OSError, ValueError, TypeError, subprocess.SubprocessError):
+            log.warn("【Meta】TMDB 季详情暂不可用")
             return {}
 
     def get_tmdb_tv_seasons_byid(self, tmdbid):
@@ -1461,9 +1098,7 @@ class Media:
         if not tmdbid:
             return []
         return self.get_tmdb_tv_seasons(
-            tv_info=self.__get_tmdb_tv_detail(
-                tmdbid=tmdbid
-            )
+            tv_info=self.get_tmdb_info(MediaType.TV, tmdbid, chinese=False)
         )
 
     @staticmethod
@@ -2109,37 +1744,6 @@ class Media:
                 keyword = pre[0]
         log.info("【Meta】选择关键字为：%s " % keyword)
         return keyword, is_movie
-
-    @staticmethod
-    def __get_genre_ids_from_detail(genres):
-        """
-        从TMDB详情中获取genre_id列表
-        """
-        if not genres:
-            return []
-        genre_ids = []
-        for genre in genres:
-            genre_ids.append(genre.get('id'))
-        return genre_ids
-
-    @staticmethod
-    def __get_tmdb_chinese_title(tmdbinfo):
-        """
-        从别名中获取中文标题
-        """
-        if not tmdbinfo:
-            return None
-        if tmdbinfo.get("media_type") == MediaType.MOVIE:
-            alternative_titles = tmdbinfo.get("alternative_titles", {}).get("titles", [])
-        else:
-            alternative_titles = tmdbinfo.get("alternative_titles", {}).get("results", [])
-        for alternative_title in alternative_titles:
-            iso_3166_1 = alternative_title.get("iso_3166_1")
-            if iso_3166_1 == "CN":
-                title = alternative_title.get("title")
-                if title and StringUtils.is_chinese(title) and zhconv.convert(title, "zh-hans") == title:
-                    return title
-        return tmdbinfo.get("title") if tmdbinfo.get("media_type") == MediaType.MOVIE else tmdbinfo.get("name")
 
     def get_tmdb_us_title(self, tmdbinfo):
         """

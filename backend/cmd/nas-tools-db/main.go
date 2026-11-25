@@ -19,6 +19,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "tmdb-detail" {
+		if err := httpserver.TMDBDetailCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("media details unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "save-subscription" {
 		if err := httpserver.ResolvedSubscriptionCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("subscription write unavailable")
