@@ -120,7 +120,7 @@ func TestPluginMutationRejectsUnknownAndInvalidIDs(t *testing.T) {
 	unknown.Header.Set("Authorization", "test-token")
 	unknownResponse := httptest.NewRecorder()
 	handler.ServeHTTP(unknownResponse, unknown)
-	if unknownResponse.Code != http.StatusNotFound || requests != 2 {
+	if unknownResponse.Code != http.StatusNotFound || requests != 1 {
 		t.Fatalf("unknown status = %d, requests = %d: %s", unknownResponse.Code, requests, unknownResponse.Body.String())
 	}
 }

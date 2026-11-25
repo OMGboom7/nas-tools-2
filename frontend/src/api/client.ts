@@ -811,6 +811,7 @@ export type PluginSummary = {
 
 export type PluginsData = {
   items: PluginSummary[];
+  externalSources?: { files: string[]; incomplete?: boolean };
   installedCount: number;
   runningCount: number;
   unknownStateCount?: number;

@@ -111,6 +111,12 @@ export function PluginsPage({ session, currentPath, pageID, onNavigate, onLogout
       {state.kind === "loading" && <div className="plugin-skeleton"><span /><span /><span /></div>}
       {state.kind === "error" && <section className="empty-state"><span className="empty-state__mark">!</span><h2>插件列表暂时不可用</h2><p>{state.message}</p><button className="secondary-button" type="button" onClick={() => void load()}>重新加载</button></section>}
       {data && <>
+        {data.externalSources && (data.externalSources.files.length > 0 || data.externalSources.incomplete) && <details className="data-warning">
+          <summary>配置目录中的外部插件文件（{data.externalSources.files.length}）</summary>
+          <p>切换纯 Go 部署前，请核对这些文件提供的功能。安装记录使用插件类名，可能与文件名不同。</p>
+          {data.externalSources.incomplete && <p role="status">插件目录未能完整读取，请检查配置卷的挂载和读取权限。</p>}
+          {data.externalSources.files.length > 0 && <ul>{data.externalSources.files.map(name => <li key={name}><code>{name}</code></li>)}</ul>}
+        </details>}
         <section className="service-stats" aria-label="插件概览"><div><span>目录插件</span><strong>{data.items.length}</strong><small>个</small></div><div><span>已安装</span><strong>{data.installedCount}</strong><small>个</small></div><div><span>已确认运行</span><strong>{data.runningCount}</strong><small>{data.unknownStateCount ? `另有 ${data.unknownStateCount} 个状态待迁移` : "个"}</small></div></section>
         <div className="plugin-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、简介或作者" aria-label="搜索插件" />
           <select value={filter} onChange={(event) => setFilter(event.target.value as Filter)} aria-label="按安装状态筛选"><option value="all">全部插件</option><option value="installed">已安装</option><option value="available">可安装</option></select><span>显示 {filtered.length} / {data.items.length}</span></div>

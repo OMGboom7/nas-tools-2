@@ -10,7 +10,7 @@ import (
 )
 
 func (s pluginService) nativeArchivePage(id string) bool {
-	return id == mediaarchive.Plugin && mediaarchive.Supported && s.system != nil && s.archiveConfigPath != ""
+	return id == mediaarchive.Plugin && mediaarchive.Supported && s.system != nil && s.applicationConfigPath != ""
 }
 
 func (s pluginService) archiveDirectory(w http.ResponseWriter, r *http.Request) (*os.File, bool) {
@@ -49,7 +49,7 @@ func (s pluginService) archiveDirectory(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	dir, err := mediaarchive.Open(s.archiveConfigPath, custom, s.archiveContainer)
+	dir, err := mediaarchive.Open(s.applicationConfigPath, custom, s.archiveContainer)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, true
 	}

@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,6 +43,15 @@ func TestNativePluginCatalogRetainsEntireBundledAndUnknownInstalledDirectory(t *
 	if len(data.Items) != 30 || data.InstalledCount != 0 {
 		t.Fatalf("bundled catalog shrank: items=%d installed=%d", len(data.Items), data.InstalledCount)
 	}
+	dir := filepath.Join(filepath.Dir(path), "plugins")
+	if err := os.MkdirAll(filepath.Join(dir, "data.py"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"local.PY", ".py", "readme.txt", "data.py/nested.py"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("raise RuntimeError('private-source-marker')"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := store.Set(t.Context(), "UserInstalledPlugins", `["CookieCloud","CustomReleaseGroups","GhostPlugin","GhostPlugin"]`); err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +59,9 @@ func TestNativePluginCatalogRetainsEntireBundledAndUnknownInstalledDirectory(t *
 		t.Fatal(err)
 	}
 	data = list(token)
+	if inv := data.ExternalSources; inv == nil || inv.Incomplete || !slices.Equal(inv.Files, []string{"local.PY"}) {
+		t.Fatalf("unexpected source file inventory: %+v", inv)
+	}
 	if len(data.Items) != 31 || data.InstalledCount != 3 || data.RunningCount != 1 || data.UnknownStateCount != 1 {
 		t.Fatalf("installed catalog=%+v", data)
 	}
@@ -67,7 +82,7 @@ func TestNativePluginCatalogRetainsEntireBundledAndUnknownInstalledDirectory(t *
 		}
 	}
 	encoded, _ := json.Marshal(data)
-	if strings.Contains(string(encoded), "do-not-return") || strings.Contains(string(encoded), "NativeGroup") {
+	if strings.Contains(string(encoded), "private-source-marker") || strings.Contains(string(encoded), "do-not-return") || strings.Contains(string(encoded), "NativeGroup") {
 		t.Fatal("catalog leaked plugin settings")
 	}
 	response := performFormRequest(handler, "/api/v1/user/manage", token, url.Values{"oper": {"add"}, "name": {"viewer"}, "password": {"strong-password"}, "pris": {""}})
@@ -76,6 +91,9 @@ func TestNativePluginCatalogRetainsEntireBundledAndUnknownInstalledDirectory(t *
 	}
 	viewer := loginForTest(t, handler, "viewer", "strong-password")
 	visible := list(viewer)
+	if visible.ExternalSources != nil {
+		t.Fatal("source inventory exposed to viewer")
+	}
 	var entries []pluginCatalogEntry
 	if err := json.Unmarshal([]byte(nativePluginCatalogJSON), &entries); err != nil {
 		t.Fatal(err)

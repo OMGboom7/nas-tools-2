@@ -65,7 +65,7 @@ func (s pluginService) archiveSource(actor, raw string) (archiveSource, error) {
 	if err != nil {
 		return archiveSource{}, err
 	}
-	scope := sitelogin.Hash([]any{authority, server, raw, loc.String(), s.archiveConfigPath, s.archiveContainer})
+	scope := sitelogin.Hash([]any{authority, server, raw, loc.String(), s.applicationConfigPath, s.archiveContainer})
 	return archiveSource{client: client, user: user, scope: scope, location: loc}, nil
 }
 

@@ -62,6 +62,9 @@ func (service pluginService) serveNativePluginCatalog(response http.ResponseWrit
 		writeAPIError(response, 502, 502, "plugin catalog or state is unavailable")
 		return
 	}
+	if administrator && service.applicationConfigPath != "" {
+		data.ExternalSources = readPluginSourceInventory(service.applicationConfigPath)
+	}
 	writeJSON(response, 200, map[string]any{"code": 0, "success": true, "data": data})
 }
 

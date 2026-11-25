@@ -14,37 +14,37 @@ import (
 )
 
 type pluginService struct {
-	autoSub           *autoSubAPI
-	disk              *diskSpaceAPI
-	helper            *downloaderHelperAPI
-	iyuu              *iyuuAPI
-	mteamFeed         *mteamFeedService
-	doubanSync        *doubanSyncAPI
-	archiveMedia      *mediaSyncAPI
-	archiveConfigPath string
-	archiveContainer  bool
-	legacyURL         string
-	client            *http.Client
-	system            *systemconfig.Store
-	auth              *nativeAuthentication
-	hosts             *nativeHostsPlugin
-	indexers          *nativeIndexerPlugins
-	subtitles         *subtitleAPI
-	openSubtitles     *openSubtitleAPI
-	library           *libraryScraper
-	mediaRefresh      *mediaRefreshAPI
-	eventWebhook      *eventWebhookAPI
-	speedLimiter      *speedLimiterAPI
-	mediaSyncDelete   *mediaSyncDeleteAPI
-	movieLike         *movieLikeAPI
-	siteSignin        *siteSigninAPI
-	cloudflare        *cloudflareAPI
-	cookieCloud       *cookieCloudAPI
-	torrentMark       *torrentMarkAPI
-	torrentTransfer   *torrentTransferAPI
-	torrentRemover    *torrentRemovalAPI
-	autoBackup        *autoBackupAPI
-	syncTimer         *organizationAPI
+	autoSub               *autoSubAPI
+	disk                  *diskSpaceAPI
+	helper                *downloaderHelperAPI
+	iyuu                  *iyuuAPI
+	mteamFeed             *mteamFeedService
+	doubanSync            *doubanSyncAPI
+	archiveMedia          *mediaSyncAPI
+	applicationConfigPath string
+	archiveContainer      bool
+	legacyURL             string
+	client                *http.Client
+	system                *systemconfig.Store
+	auth                  *nativeAuthentication
+	hosts                 *nativeHostsPlugin
+	indexers              *nativeIndexerPlugins
+	subtitles             *subtitleAPI
+	openSubtitles         *openSubtitleAPI
+	library               *libraryScraper
+	mediaRefresh          *mediaRefreshAPI
+	eventWebhook          *eventWebhookAPI
+	speedLimiter          *speedLimiterAPI
+	mediaSyncDelete       *mediaSyncDeleteAPI
+	movieLike             *movieLikeAPI
+	siteSignin            *siteSigninAPI
+	cloudflare            *cloudflareAPI
+	cookieCloud           *cookieCloudAPI
+	torrentMark           *torrentMarkAPI
+	torrentTransfer       *torrentTransferAPI
+	torrentRemover        *torrentRemovalAPI
+	autoBackup            *autoBackupAPI
+	syncTimer             *organizationAPI
 }
 
 type pluginSummary struct {
@@ -68,10 +68,11 @@ type pluginSummary struct {
 }
 
 type pluginsData struct {
-	Items             []pluginSummary `json:"items"`
-	InstalledCount    int             `json:"installedCount"`
-	RunningCount      int             `json:"runningCount"`
-	UnknownStateCount int             `json:"unknownStateCount"`
+	Items             []pluginSummary        `json:"items"`
+	ExternalSources   *pluginSourceInventory `json:"externalSources,omitempty"`
+	InstalledCount    int                    `json:"installedCount"`
+	RunningCount      int                    `json:"runningCount"`
+	UnknownStateCount int                    `json:"unknownStateCount"`
 }
 
 var pluginIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,79}$`)
@@ -172,31 +173,51 @@ func (service pluginService) pluginForMutation(ctx context.Context, response htt
 			if entry.AuthLevel > 1 && !administrator {
 				return nil, true
 			}
-			installed, err := service.nativeMetadataInstalled(ctx)
-			if err != nil {
-				writeAPIError(response, 502, 502, "installed plugin state is unavailable")
-				return nil, false
-			}
-			return &pluginSummary{ID: id, Installed: slices.Contains(installed, id)}, true
+			return service.localPluginForMutation(ctx, response, id)
 		}
 		if service.legacyURL == "" {
 			return nil, true
 		}
 	}
-	data, result, err := service.list(ctx, token)
+	result, err := service.legacyMarket(ctx, token)
 	if !handlePluginResult(response, result, err, "plugin list is unavailable") {
 		return nil, false
 	}
-	for _, item := range data.Items {
-		if item.ID == id {
-			return &item, true
+	for key, raw := range objectValue(result["result"]) {
+		entry := objectValue(raw)
+		if pluginMarketID(key, entry) != id {
+			continue
 		}
+		if service.system != nil {
+			return service.localPluginForMutation(ctx, response, id)
+		}
+		return &pluginSummary{ID: id, Installed: truthy(entry["installed"])}, true
 	}
 	return nil, true
 }
 
+func (service pluginService) localPluginForMutation(ctx context.Context, response http.ResponseWriter, id string) (*pluginSummary, bool) {
+	ids, err := service.nativeMetadataInstalled(ctx)
+	if err != nil {
+		writeAPIError(response, 502, 502, "installed plugin state is unavailable")
+		return nil, false
+	}
+	return &pluginSummary{ID: id, Installed: slices.Contains(ids, id)}, true
+}
+
+func (service pluginService) legacyMarket(ctx context.Context, token string) (map[string]any, error) {
+	return postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/apps", token, nil)
+}
+
+func pluginMarketID(key string, entry map[string]any) string {
+	if id := strings.TrimSpace(text(entry["id"])); id != "" {
+		return id
+	}
+	return strings.TrimSpace(key)
+}
+
 func (service pluginService) list(ctx context.Context, token string) (pluginsData, map[string]any, error) {
-	appsResult, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/apps", token, nil)
+	appsResult, err := service.legacyMarket(ctx, token)
 	if err != nil || int(number(appsResult["code"])) != 0 {
 		return pluginsData{}, appsResult, err
 	}
@@ -210,10 +231,7 @@ func (service pluginService) list(ctx context.Context, token string) (pluginsDat
 	data := pluginsData{Items: make([]pluginSummary, 0, len(apps))}
 	for key, raw := range apps {
 		app := objectValue(raw)
-		id := strings.TrimSpace(text(app["id"]))
-		if id == "" {
-			id = strings.TrimSpace(key)
-		}
+		id := pluginMarketID(key, app)
 		if !pluginIDPattern.MatchString(id) {
 			continue
 		}

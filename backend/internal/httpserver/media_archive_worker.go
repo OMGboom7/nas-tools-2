@@ -131,7 +131,7 @@ func (s pluginService) archiveTick(ctx context.Context, now time.Time) error {
 		return ctx.Err()
 	}
 	name := "归档_" + now.In(loc).Format("20060102150405") + ".md"
-	result, err := mediaarchive.Generate(ctx, s.archiveConfigPath, cfg.Path, s.archiveContainer, name, keep, func(w io.Writer) (int, error) {
+	result, err := mediaarchive.Generate(ctx, s.applicationConfigPath, cfg.Path, s.archiveContainer, name, keep, func(w io.Writer) (int, error) {
 		return source.client.WriteArchive(ctx, source.user, w)
 	}, current)
 	c.Running = false
@@ -155,7 +155,7 @@ func (s pluginService) archiveTick(ctx context.Context, now time.Time) error {
 	}
 	dir := cfg.Path
 	if s.archiveContainer || dir == "" {
-		dir = filepath.Join(filepath.Dir(s.archiveConfigPath), "archive_file", "media_library")
+		dir = filepath.Join(filepath.Dir(s.applicationConfigPath), "archive_file", "media_library")
 	}
 	return s.system.Transaction(ctx, func(tx *sql.Tx) error {
 		err := systemconfig.UpdateManyTx(ctx, tx, archiveKeys, func(actual map[string]string) (map[string]string, error) {

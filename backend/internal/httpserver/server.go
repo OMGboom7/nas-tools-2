@@ -751,7 +751,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/{id}/test", notifications.test)
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
-	plugins := pluginService{archiveConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
+	plugins := pluginService{applicationConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	if cfg.DisableLegacy && organization.CopySupported && nativeSiteLogin != nil && organizationJobs != nil && nativeSystemConfig != nil {
 		plugins.disk = &diskSpaceAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, cfg.ApplicationConfigPath}
 		plugins.autoSub = &autoSubAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, transport}
