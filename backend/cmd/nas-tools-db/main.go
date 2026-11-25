@@ -19,6 +19,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "save-subscription" {
+		if err := httpserver.ResolvedSubscriptionCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("subscription write unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "search-titles" {
 		if err := httpserver.SearchTitlesCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("media title search unavailable")

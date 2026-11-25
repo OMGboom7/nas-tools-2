@@ -238,7 +238,8 @@ def search_media_by_message(started, in_from: SearchType, user_id, user_name=Non
         Message().send_channel_msg(expected_scope=scope, channel=in_from, title="输入有误！", user_id=user_id)
         return
     if decision.get("selected"):
-        __use_media_choice(action, _selected_media(decision["selected"]), False, in_from, user_id, user_name, scope)
+        choice = dict(conversation, revision=decision["revision"], index=decision["index"])
+        __use_media_choice(action, _selected_media(decision["selected"]), False, in_from, user_id, user_name, scope, choice)
         return
     input_str = decision.get("query", "")
     if not input_str:
@@ -336,14 +337,16 @@ def search_media_by_message(started, in_from: SearchType, user_id, user_name=Non
             Message().send_channel_list_msg(expected_scope=scope, channel=in_from, title=f"共找到{len(choices)}条相关信息，请回复对应序号",
                                             medias=choices, user_id=user_id)
         elif result.get("selected"):
-            __use_media_choice(result["action"], choices[0], True, in_from, user_id, user_name, scope)
+            choice = dict(conversation, revision=result["revision"], index=result["index"])
+            __use_media_choice(result["action"], choices[0], True, in_from, user_id, user_name, scope, choice)
 
 
-def __use_media_choice(action, media, single, channel, user_id, user_name, scope):
+def __use_media_choice(action, media, single, channel, user_id, user_name, scope, choice):
+    choice["selector"] = f"DB:{media.douban_id}" if media.douban_id else str(media.tmdb_id)
     if scope and not Message().get_interactive_client(channel, scope):
         return
     if action == "subscribe":
-        __rss_media(channel, media, user_id, user_name=user_name, scope=scope)
+        __rss_media(channel, media, user_id, user_name=user_name, scope=scope, choice=choice)
         return
     if media.douban_id:
         original = media
@@ -369,10 +372,10 @@ def __use_media_choice(action, media, single, channel, user_id, user_name, scope
         Message().send_channel_msg(expected_scope=scope, channel=channel, title=media.get_title_vote_string(),
                                    text=media.get_overview_string(), image=media.get_message_image(),
                                    url=media.get_detail_url(), user_id=user_id)
-    __search_media(channel, media, user_id, user_name, scope)
+    __search_media(channel, media, user_id, user_name, scope, choice)
 
 
-def __search_media(in_from, media_info, user_id, user_name, scope):
+def __search_media(in_from, media_info, user_id, user_name, scope, choice):
     """
     开始搜索和发送消息
     """
@@ -423,16 +426,18 @@ def __search_media(in_from, media_info, user_id, user_name, scope):
                     media_info=media_info,
                     user_id=user_id,
                     state='R',
-                    user_name=user_name, scope=scope)
+                    user_name=user_name, scope=scope, choice=choice)
 
 
-def __rss_media(in_from, media_info, user_id=None, state='D', user_name=None, scope=None):
+def __rss_media(in_from, media_info, user_id=None, state='D', user_name=None, scope=None, choice=None):
     """
     开始添加订阅和发送消息
     """
     # 添加订阅
     mediaid = f"DB:{media_info.douban_id}" if media_info.douban_id else media_info.tmdb_id
-    code, msg, media_info = Subscribe().add_rss_subscribe(mtype=media_info.type,
+    if choice:
+        mediaid = choice["selector"]
+    code, msg, saved_media = Subscribe().add_rss_subscribe(mtype=media_info.type,
                                                           name=media_info.title,
                                                           year=media_info.year,
                                                           channel=RssType.Auto,
@@ -443,9 +448,11 @@ def __rss_media(in_from, media_info, user_id=None, state='D', user_name=None, sc
                                                           search_sites=media_info.search_sites,
                                                           download_setting=media_info.download_setting,
                                                           in_from=in_from,
-                                                          user_name=user_name)
+                                                          user_name=user_name, chat_choice=choice)
+    if code == 4:
+        return
     if code == 0:
-        log.info("【Web】%s %s 已添加订阅" % (media_info.type.value, media_info.get_title_string()))
+        log.info("【Web】%s %s 已添加订阅" % (saved_media.type.value, saved_media.get_title_string()))
     else:
         if in_from in Message().get_search_types():
             log.info("【Web】%s 添加订阅失败：%s" % (media_info.title, msg))

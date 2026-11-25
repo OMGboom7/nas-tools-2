@@ -19,6 +19,7 @@ type ChatChoiceReply struct {
 	Action   string          `json:"action"`
 	Query    string          `json:"query,omitempty"`
 	Revision string          `json:"revision,omitempty"`
+	Index    int             `json:"index,omitempty"`
 	Selected json.RawMessage `json:"selected,omitempty"`
 }
 
@@ -30,9 +31,9 @@ func (store *Store) StartChatChoice(ctx context.Context, channel, sender, messag
 		return ChatChoiceReply{Action: "ignore"}, nil
 	}
 	if n, err := strconv.ParseUint(msg, 10, 64); err == nil && n < 10 {
-		var mode string
+		var mode, revision string
 		var data []byte
-		err = store.database.QueryRowContext(ctx, "SELECT ACTION,CHOICES FROM GO_CHAT_CHOICE WHERE CHANNEL=? AND SENDER=?", channel, sender).Scan(&mode, &data)
+		err = store.database.QueryRowContext(ctx, "SELECT ACTION,REVISION,CHOICES FROM GO_CHAT_CHOICE WHERE CHANNEL=? AND SENDER=?", channel, sender).Scan(&mode, &revision, &data)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ChatChoiceReply{Action: "invalid"}, nil
 		}
@@ -48,7 +49,7 @@ func (store *Store) StartChatChoice(ctx context.Context, channel, sender, messag
 		if n == 0 || n > uint64(len(rows)) {
 			return ChatChoiceReply{Action: "invalid"}, nil
 		}
-		return ChatChoiceReply{Action: mode, Selected: rows[n-1]}, nil
+		return ChatChoiceReply{Action: mode, Revision: revision, Index: int(n), Selected: rows[n-1]}, nil
 	}
 	action, query := "search", msg
 	switch {
@@ -108,7 +109,7 @@ func (store *Store) PublishChatChoices(ctx context.Context, channel, sender, rev
 		return ChatChoiceReply{}, err
 	}
 	if len(rows) == 1 {
-		return ChatChoiceReply{Action: action, Selected: rows[0]}, nil
+		return ChatChoiceReply{Action: action, Revision: revision, Index: 1, Selected: rows[0]}, nil
 	}
 	return ChatChoiceReply{Action: "menu"}, nil
 }

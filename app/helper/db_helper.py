@@ -2,6 +2,8 @@ import datetime
 import os.path
 import time
 import json
+import subprocess
+from config import run_go_helper
 from enum import Enum
 from sqlalchemy import cast, func, and_, case
 
@@ -678,7 +680,38 @@ class DbHelper:
         else:
             return False
 
-    @DbPersist(_db)
+    @staticmethod
+    def save_rss_subscription(media, kind, *, state, rss_sites, search_sites, over_edition, filter_restype,
+                              filter_pix, filter_team, filter_rule, filter_include, filter_exclude, save_path,
+                              download_setting, fuzzy_match, desc, note, keyword, total_ep=None, current_ep=None,
+                              total=0, lack=0, rssid=None, default_kind="", choose_season=False, season=None,
+                              douban=False, choice=None):
+        if not media or not media.title:
+            return {"code": -1, "message": "标题或类型有误"}
+        fields = {
+            "NAME": media.title, "YEAR": media.year, "TMDBID": media.tmdb_id, "IMAGE": media.get_message_image(),
+            "STATE": state, "RSS_SITES": rss_sites or [], "SEARCH_SITES": search_sites or [],
+            "OVER_EDITION": over_edition, "FILTER_RESTYPE": filter_restype, "FILTER_PIX": filter_pix,
+            "FILTER_TEAM": filter_team, "FILTER_RULE": filter_rule, "FILTER_INCLUDE": filter_include,
+            "FILTER_EXCLUDE": filter_exclude, "SAVE_PATH": save_path, "DOWNLOAD_SETTING": download_setting,
+            "FUZZY_MATCH": int(bool(fuzzy_match)), "DESC": desc, "NOTE": note, "KEYWORD": keyword,
+            "TOTAL_EP": total_ep, "CURRENT_EP": current_ep,
+        }
+        if kind == "TV":
+            fields.update(SEASON="" if fuzzy_match and media.begin_season is None else media.get_season_string(),
+                          TOTAL=total, LACK=lack)
+        seasons = [{"season_number": item.get("season_number"), "episode_count": item.get("episode_count")}
+                   for item in media.tmdb_info.get("seasons") or []] if choose_season else []
+        request = {"kind": kind, "editID": str(rssid or ""), "defaultKind": default_kind, "fields": fields,
+                   "chooseSeason": choose_season, "season": season, "seasons": seasons, "douban": douban,
+                   "endSeason": media.end_season if choose_season else None,
+                   "sourceID": f"DB:{media.douban_id}" if choice and media.douban_id else str(media.tmdb_id),
+                   "choice": choice}
+        try:
+            return json.loads(run_go_helper("save-subscription", payload=json.dumps(request).encode(), timeout=20))
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+            return {"code": -1, "message": "订阅写入结果未确认，请查看订阅列表"}
+
     def insert_rss_movie(self, media_info,
                          state='D',
                          rss_sites=None,
@@ -696,42 +729,12 @@ class DbHelper:
                          desc=None,
                          note=None,
                          keyword=None):
-        """
-        新增RSS电影
-        """
-        if search_sites is None:
-            search_sites = []
-        if rss_sites is None:
-            rss_sites = []
-        if not media_info:
-            return -1
-        if not media_info.title:
-            return -1
-        if self.is_exists_rss_movie(media_info.title, media_info.year):
-            return 9
-        self._db.insert(RSSMOVIES(
-            NAME=media_info.title,
-            YEAR=media_info.year,
-            TMDBID=media_info.tmdb_id,
-            IMAGE=media_info.get_message_image(),
-            RSS_SITES=json.dumps(rss_sites),
-            SEARCH_SITES=json.dumps(search_sites),
-            OVER_EDITION=over_edition,
-            FILTER_RESTYPE=filter_restype,
-            FILTER_PIX=filter_pix,
-            FILTER_RULE=filter_rule,
-            FILTER_TEAM=filter_team,
-            FILTER_INCLUDE=filter_include,
-            FILTER_EXCLUDE=filter_exclude,
-            SAVE_PATH=save_path,
-            DOWNLOAD_SETTING=download_setting,
-            FUZZY_MATCH=fuzzy_match,
-            STATE=state,
-            DESC=desc,
-            NOTE=note,
-            KEYWORD=keyword
-        ))
-        return 0
+        result = self.save_rss_subscription(
+            media_info, "MOV", state=state, rss_sites=rss_sites, search_sites=search_sites, over_edition=over_edition,
+            filter_restype=filter_restype, filter_pix=filter_pix, filter_team=filter_team, filter_rule=filter_rule,
+            filter_include=filter_include, filter_exclude=filter_exclude, save_path=save_path,
+            download_setting=download_setting, fuzzy_match=fuzzy_match, desc=desc, note=note, keyword=keyword)
+        return result["code"]
 
     @DbPersist(_db)
     def delete_rss_movie(self, title=None, year=None, rssid=None, tmdbid=None):
@@ -875,7 +878,6 @@ class DbHelper:
         else:
             return False
 
-    @DbPersist(_db)
     def insert_rss_tv(self,
                       media_info,
                       total,
@@ -898,51 +900,13 @@ class DbHelper:
                       desc=None,
                       note=None,
                       keyword=None):
-        """
-        新增RSS电视剧
-        """
-        if search_sites is None:
-            search_sites = []
-        if rss_sites is None:
-            rss_sites = []
-        if not media_info:
-            return -1
-        if not media_info.title:
-            return -1
-        if fuzzy_match and media_info.begin_season is None:
-            season_str = ""
-        else:
-            season_str = media_info.get_season_string()
-        if self.is_exists_rss_tv(media_info.title, media_info.year, season_str):
-            return 9
-        self._db.insert(RSSTVS(
-            NAME=media_info.title,
-            YEAR=media_info.year,
-            SEASON=season_str,
-            TMDBID=media_info.tmdb_id,
-            IMAGE=media_info.get_message_image(),
-            RSS_SITES=json.dumps(rss_sites),
-            SEARCH_SITES=json.dumps(search_sites),
-            OVER_EDITION=over_edition,
-            FILTER_RESTYPE=filter_restype,
-            FILTER_PIX=filter_pix,
-            FILTER_RULE=filter_rule,
-            FILTER_TEAM=filter_team,
-            FILTER_INCLUDE=filter_include,
-            FILTER_EXCLUDE=filter_exclude,
-            SAVE_PATH=save_path,
-            DOWNLOAD_SETTING=download_setting,
-            FUZZY_MATCH=fuzzy_match,
-            TOTAL_EP=total_ep,
-            CURRENT_EP=current_ep,
-            TOTAL=total,
-            LACK=lack,
-            STATE=state,
-            DESC=desc,
-            NOTE=note,
-            KEYWORD=keyword
-        ))
-        return 0
+        result = self.save_rss_subscription(
+            media_info, "TV", state=state, rss_sites=rss_sites, search_sites=search_sites, over_edition=over_edition,
+            filter_restype=filter_restype, filter_pix=filter_pix, filter_team=filter_team, filter_rule=filter_rule,
+            filter_include=filter_include, filter_exclude=filter_exclude, save_path=save_path,
+            download_setting=download_setting, fuzzy_match=fuzzy_match, desc=desc, note=note, keyword=keyword,
+            total=total, lack=lack, total_ep=total_ep, current_ep=current_ep)
+        return result["code"]
 
     @DbPersist(_db)
     def update_rss_tv_lack(self, title=None, year=None, season=None, rssid=None, lack_episodes: list = None):

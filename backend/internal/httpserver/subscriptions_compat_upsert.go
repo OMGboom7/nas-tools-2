@@ -168,7 +168,12 @@ func applyStoredSubscriptionDefaults(stored string, input *subscriptionUpsertReq
 		return nil
 	}
 	var defaults map[string]any
-	if err := json.Unmarshal([]byte(stored), &defaults); err != nil {
+	if !json.Valid([]byte(stored)) {
+		return errors.New("invalid stored subscription defaults")
+	}
+	decoder := json.NewDecoder(strings.NewReader(stored))
+	decoder.UseNumber()
+	if err := decoder.Decode(&defaults); err != nil {
 		return err
 	}
 	if input.Quality == "" {

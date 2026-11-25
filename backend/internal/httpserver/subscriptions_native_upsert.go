@@ -84,30 +84,6 @@ func (service subscriptionService) upsertNativeSubscription(ctx context.Context,
 // RSS subscriptions share the same transaction with their processed marker
 // and successful task counter. No local completion is recorded before a write.
 func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input subscriptionUpsertRequest, metadata *nativeSubscriptionMetadata) (int64, error) {
-	var id int64
-	if input.ID != "" {
-		parsed, err := strconv.ParseInt(input.ID, 10, 64)
-		if err != nil || parsed <= 0 {
-			return 0, errInvalidSubscriptionSelector
-		}
-		id = parsed
-	}
-	table := "RSS_MOVIES"
-	if input.Type == "TV" {
-		table = "RSS_TVS"
-	}
-	if _, err := transaction.ExecContext(ctx, nativeSubscriptionSchema(input.Type)); err != nil {
-		return 0, err
-	}
-	if id != 0 {
-		var exists int
-		if err := transaction.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+" WHERE ID=?)", id).Scan(&exists); err != nil {
-			return 0, err
-		}
-		if exists == 0 {
-			return 0, sql.ErrNoRows
-		}
-	}
 	season := ""
 	if input.Type == "TV" && input.Season != "" {
 		number, _ := strconv.Atoi(input.Season) // validateSubscription normalized this value.
@@ -128,21 +104,6 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 		if input.CurrentEpisode != nil {
 			currentEpisode = *input.CurrentEpisode
 		}
-	}
-	duplicateQuery := "SELECT EXISTS(SELECT 1 FROM " + table + " WHERE NAME=? AND YEAR=?"
-	duplicateArgs := []any{name, year}
-	if input.Type == "TV" {
-		duplicateQuery += " AND SEASON=?"
-		duplicateArgs = append(duplicateArgs, season)
-	}
-	duplicateQuery += " AND ID<>?)"
-	duplicateArgs = append(duplicateArgs, id)
-	var duplicate int
-	if err := transaction.QueryRowContext(ctx, duplicateQuery, duplicateArgs...).Scan(&duplicate); err != nil {
-		return 0, err
-	}
-	if duplicate != 0 {
-		return 0, errSubscriptionAlreadyExists
 	}
 	if input.RSSSites == nil {
 		input.RSSSites = []string{}
@@ -170,39 +131,20 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 			downloadSetting = parsed
 		}
 	}
-	columns := "NAME,YEAR,TMDBID,IMAGE,RSS_SITES,SEARCH_SITES,OVER_EDITION,FILTER_RESTYPE,FILTER_PIX,FILTER_RULE,FILTER_TEAM,FILTER_INCLUDE,FILTER_EXCLUDE,SAVE_PATH,DOWNLOAD_SETTING,FUZZY_MATCH,STATE,DESC,NOTE,KEYWORD"
+	columns := subscriptionColumns
 	values := []any{name, year, tmdbID, image, string(rssSites), string(searchSites), boolInt(input.OverEdition), input.Quality, input.Resolution, filterRule, input.ReleaseGroup, input.Include, input.Exclude, input.SavePath, downloadSetting, fuzzy, state, description, note, input.Keyword}
 	if input.Type == "TV" {
-		columns += ",SEASON,TOTAL_EP,CURRENT_EP,TOTAL,LACK"
+		columns += tvSubscriptionColumns
 		values = append(values, season, totalEpisodes, currentEpisode, total, lack)
 	}
-	if id != 0 {
-		assignments := make([]string, 0, len(values))
-		for _, column := range strings.Split(columns, ",") {
-			assignments = append(assignments, column+"=?")
-		}
-		if input.OverEdition && !input.FuzzyMatch {
-			assignments = append(assignments, "FILTER_ORDER=NULL")
-		}
-		values = append(values, id)
-		if input.Type == "TV" {
-			if err := removeNativeTVEpisodes(ctx, transaction, id); err != nil {
-				return 0, err
-			}
-		}
-		if _, err := transaction.ExecContext(ctx, "UPDATE "+table+" SET "+strings.Join(assignments, ",")+" WHERE ID=?", values...); err != nil {
-			return 0, err
-		}
-	} else {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")
-		result, err := transaction.ExecContext(ctx, "INSERT INTO "+table+" ("+columns+") VALUES ("+placeholders+")", values...)
-		if err != nil {
-			return 0, err
-		}
-		id, err = result.LastInsertId()
-		if err != nil {
-			return 0, err
-		}
+	id, err := writeSubscriptionRow(ctx, transaction, subscriptionRow{
+		ID: input.ID, Kind: input.Type, Name: name, Year: year, Season: season,
+		Columns: columns, Values: values, ClearFilterOrder: input.OverEdition && !input.FuzzyMatch,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if input.ID == "" {
 		reference := "subscription:" + input.Type + ":" + strconv.FormatInt(id, 10)
 		if err := bus.EmitData(ctx, transaction, "rss_added", reference+":"+time.Now().UTC().Format(time.RFC3339Nano), reference, name+" 已添加订阅", "类型："+input.Type+"；年份："+year+"；季："+season, subscriptionEventData(map[string]any{
 			"NAME": name, "YEAR": year, "TMDBID": tmdbID, "SEASON": season, "IMAGE": image, "RSS_SITES": input.RSSSites, "SEARCH_SITES": input.SearchSites, "OVER_EDITION": input.OverEdition,
@@ -211,10 +153,88 @@ func upsertNativeSubscriptionTx(ctx context.Context, transaction *sql.Tx, input 
 			return 0, err
 		}
 	}
-	if err := revokeFuzzyGrantTx(ctx, transaction, input.Type, id); err != nil {
+	return id, nil
+}
+
+type subscriptionRow struct {
+	ID, Kind, Columns            string
+	Name, Year, Season           any
+	Values                       []any
+	AllSeasons, ClearFilterOrder bool
+}
+
+// Both the Go API and installed legacy clients reserve the writer before the
+// duplicate check. An edit keeps its original row and episode data on failure.
+func writeSubscriptionRow(ctx context.Context, transaction *sql.Tx, row subscriptionRow) (int64, error) {
+	var id int64
+	if row.ID != "" {
+		parsed, err := strconv.ParseInt(row.ID, 10, 64)
+		if err != nil || parsed <= 0 {
+			return 0, errInvalidSubscriptionSelector
+		}
+		id = parsed
+	}
+	table := "RSS_MOVIES"
+	if row.Kind == "TV" {
+		table = "RSS_TVS"
+	}
+	if _, err := transaction.ExecContext(ctx, nativeSubscriptionSchema(row.Kind)); err != nil {
 		return 0, err
 	}
-	if err := closeEditionCycleTx(ctx, transaction, input.Type, id, "rule-upsert"); err != nil {
+	if id != 0 {
+		var exists int
+		if err := transaction.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+" WHERE ID=?)", id).Scan(&exists); err != nil {
+			return 0, err
+		}
+		if exists == 0 {
+			return 0, sql.ErrNoRows
+		}
+	}
+	duplicateQuery := "SELECT EXISTS(SELECT 1 FROM " + table + " WHERE NAME=? AND YEAR IS ?"
+	duplicateArgs := []any{row.Name, row.Year}
+	if row.Kind == "TV" && !row.AllSeasons {
+		duplicateQuery += " AND SEASON=?"
+		duplicateArgs = append(duplicateArgs, row.Season)
+	}
+	duplicateQuery += " AND ID<>?)"
+	duplicateArgs = append(duplicateArgs, id)
+	var duplicate int
+	if err := transaction.QueryRowContext(ctx, duplicateQuery, duplicateArgs...).Scan(&duplicate); err != nil {
+		return 0, err
+	}
+	if duplicate != 0 {
+		return 0, errSubscriptionAlreadyExists
+	}
+	var statement string
+	if id != 0 {
+		assignments := make([]string, 0, len(row.Values))
+		for _, column := range strings.Split(row.Columns, ",") {
+			assignments = append(assignments, column+"=?")
+		}
+		if row.ClearFilterOrder {
+			assignments = append(assignments, "FILTER_ORDER=NULL")
+		}
+		row.Values = append(row.Values, id)
+		if row.Kind == "TV" {
+			if err := removeNativeTVEpisodes(ctx, transaction, id); err != nil {
+				return 0, err
+			}
+		}
+		statement = "UPDATE " + table + " SET " + strings.Join(assignments, ",") + " WHERE ID=? RETURNING ID"
+	} else {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(row.Values)), ",")
+		statement = "INSERT INTO " + table + " (" + row.Columns + ") VALUES (" + placeholders + ") RETURNING ID"
+	}
+	if err := transaction.QueryRowContext(ctx, statement, row.Values...).Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, errors.New("subscription write did not affect a row")
+		}
+		return 0, err
+	}
+	if err := revokeFuzzyGrantTx(ctx, transaction, row.Kind, id); err != nil {
+		return 0, err
+	}
+	if err := closeEditionCycleTx(ctx, transaction, row.Kind, id, "rule-upsert"); err != nil {
 		return 0, err
 	}
 	return id, nil
