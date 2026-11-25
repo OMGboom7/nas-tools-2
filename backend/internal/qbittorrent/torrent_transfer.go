@@ -368,3 +368,13 @@ func (c *Client) RecheckTransfer(ctx context.Context, expected torrenttransfer.T
 func (c *Client) StartTransfer(ctx context.Context, expected torrenttransfer.Task, m torrentmeta.TransferMetadata) error {
 	return c.transferAction(ctx, expected, m, true)
 }
+
+func (c *Client) TransferWireID(ctx context.Context, m torrentmeta.TransferMetadata) (string, error) {
+	p, err := c.TransferCapabilities(ctx)
+	if err != nil {
+		return "", err
+	}
+	return p.WireID(m)
+}
+
+var _ torrenttransfer.ReceiverClient = (*Client)(nil)

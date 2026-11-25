@@ -268,3 +268,15 @@ func (c *Client) RecheckTransfer(ctx context.Context, expected torrenttransfer.T
 func (c *Client) StartTransfer(ctx context.Context, expected torrenttransfer.Task, m torrentmeta.TransferMetadata) error {
 	return c.transferAction(ctx, expected, m, true)
 }
+
+func (c *Client) TransferWireID(ctx context.Context, m torrentmeta.TransferMetadata) (string, error) {
+	if !torrenttransfer.Hex(m.V1Hash, 40) {
+		return "", torrenttransfer.ErrProtocol
+	}
+	if _, err := c.TransferCapabilities(ctx); err != nil {
+		return "", err
+	}
+	return m.V1Hash, nil
+}
+
+var _ torrenttransfer.ReceiverClient = (*Client)(nil)
