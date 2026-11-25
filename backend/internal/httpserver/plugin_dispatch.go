@@ -129,6 +129,15 @@ func (s pluginService) unavailablePlugin(w http.ResponseWriter, r *http.Request,
 		}
 		for _, current := range installed {
 			if current == id {
+				external, err := s.externalPluginCatalog(r.Context(), id)
+				if err != nil {
+					writeAPIError(w, 503, 503, "插件目录不可用")
+					return true
+				}
+				if entry, ok := external[id]; ok && !entry.Visible(pluginReaderLevel(admin)) {
+					writeAPIError(w, 404, 404, "未找到插件")
+					return true
+				}
 				writeAPIError(w, 409, 409, "已保留此扩展的安装记录，需要相应的 Go 实现")
 				return true
 			}

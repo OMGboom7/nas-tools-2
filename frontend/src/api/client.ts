@@ -803,6 +803,7 @@ export type PluginSummary = {
   canViewPage?: boolean;
   nativeBindingPage?: boolean;
   legacyConfigEditor?: boolean;
+  storedConfigViewer?: boolean;
   nativeHistoryPage?: boolean;
   nativeArchivePage?: boolean;
   stateKnown?: boolean;
@@ -836,6 +837,7 @@ export type PluginConfigField = {
 };
 
 export type PluginConfigDetail = {
+  stored?: { kind: string; other: number; fields: { key: string; kind: string; configured: boolean; switch?: boolean }[] };
   id: string;
   name: string;
   fields: PluginConfigField[];

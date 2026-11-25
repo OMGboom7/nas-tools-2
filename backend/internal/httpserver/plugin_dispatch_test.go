@@ -120,7 +120,14 @@ func TestUnavailableGoPluginRetainsExternalStateAndHonorsCatalogVisibility(t *te
 			{"POST", "/do", `{"cmd":"uninstall_plugin","data":{"id":"ExternalPlugin"}}`},
 		} {
 			w := nativeJSONRequest(h, route.method, route.path, actor.token, route.body)
-			if w.Code != actor.status || strings.Contains(w.Body.String(), "private-fixture") {
+			want := actor.status
+			if actor.token == admin && route.method == "GET" && route.path == "/api/v1/plugins/ExternalPlugin" {
+				want = http.StatusOK
+				if !strings.Contains(w.Body.String(), `"other":1`) || strings.Contains(w.Body.String(), `"key":"token"`) {
+					t.Fatal("undeclared stored configuration was not kept private", w.Body.String())
+				}
+			}
+			if w.Code != want || strings.Contains(w.Body.String(), "private-fixture") {
 				t.Fatal(route, w.Code, w.Body.String())
 			}
 		}

@@ -1,8 +1,12 @@
 package httpserver
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -77,4 +81,76 @@ func (inventory *pluginSourceInventory) attachClasses(raw string) {
 		slices.Sort(ids)
 		inventory.Classes[file] = slices.Compact(ids)
 	}
+}
+
+// Descriptions and permissions come from classes actually loaded by the old
+// application. A changed or removed source needs a fresh declaration.
+func (s pluginService) externalPluginCatalog(ctx context.Context, selected string) (map[string]systemconfig.PluginDeclaration, error) {
+	raw, err := s.system.Get(ctx, "GoExternalPluginCatalog")
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return map[string]systemconfig.PluginDeclaration{}, nil
+	}
+	var entries map[string]systemconfig.PluginDeclaration
+	if len(raw) > 4<<20 || json.Unmarshal([]byte(raw), &entries) != nil || len(entries) > 4096 {
+		return nil, errors.New("invalid external plugin catalog")
+	}
+	digests := map[string]string{}
+	for id, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if selected != "" && selected != id {
+			delete(entries, id)
+			continue
+		}
+		name := entry.Source
+		if entry.Fields["id"] != id || !systemconfig.ValidStoredPluginID(id) || entry.Level == nil || *entry.Level < 0 || name == "" || !filepath.IsLocal(name) || filepath.Base(name) != name || !strings.EqualFold(filepath.Ext(name), ".py") || len(entry.Digest) != sha256.Size*2 {
+			delete(entries, id)
+			continue
+		}
+		digest, checked := digests[name]
+		if !checked {
+			digest = pluginSourceDigest(filepath.Join(filepath.Dir(s.applicationConfigPath), "plugins", name))
+			digests[name] = digest
+		}
+		if digest != entry.Digest {
+			delete(entries, id)
+		}
+	}
+	return entries, nil
+}
+
+func pluginSourceDigest(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 8<<20 {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
+		return ""
+	}
+	sum := sha256.New()
+	if n, err := io.Copy(sum, io.LimitReader(f, (8<<20)+1)); err != nil || n != info.Size() {
+		return ""
+	}
+	current, err := os.Stat(path)
+	if err != nil || !os.SameFile(opened, current) || current.Size() != opened.Size() || !current.ModTime().Equal(opened.ModTime()) {
+		return ""
+	}
+	return hex.EncodeToString(sum.Sum(nil))
+}
+
+func pluginReaderLevel(administrator bool) int {
+	if administrator {
+		return 2
+	}
+	return 1
 }

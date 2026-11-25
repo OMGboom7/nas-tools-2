@@ -26,7 +26,10 @@ func (service pluginService) serveNativeLegacyPluginApps(response http.ResponseW
 	}
 	result := map[string]any{}
 	for _, item := range data.Items {
-		entry := metadata[item.ID]
+		entry, bundled := metadata[item.ID]
+		if !bundled {
+			entry.Icon, entry.Color = item.MarketIcon, item.MarketColor
+		}
 		result[item.ID] = map[string]any{"id": item.ID, "name": item.Name, "desc": item.Description, "version": item.Version, "author": item.Author, "author_url": item.AuthorURL, "installed": item.Installed, "icon": entry.Icon, "color": entry.Color, "native": item.Native}
 	}
 	// The old helper's statistics backend was disabled and returned {}.
@@ -65,8 +68,19 @@ func (s pluginService) legacyCommandRoutes(reads map[string]http.HandlerFunc, ne
 			return
 		}
 		if read := reads[envelope.Cmd]; read != nil {
-			// Both catalog reads are argument-free; never pass the command
-			// envelope into the installed-list form.
+			if envelope.Cmd == "get_plugins_conf" && len(envelope.Data) > 0 {
+				var input struct {
+					ID *string `json:"id"`
+				}
+				if json.Unmarshal(envelope.Data, &input) != nil {
+					writeAPIError(w, 400, 400, "插件配置查询无效")
+					return
+				}
+				if input.ID != nil {
+					r.PostForm = url.Values{"id": {*input.ID}}
+					r.Form = r.PostForm
+				}
+			}
 			r.Body = http.NoBody
 			r.ContentLength = 0
 			read(w, r)

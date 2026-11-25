@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os.path
 import traceback
 from threading import Thread
@@ -9,7 +11,7 @@ from app.plugins.event_manager import EventManager
 from app.utils import SystemUtils, PathUtils, ImageUtils
 from app.utils.commons import singleton
 from app.utils.types import SystemConfigKey
-from config import Config
+from config import Config, run_go_helper
 
 
 @singleton
@@ -43,12 +45,21 @@ class PluginManager:
             os.makedirs(self.user_plugin_path, exist_ok=True)
         self.system_plugin_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "modules")
         self._external_modules = {}
+        self._external_digests = {}
         if os.path.exists(self.user_plugin_path):
             for plugin_file in PathUtils.get_dir_level1_files(self.user_plugin_path, [".py"]):
                 status, _ = SystemUtils.copy(plugin_file, self.system_plugin_path)
                 if status == 0:
                     name = os.path.basename(plugin_file)
                     self._external_modules["app.plugins.modules." + os.path.splitext(name)[0]] = name
+                    try:
+                        with open(os.path.join(self.system_plugin_path, name), "rb") as module:
+                            digest = hashlib.sha256()
+                            for chunk in iter(lambda: module.read(65536), b""):
+                                digest.update(chunk)
+                        self._external_digests[name] = digest.hexdigest()
+                    except OSError:
+                        pass
         self.init_config()
 
     def init_config(self):
@@ -131,10 +142,16 @@ class PluginManager:
 
         # Keep the defining module of each discovered class for a later Go-only upgrade.
         sources = {}
+        catalog = {}
         for pid, plugin in self._plugins.items():
             name = self._external_modules.get(plugin.__module__)
             if name:
                 sources.setdefault(name, []).append(pid)
+                digest = self._external_digests.get(name)
+                if digest:
+                    catalog[pid] = {**self._market_declaration(pid, plugin), "source": name, "digest": digest}
+        if catalog != (self.systemconfig.get("GoExternalPluginCatalog") or {}):
+            self.systemconfig.set("GoExternalPluginCatalog", catalog)
         for ids in sources.values():
             ids.sort()
         if sources != (self.systemconfig.get("GoExternalPluginSources") or {}):
@@ -241,6 +258,32 @@ class PluginManager:
             return ImageUtils.calculate_theme_color(icon_path)
         return ""
 
+    def _record_external_fields(self, pid, plugin, fields, revision):
+        source = self._external_modules.get(plugin.__class__.__module__)
+        digest = self._external_digests.get(source)
+        if not digest:
+            return
+
+        # Only control identifiers are needed after upgrading. Free-form defaults,
+        # choices, scripts and values remain with the extension.
+        keys = set()
+        pending = [fields]
+        while pending and len(keys) <= 300:
+            node = pending.pop()
+            if isinstance(node, list):
+                pending.extend(node)
+            elif isinstance(node, dict):
+                key = node.get("id")
+                if isinstance(key, str) and 0 < len(key) <= 120:
+                    keys.add(key)
+                if isinstance(node.get("content"), (list, dict)):
+                    pending.append(node["content"])
+        if len(keys) <= 300:
+            record = {"digest": digest, "revision": revision, "keys": sorted(keys)}
+            setting = "GoExternalPluginFields." + pid
+            if self.systemconfig.get(setting) != record:
+                self.systemconfig.set(setting, record)
+
     def get_plugins_conf(self, auth_level, selected=None):
         """
         获取所有插件配置
@@ -279,63 +322,43 @@ class PluginManager:
                 conf.update({"script": plugin.get_script()})
             # 主题色
             conf.update({"color": self.__get_plugin_color(plugin)})
-            # 配置项
+            # Record fields only if the saved configuration stayed at the same revision
+            # while an administrator read the extension's live form.
+            external_form = auth_level >= 2 and plugin.__class__.__module__ in self._external_modules
+            revision = self.systemconfig.read_plugin_config(pid)["revision"] if external_form else None
             conf.update({"fields": plugin.get_fields() or {}})
-            # 配置值
-            if selected is None:
+            if selected is None and not external_form:
                 conf["config"] = self.get_plugin_config(pid)
             else:
                 stored = self.systemconfig.read_plugin_config(pid)
-                conf["config"] = {} if stored["value"] is None or stored["value"] == "" else stored["value"]
-                conf["config_revision"] = stored["revision"]
+                if selected is None:
+                    conf["config"] = stored["value"] or {}
+                else:
+                    conf["config"] = {} if stored["value"] is None or stored["value"] == "" else stored["value"]
+                    conf["config_revision"] = stored["revision"]
+                if external_form and revision == stored["revision"]:
+                    self._record_external_fields(pid, plugin, conf["fields"], revision)
             # 状态
             conf.update({"state": plugin.get_state()})
             # 汇总
             all_confs[pid] = conf
         return all_confs
 
+    def _market_declaration(self, pid, plugin):
+        attributes = {"module_name": "name", "module_desc": "desc", "module_version": "version",
+                      "module_icon": "icon", "module_author": "author", "author_url": "author_url"}
+        fields = {key: getattr(plugin, attr) for attr, key in attributes.items() if hasattr(plugin, attr)}
+        fields["id"] = pid
+        try:
+            fields["color"] = self.__get_plugin_color(plugin) if fields.get("icon") or getattr(plugin, "module_color", "") else ""
+        except (OSError, ValueError):
+            fields["color"] = ""
+        return {"level": getattr(plugin, "auth_level", 0), "fields": fields}
+
     def get_plugin_apps(self, auth_level):
-        """
-        获取所有插件
-        """
-        all_confs = {}
-        installed_apps = self.systemconfig.get(SystemConfigKey.UserInstalledPlugins) or []
-        for pid, plugin in self._plugins.items():
-            # 基本属性
-            conf = {}
-            # 权限
-            if hasattr(plugin, "auth_level") \
-                    and plugin.auth_level > auth_level:
-                continue
-            # ID
-            conf.update({"id": pid})
-            # 安装状态
-            if pid in installed_apps:
-                conf.update({"installed": True})
-            else:
-                conf.update({"installed": False})
-            # 名称
-            if hasattr(plugin, "module_name"):
-                conf.update({"name": plugin.module_name})
-            # 描述
-            if hasattr(plugin, "module_desc"):
-                conf.update({"desc": plugin.module_desc})
-            # 版本
-            if hasattr(plugin, "module_version"):
-                conf.update({"version": plugin.module_version})
-            # 图标
-            if hasattr(plugin, "module_icon"):
-                conf.update({"icon": plugin.module_icon})
-            # 主题色
-            conf.update({"color": self.__get_plugin_color(plugin)})
-            if hasattr(plugin, "module_author"):
-                conf.update({"author": plugin.module_author})
-            # 作者链接
-            if hasattr(plugin, "author_url"):
-                conf.update({"author_url": plugin.author_url})
-            # 汇总
-            all_confs[pid] = conf
-        return all_confs
+        declarations = [self._market_declaration(pid, plugin) for pid, plugin in self._plugins.items()]
+        rows = run_go_helper("plugin-market", str(auth_level), payload=json.dumps(declarations).encode())
+        return {row["id"]: row for row in json.loads(rows)}
 
     def get_plugin_commands(self):
         """

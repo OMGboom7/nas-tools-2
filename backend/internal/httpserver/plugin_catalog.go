@@ -314,6 +314,28 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		data.Items = append(data.Items, item)
 	}
+	external, err := service.externalPluginCatalog(ctx, "")
+	if err != nil {
+		return pluginsData{}, err
+	}
+	for id, entry := range external {
+		if _, bundled := catalog[id]; bundled || !entry.Visible(pluginReaderLevel(administrator)) {
+			continue
+		}
+		item := pluginSummary{
+			ID: id, Name: cleanPluginText(entry.Fields["name"], 120), Description: cleanPluginText(entry.Fields["desc"], 1000),
+			Version: cleanPluginText(entry.Fields["version"], 60), Author: cleanPluginText(entry.Fields["author"], 120), AuthorURL: safePluginURL(text(entry.Fields["author_url"])),
+			MarketIcon: cleanPluginText(entry.Fields["icon"], 200), MarketColor: cleanPluginText(entry.Fields["color"], 32),
+			Installed: installedSet[id], StateKnown: !installedSet[id],
+		}
+		if item.Name == "" {
+			item.Name = id
+		}
+		item.ActionsAvailable = service.legacyURL != "" && administrator && pluginIDPattern.MatchString(id)
+		item.LegacyConfigEditor = administrator && item.Installed && service.legacyURL != ""
+		item.StoredConfigViewer = administrator && item.Installed && service.legacyURL == ""
+		data.Items = append(data.Items, item)
+	}
 	// Preserve out-of-catalog installed IDs for administrators. They are not
 	// silently dropped or presented as known stopped/running implementations.
 	if administrator {
@@ -321,7 +343,10 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			if _, known := catalog[id]; known {
 				continue
 			}
-			item := pluginSummary{ID: id, Name: id, Description: "已保留原安装记录和配置。此扩展需要对应的 Go 实现才能运行。", Installed: true}
+			if _, declared := external[id]; declared {
+				continue
+			}
+			item := pluginSummary{StoredConfigViewer: service.legacyURL == "", ID: id, Name: id, Description: "已保留原安装记录和配置。此扩展需要对应的 Go 实现才能运行。", Installed: true}
 			if service.legacyURL != "" {
 				item.LegacyConfigEditor = true
 				item.Description = "已保留安装记录，可向旧服务查询此扩展当前提供的配置。"

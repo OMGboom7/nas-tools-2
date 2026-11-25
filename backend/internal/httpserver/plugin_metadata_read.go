@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/mediaarchive"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 func (service pluginService) nativeMetadataInstalled(ctx context.Context) ([]string, error) {
@@ -85,6 +86,16 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 		if !ok {
 			return
 		}
+		request.Body = http.MaxBytesReader(response, request.Body, 128<<10)
+		if err := request.ParseForm(); err != nil {
+			writeAPIError(response, 400, 400, "invalid plugin list request")
+			return
+		}
+		selected := strings.TrimSpace(request.PostForm.Get("id"))
+		if ids, present := request.PostForm["id"]; present && (len(ids) != 1 || !systemconfig.ValidStoredPluginID(selected)) {
+			writeAPIError(response, 400, 400, "invalid plugin id")
+			return
+		}
 		installed, err := service.nativeMetadataInstalled(request.Context())
 		if err != nil {
 			writeAPIError(response, 502, 502, "installed plugin state is unavailable")
@@ -99,14 +110,29 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 		var nativeIDs []string
 		seen := map[string]bool{}
 		var needsLegacy, privateConfig bool
+		// In mixed deployments the owner still enforces the current account's
+		// permissions when it returns a selected external plugin's live form.
+		var external map[string]systemconfig.PluginDeclaration
+
 		for _, id := range installed {
-			if seen[id] {
+			if seen[id] || (selected != "" && id != selected) {
 				continue
 			}
 			seen[id] = true
 			privateConfig = privateConfig || service.nativeTorrentTransfer(id) || service.nativeTorrentRemover(id) || service.nativeTorrentMark(id) || service.nativeCookieCloud(id) || service.nativeAutoBackup(id) || service.nativeSyncTimer(id) || service.nativeOpenSubtitles(id)
 			entry, bundled := catalog[id]
-			if !administrator && (!bundled || entry.AuthLevel > 1) {
+			if !bundled && external == nil {
+				external, err = service.externalPluginCatalog(request.Context(), selected)
+				if err != nil {
+					writeAPIError(response, 503, 503, "插件目录不可用")
+					return
+				}
+			}
+			declaration, observed := external[id]
+			if observed && !declaration.Visible(pluginReaderLevel(administrator)) {
+				continue
+			}
+			if !administrator && (!bundled && !observed || bundled && entry.AuthLevel > 1) {
 				continue
 			}
 			if service.ownsPlugin(id) {
@@ -123,11 +149,6 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 		if needsLegacy && service.legacyURL != "" {
 			if privateConfig {
 				writeAPIError(response, 501, 501, "混合插件配置请使用各自的配置页")
-				return
-			}
-			request.Body = http.MaxBytesReader(response, request.Body, 128<<10)
-			if err := request.ParseForm(); err != nil {
-				writeAPIError(response, 400, 400, "invalid plugin list request")
 				return
 			}
 			ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)

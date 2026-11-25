@@ -25,12 +25,7 @@ func PluginInstallation(ctx context.Context, configPath string, args []string, o
 	}
 	defer closeDB()
 	if list {
-		var raw string
-		err := db.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY='UserInstalledPlugins' ORDER BY ID DESC LIMIT 1").Scan(&raw)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		ids, err := systemconfig.DecodeInstalledPlugins(raw)
+		ids, err := readPluginInstallation(ctx, db)
 		if err != nil {
 			return err
 		}
@@ -45,6 +40,15 @@ func PluginInstallation(ctx context.Context, configPath string, args []string, o
 		return err
 	}
 	return tx.Commit()
+}
+
+func readPluginInstallation(ctx context.Context, db *sql.DB) ([]string, error) {
+	var raw string
+	err := db.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY='UserInstalledPlugins' ORDER BY ID DESC LIMIT 1").Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	return systemconfig.DecodeInstalledPlugins(raw)
 }
 
 func openPluginDatabase(configPath string, readOnly bool) (*sql.DB, func(), error) {

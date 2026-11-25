@@ -99,6 +99,17 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
     }
   }
 
+  if (state.kind === "ready" && state.detail.stored) {
+    const stored = state.detail.stored;
+    return <div className="editor-backdrop" role="presentation"><section className="service-editor plugin-config-editor" role="dialog" aria-label="已保存的扩展配置">
+      <header><div><h2>{state.detail.name}</h2><p>已保存的扩展配置（只读）</p></div><button type="button" aria-label="关闭" onClick={onClose}>×</button></header>
+      {stored.fields.length > 0 && <dl>{stored.fields.map(field => <div key={field.key}><dt>{field.key}</dt><dd>{typeof field.switch === "boolean" ? (field.switch ? "已开启" : "已关闭") : field.configured ? "已设置" : "空值"}</dd></div>)}</dl>}
+      {stored.other > 0 && <p>另有 {stored.other} 个已保存的字段缺少与当前配置对应的表单声明。</p>}
+      {stored.kind === "empty" || (stored.kind === "object" && !stored.fields.length && !stored.other) ? <p>尚无保存的配置项。</p> : stored.kind !== "object" && <p>已保留原扩展的{stored.kind === "list" ? "列表" : "文本"}配置。</p>}
+      <footer><button type="button" className="secondary-button" onClick={() => void load()}>刷新</button><button type="button" onClick={onClose}>关闭</button></footer>
+    </section></div>;
+  }
+
   return <div className="editor-backdrop" role="presentation"><form className="service-editor plugin-config-editor" aria-label={`配置插件 ${plugin.name}`} onSubmit={submit}>
     <header><div><p className="eyebrow">PLUGIN CONFIGURATION</p><h2>{plugin.name}</h2></div><button type="button" aria-label="关闭" onClick={onClose}>×</button></header>
     {state.kind === "loading" && <div className="plugin-config-loading"><span /><span /><span /></div>}

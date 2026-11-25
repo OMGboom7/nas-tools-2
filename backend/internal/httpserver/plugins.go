@@ -55,6 +55,9 @@ type pluginSummary struct {
 	AuthorURL          string `json:"authorUrl"`
 	Installed          bool   `json:"installed"`
 	Running            bool   `json:"running"`
+	StoredConfigViewer bool   `json:"storedConfigViewer,omitempty"`
+	MarketIcon         string `json:"-"`
+	MarketColor        string `json:"-"`
 	LegacyConfigEditor bool   `json:"legacyConfigEditor,omitempty"`
 	Configurable       bool   `json:"configurable"`
 	NativeBindingPage  bool   `json:"nativeBindingPage,omitempty"`
@@ -171,6 +174,17 @@ func (service pluginService) pluginForMutation(ctx context.Context, response htt
 		}
 		if entry, found := catalog[id]; found {
 			if entry.AuthLevel > 1 && !administrator {
+				return nil, true
+			}
+			return service.localPluginForMutation(ctx, response, id)
+		}
+		external, err := service.externalPluginCatalog(ctx, id)
+		if err != nil {
+			writeAPIError(response, 503, 503, "插件目录不可用")
+			return nil, false
+		}
+		if entry, known := external[id]; known {
+			if !entry.Visible(pluginReaderLevel(administrator)) {
 				return nil, true
 			}
 			return service.localPluginForMutation(ctx, response, id)

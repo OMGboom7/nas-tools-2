@@ -42,6 +42,7 @@ type pluginConfigField struct {
 }
 
 type pluginConfigDetail struct {
+	Stored *storedPluginSettings  `json:"stored,omitempty"`
 	ID     string                 `json:"id"`
 	Name   string                 `json:"name"`
 	Fields []pluginConfigField    `json:"fields"`
@@ -64,7 +65,7 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 	if service.dispatchPlugin(response, request, strings.TrimSpace(request.PathValue("id")), "get") {
 		return
 	}
-	if service.unavailablePluginRoute(response, request) {
+	if service.serveStoredPluginConfig(response, request, strings.TrimSpace(request.PathValue("id"))) || service.unavailablePluginRoute(response, request) {
 		return
 	}
 	token, ok := requireServiceToken(response, request)

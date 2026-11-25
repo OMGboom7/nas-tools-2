@@ -81,3 +81,43 @@ func ValidStoredPluginID(id string) bool {
 	}
 	return true
 }
+
+// InstalledPluginConfig reads the current membership and nullable old setting
+// in the same SQLite snapshot. It never creates a default configuration row.
+func (s *Store) InstalledPluginConfig(ctx context.Context, id string) (bool, string, error) {
+	if !ValidStoredPluginID(id) {
+		return false, "", ErrInvalidSetting
+	}
+	tx, err := s.database.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, "", err
+	}
+	defer tx.Rollback()
+	settings, err := readMany(ctx, tx, []string{"UserInstalledPlugins"})
+	if err != nil {
+		return false, "", err
+	}
+	ids, err := DecodeInstalledPlugins(settings["UserInstalledPlugins"])
+	if err != nil || !slices.Contains(ids, id) {
+		return false, "", err
+	}
+	var raw sql.NullString
+	err = tx.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", "plugin."+id).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, "", err
+	}
+	return true, raw.String, tx.Commit()
+}
+
+// PluginDeclaration contains display metadata from an actual loaded class.
+// Runtime state and installation membership are read independently.
+type PluginDeclaration struct {
+	Source string         `json:"source,omitempty"`
+	Digest string         `json:"digest,omitempty"`
+	Level  *int           `json:"level"`
+	Fields map[string]any `json:"fields"`
+}
+
+func (e PluginDeclaration) Visible(level int) bool {
+	return e.Level != nil && *e.Level >= 0 && *e.Level <= level
+}

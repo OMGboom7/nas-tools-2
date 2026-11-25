@@ -21,6 +21,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "plugin-market" {
+		if err := database.PluginMarket(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("plugin market unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "mteam-profile" || os.Args[1] == "mteam-detail") {
 		if err := builtinindexer.MTeamInspectCommand(context.Background(), os.Args[1], os.Stdin, os.Stdout); err != nil {
 			slog.Error("M-Team site request failed")
