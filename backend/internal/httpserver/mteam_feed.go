@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"slices"
@@ -33,6 +34,44 @@ type mteamFeedService struct {
 	server    *http.Server
 	cancel    context.CancelFunc
 	served    chan struct{}
+}
+
+func newMTeamFeed(system *systemconfig.Store, sites *siteconfig.Store, cfg *config.Store, limits *siteRequestLimiter, transport http.RoundTripper) *mteamFeedService {
+	return &mteamFeedService{system: system, sites: sites, config: cfg, limits: limits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}
+}
+
+// RunMTeamRSS serves the existing subscription address for a standalone legacy
+// plugin manager. Its stdin pipe closes on plugin unload or parent process exit.
+func RunMTeamRSS(path string, parent io.Reader, ready io.Writer) error {
+	db := (config.Application{Path: path}).UserDatabasePath()
+	system, err := systemconfig.Open(db)
+	if err != nil {
+		return err
+	}
+	defer system.Close()
+	sites, err := siteconfig.Open(db)
+	if err != nil {
+		return err
+	}
+	defer sites.Close()
+	feed := newMTeamFeed(system, sites, config.NewStore(path), &siteRequestLimiter{}, http.DefaultTransport)
+	return feed.serveParent(parent, ready)
+}
+
+func (feed *mteamFeedService) serveParent(parent io.Reader, ready io.Writer) error {
+	feed.lifecycle = context.Background()
+	if err := feed.reload(); err != nil {
+		return err
+	}
+	if feed.server == nil {
+		return errMTeamFeedStopped
+	}
+	defer feed.stopLocked()
+	if _, err := io.WriteString(ready, "ready\n"); err != nil {
+		return err
+	}
+	_, err := io.Copy(io.Discard, parent)
+	return err
 }
 
 func startMTeamFeed(ctx context.Context, feed *mteamFeedService) func() {

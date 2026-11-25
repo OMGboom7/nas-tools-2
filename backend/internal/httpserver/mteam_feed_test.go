@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
 )
@@ -199,6 +201,71 @@ func TestMTeamFeedFailedCategoriesAndChangedSource(t *testing.T) {
 func TestMTeamFeedListenerRestartPortConflictAndUninstall(t *testing.T) {
 	t.Run("standalone", func(t *testing.T) { testMTeamListener(t, false) })
 	t.Run("paired", func(t *testing.T) { testMTeamListener(t, true) })
+}
+
+func TestMTeamFeedLegacyParentPipe(t *testing.T) {
+	f := newMteamFixture(t, false)
+	f.action(t, "install", "", 200)
+	f.action(t, "config", `{"enabled":true,"watch_categories":["movie"]}`, 200)
+	port, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.feed.address = port.Addr().String()
+	var ready strings.Builder
+	if err := f.feed.serveParent(strings.NewReader(""), &ready); err == nil || ready.Len() != 0 {
+		t.Fatal("reported readiness on an occupied port")
+	}
+	port.Close()
+
+	parent, owner := io.Pipe()
+	defer owner.Close()
+	status, signal := io.Pipe()
+	defer status.Close()
+	done := make(chan error, 1)
+	go func() {
+		err := f.feed.serveParent(parent, signal)
+		signal.CloseWithError(err)
+		done <- err
+	}()
+	if line, err := bufio.NewReader(status).ReadString('\n'); err != nil || line != "ready\n" {
+		t.Fatal(line, err)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	read := func(code int, contains string) {
+		t.Helper()
+		res, err := client.Get("http://" + f.feed.address + "/rss_pub.xml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		data, err := io.ReadAll(res.Body)
+		if err != nil || res.StatusCode != code || !strings.Contains(string(data), contains) {
+			t.Fatal(res.StatusCode, string(data), err)
+		}
+	}
+	read(200, "Fixture &amp; Movie")
+	if err := f.feed.system.Set(t.Context(), mteamFeedKey, `{"enabled":false}`); err != nil {
+		t.Fatal(err)
+	}
+	read(503, "RSS settings changed")
+	if f.requests.Load() != 1 {
+		t.Fatal("unexpected fetch after disable")
+	}
+	owner.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener survived the owner pipe")
+	}
+	free, err := net.Listen("tcp4", f.feed.address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	free.Close()
 }
 
 func testMTeamListener(t *testing.T, paired bool) {

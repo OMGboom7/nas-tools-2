@@ -8,13 +8,6 @@ from config import Config, run_go_helper
 class MteamUtils:
 
     @staticmethod
-    def get_api_url(url):
-        parsed_url = urlparse(url)
-        index = parsed_url.hostname.index('m-team')
-        last_domain = parsed_url.hostname[index:]
-        return str(parsed_url.scheme) + "://" + 'api.' + last_domain
-
-    @staticmethod
     def is_site(url):
         try:
             host = urlparse(url).hostname or ""

@@ -795,7 +795,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		if cfg.DisableLegacy && nativeDownloaders != nil && nativeSiteLogin != nil {
 			plugins.helper = &downloaderHelperAPI{transfer: &transferAPI, downloads: &downloads}
 		}
-		plugins.mteamFeed = &mteamFeedService{system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, limits: siteLimits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}
+		plugins.mteamFeed = newMTeamFeed(nativeSystemConfig, nativeSites, nativeConfig, siteLimits, transport)
 	}
 	plugins.cookieCloud = cloudCookies
 	plugins.torrentMark = markAPI

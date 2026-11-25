@@ -12,11 +12,19 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/dbinit"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
+	"github.com/0xforee/nas-tools/backend/internal/httpserver"
 	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "mteam-rss-server" {
+		if err := httpserver.RunMTeamRSS(config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("M-Team RSS service could not run", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "mteam-statistics" {
 		if err := sitestats.MTeamStatisticsCommand(context.Background(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("M-Team account statistics unavailable")
