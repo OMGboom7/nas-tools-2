@@ -9,7 +9,9 @@ import (
 	"slices"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/douban"
 	"github.com/0xforee/nas-tools/backend/internal/initialsql"
+	"github.com/0xforee/nas-tools/backend/internal/scraper"
 )
 
 var initialScripts = []string{
@@ -77,8 +79,8 @@ func InitializeUserData(databasePath, configPath string) error {
 			return fmt.Errorf("cannot record completion of %s", name)
 		}
 	}
-	for key, fields := range legacy.Plugins {
-		if err := importLegacyPlugin(tx, key, fields); err != nil {
+	for key, fields := range legacy.Records {
+		if err := importLegacySetting(tx, key, fields); err != nil {
 			return err
 		}
 	}
@@ -118,14 +120,13 @@ func InitializeUserData(databasePath, configPath string) error {
 	return guard.Commit()
 }
 
-// A saved plugin configuration takes precedence over legacy YAML. The caller
+// A saved setting takes precedence over legacy YAML. The caller
 // holds an immediate write transaction, including during the existence check.
-func importLegacyPlugin(tx *sql.Tx, key string, fields map[string]any) error {
+func importLegacySetting(tx *sql.Tx, key string, fields any) error {
 	var previous sql.NullString
 	err := tx.QueryRow("SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&previous)
 	if err == nil {
-		var object map[string]json.RawMessage
-		if !previous.Valid || json.Unmarshal([]byte(previous.String), &object) != nil || object == nil {
+		if !previous.Valid || !validLegacySetting(key, previous.String) {
 			return fmt.Errorf("invalid saved configuration for %s; legacy YAML retained", key)
 		}
 		return nil
@@ -134,7 +135,7 @@ func importLegacyPlugin(tx *sql.Tx, key string, fields map[string]any) error {
 		return err
 	}
 	value, err := json.Marshal(fields)
-	if err != nil {
+	if err != nil || !validLegacySetting(key, string(value)) {
 		return fmt.Errorf("invalid legacy configuration for %s", key)
 	}
 	result, err := tx.Exec("INSERT INTO SYSTEM_DICT (TYPE,KEY,VALUE,NOTE) VALUES ('SystemConfig', ?, ?, '')", key, string(value))
@@ -145,6 +146,24 @@ func importLegacyPlugin(tx *sql.Tx, key string, fields map[string]any) error {
 		return fmt.Errorf("could not import configuration for %s", key)
 	}
 	return nil
+}
+
+// Validate with the native consumers before discarding the YAML source.
+func validLegacySetting(key, raw string) bool {
+	switch key {
+	case "UserIndexerSites":
+		var sites []string
+		return raw == "" || len(raw) <= 64<<10 && json.Unmarshal([]byte(raw), &sites) == nil && sites != nil && len(sites) <= 1024
+	case "UserScraperConf":
+		_, _, err := scraper.Parse(raw)
+		return err == nil
+	case "plugin.DoubanSync":
+		_, err := douban.ReadSettings(raw)
+		return err == nil
+	default:
+		var object map[string]json.RawMessage
+		return json.Unmarshal([]byte(raw), &object) == nil && object != nil
+	}
 }
 
 func applyInitialScript(tx *sql.Tx, name string) error {

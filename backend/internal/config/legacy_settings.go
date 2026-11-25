@@ -11,7 +11,7 @@ import (
 )
 
 type LegacySettings struct {
-	Plugins     map[string]map[string]any
+	Records     map[string]any
 	Downloaders []LegacyDownloader
 	// Only consume shared settings when the selected client has been imported.
 	RetireShared bool
@@ -27,7 +27,7 @@ type LegacyDownloader struct {
 	Directories                   []map[string]any
 }
 
-func (s LegacySettings) Empty() bool { return len(s.Plugins) == 0 && len(s.Downloaders) == 0 }
+func (s LegacySettings) Empty() bool { return len(s.Records) == 0 && len(s.Downloaders) == 0 }
 
 func (store *Store) LegacySettings() (LegacySettings, error) {
 	root, _, _, err := store.read()
@@ -41,11 +41,11 @@ var legacyPTKeys = []string{"pt_client", "pt_monitor", "pt_monitor_only", "rmt_m
 
 func readLegacySettings(root *yaml.Node) (LegacySettings, error) {
 	var settings LegacySettings
-	plugins, err := legacyPluginSettings(root)
+	records, err := legacySystemSettings(root)
 	if err != nil {
 		return settings, err
 	}
-	settings.Plugins = plugins
+	settings.Records = records
 	var source struct {
 		QB   any       `yaml:"qbittorrent"`
 		TR   any       `yaml:"transmission"`
@@ -131,11 +131,24 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 	if !reflect.DeepEqual(current, saved) {
 		return errors.New("legacy configuration changed during initialization")
 	}
-	var rootKeys []string
-	if current.Plugins["plugin.OpenSubtitles"] != nil || current.Plugins["plugin.ChineseSubFinder"] != nil {
+	var rootKeys, ptKeys []string
+	if current.Records["plugin.DoubanSync"] != nil {
+		rootKeys = append(rootKeys, "douban")
+	}
+	if scraper, ok := current.Records["UserScraperConf"].(map[string]any); ok {
+		for _, key := range []string{"scraper_nfo", "scraper_pic"} {
+			if _, exists := scraper[key]; exists {
+				rootKeys = append(rootKeys, key)
+			}
+		}
+	}
+	if current.Records["UserIndexerSites"] != nil {
+		ptKeys = append(ptKeys, "indexer_sites")
+	}
+	if current.Records["plugin.OpenSubtitles"] != nil || current.Records["plugin.ChineseSubFinder"] != nil {
 		rootKeys = append(rootKeys, "subtitle")
 	}
-	if current.Plugins["plugin.CustomReleaseGroups"] != nil {
+	if current.Records["plugin.CustomReleaseGroups"] != nil {
 		if err := retireMappingKeys(root, "laboratory", []string{"release_groups"}); err != nil {
 			return err
 		}
@@ -145,14 +158,12 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 	}
 	if current.RetireShared {
 		rootKeys = append(rootKeys, "downloaddir")
-		if err := retireMappingKeys(root, "pt", legacyPTKeys); err != nil {
-			return err
-		}
+		ptKeys = append(ptKeys, legacyPTKeys...)
+	} else if resolvedSelection {
+		ptKeys = append(ptKeys, "pt_client")
 	}
-	if resolvedSelection {
-		if err := retireMappingKeys(root, "pt", []string{"pt_client"}); err != nil {
-			return err
-		}
+	if err := retireMappingKeys(root, "pt", ptKeys); err != nil {
+		return err
 	}
 	if err := retireMappingKeys(root, "", rootKeys); err != nil {
 		return err

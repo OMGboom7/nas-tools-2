@@ -15,7 +15,7 @@ func TestRetireInheritedPluginSettings(t *testing.T) {
 	}
 	store := NewStore(path)
 	plans, err := store.LegacySettings()
-	if err != nil || len(plans.Plugins) != 2 {
+	if err != nil || len(plans.Records) != 2 {
 		t.Fatal("missing inherited settings", err)
 	}
 	if err := store.RetireLegacySettings(plans, false); err != nil {
@@ -29,7 +29,7 @@ func TestRetireInheritedPluginSettings(t *testing.T) {
 		t.Fatal("lost inherited fields")
 	}
 	next, err := store.LegacySettings()
-	if err != nil || len(next.Plugins) != 0 {
+	if err != nil || len(next.Records) != 0 {
 		t.Fatal("legacy fields remain active", err)
 	}
 	current, err := os.ReadFile(path)
@@ -46,7 +46,7 @@ func TestLegacyPluginCleanupRequiresMatchingSource(t *testing.T) {
 			t.Fatal(err)
 		}
 		fields, err := store.LegacySettings()
-		if err != nil || len(fields.Plugins) != 0 {
+		if err != nil || len(fields.Records) != 0 {
 			t.Fatal("disabled legacy setting", err)
 		}
 	}

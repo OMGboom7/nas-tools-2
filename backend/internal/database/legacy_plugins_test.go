@@ -111,3 +111,58 @@ func TestLegacyPluginSettingsPreserveInvalidDestination(t *testing.T) {
 	}
 	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='plugin.OpenSubtitles'", "broken-private-fixture")
 }
+
+func TestLegacyDoubanScraperAndIndexerSettings(t *testing.T) {
+	input := `douban: {users: [9007199254740993, "00012"], interval: "4", auto_search: false, auto_rss: true, cookie: fixture-only, days: 7, types: [wish]}
+scraper_nfo: {movie: {basic: true, credits: false, unknown: true}}
+scraper_pic: {tv: {poster: true}}
+pt: &pt {indexer_sites: [Alpha, MixedCase, Alpha], other: keep}
+other_pt: *pt
+`
+	db, path, cfg := initialFixture(t, "app: {}\n"+input)
+	if err := InitializeUserData(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	requireSchemaValue(t, db, `SELECT json_extract(VALUE,'$.enable')||json_extract(VALUE,'$.onlyonce')||json_extract(VALUE,'$.auto_search')||json_extract(VALUE,'$.auto_rss')||':'||json_extract(VALUE,'$.users[0]')||':'||json_extract(VALUE,'$.users[1]') FROM SYSTEM_DICT WHERE KEY='plugin.DoubanSync'`, "1001:9007199254740993:00012")
+	requireSchemaValue(t, db, `SELECT json_extract(VALUE,'$.scraper_nfo.movie.basic')||json_extract(VALUE,'$.scraper_nfo.movie.credits')||json_extract(VALUE,'$.scraper_nfo.movie.unknown')||json_extract(VALUE,'$.scraper_pic.tv.poster') FROM SYSTEM_DICT WHERE KEY='UserScraperConf'`, "1011")
+	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='UserIndexerSites'", `["Alpha","MixedCase","Alpha"]`)
+	requireSchemaValue(t, db, "SELECT COUNT(*) FROM SYSTEM_DICT WHERE KEY IN ('UserInstalledPlugins','GoDoubanSync')", "0")
+	values, err := config.NewStore(cfg).Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["douban"] != nil || values["scraper_nfo"] != nil || values["scraper_pic"] != nil || values["pt"].(map[string]any)["indexer_sites"] != nil || values["other_pt"].(map[string]any)["indexer_sites"] == nil {
+		t.Fatal("incorrect old keys after import")
+	}
+	if _, err := db.Exec(`UPDATE SYSTEM_DICT SET VALUE='[]' WHERE KEY='UserIndexerSites'; UPDATE SYSTEM_DICT SET VALUE='{"future":true,"enable":false}' WHERE KEY='plugin.DoubanSync'`); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate restoring only the old YAML while retaining the newer database.
+	if err := os.WriteFile(cfg, []byte("app: {}\n"+input), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitializeUserData(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='UserIndexerSites'", "[]")
+	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='plugin.DoubanSync'", `{"future":true,"enable":false}`)
+}
+
+func TestInvalidLegacyBusinessSettingsPreserveSource(t *testing.T) {
+	for _, old := range []string{
+		"pt: {indexer_sites: [site, {bad: fixture-private}]}",
+		"scraper_pic: {tv: {poster: fixture-private}}",
+		"douban: {days: fixture-private, cookie: fixture-private}",
+	} {
+		input := "app: {}\nlaboratory: {release_groups: Team}\n" + old + "\n"
+		db, path, cfg := initialFixture(t, input)
+		if err := InitializeUserData(path, cfg); err == nil || strings.Contains(err.Error(), "fixture-private") {
+			t.Fatal("expected redacted validation failure")
+		}
+		requireSchemaValue(t, db, "SELECT count(*) FROM SYSTEM_DICT WHERE KEY='plugin.CustomReleaseGroups'", "0")
+		got, err := os.ReadFile(cfg)
+		if err != nil || string(got) != input {
+			t.Fatal("invalid input was consumed")
+		}
+	}
+}

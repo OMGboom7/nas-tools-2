@@ -6,13 +6,12 @@ from watchdog.observers import Observer
 from werkzeug.security import generate_password_hash
 
 import log
-from app.conf import SystemConfig
 from app.helper import ProgressHelper
 from app.plugins import PluginManager
 from app.media import Category
 from app.utils import ConfigLoadCache, CategoryLoadCache, ExceptionUtils, StringUtils
 from app.utils.commons import INSTANCES
-from app.utils.types import SystemConfigKey, BuiltinIndexerFileMd5
+from app.utils.types import BuiltinIndexerFileMd5
 from config import Config
 from web.action import WebAction
 
@@ -98,61 +97,6 @@ def update_config():
     try:
         if "ptrefresh_date_cron" not in _config['pt']:
             _config['pt']['ptrefresh_date_cron'] = '6'
-            overwrite_cofig = True
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
-
-    # 豆瓣配置转为插件
-    try:
-        douban = Config().get_config('douban')
-        if douban:
-            _enable = True if douban.get("users") and douban.get("interval") and douban.get("types") else False
-            PluginManager().save_plugin_config(pid="DoubanSync", conf={
-                "onlyonce": False,
-                "enable": _enable,
-                "interval": douban.get("interval"),
-                "auto_search": douban.get("auto_search"),
-                "auto_rss": douban.get("auto_rss"),
-                "cookie": douban.get("cookie"),
-                "users": douban.get("users"),
-                "days": douban.get("days"),
-                "types": douban.get("types")
-            })
-            # 删除旧配置
-            _config.pop("douban")
-            overwrite_cofig = True
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
-
-    # 刮削配置改为存数据库
-    try:
-        scraper_conf = {}
-        # Nfo
-        scraper_nfo = Config().get_config("scraper_nfo")
-        if scraper_nfo:
-            scraper_conf["scraper_nfo"] = scraper_nfo
-            _config.pop("scraper_nfo")
-            overwrite_cofig = True
-        # 图片
-        scraper_pic = Config().get_config("scraper_pic")
-        if scraper_pic:
-            scraper_conf["scraper_pic"] = scraper_pic
-            _config.pop("scraper_pic")
-            overwrite_cofig = True
-        # 保存
-        if scraper_conf:
-            SystemConfig().set(SystemConfigKey.UserScraperConf,
-                               scraper_conf)
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
-
-    # 内建索引器配置改为存数据库
-    try:
-        indexer_sites = Config().get_config("pt").get("indexer_sites")
-        if indexer_sites:
-            SystemConfig().set(SystemConfigKey.UserIndexerSites,
-                               indexer_sites)
-            _config['pt'].pop("indexer_sites")
             overwrite_cofig = True
     except Exception as e:
         ExceptionUtils.exception_traceback(e)
