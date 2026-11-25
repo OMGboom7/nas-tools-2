@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -43,6 +44,10 @@ func InitializeUserData(databasePath, configPath string) error {
 	if err != nil {
 		return err
 	}
+	plugins, err := cfg.LegacyPluginSettings()
+	if err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS GO_INITIAL_DATA_SCRIPTS(NAME TEXT PRIMARY KEY, SOURCE TEXT NOT NULL)`); err != nil {
 		return err
 	}
@@ -72,10 +77,15 @@ func InitializeUserData(databasePath, configPath string) error {
 			return fmt.Errorf("cannot record completion of %s", name)
 		}
 	}
+	for key, fields := range plugins {
+		if err := importLegacyPlugin(tx, key, fields); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if !needsMirror {
+	if !needsMirror && len(plugins) == 0 {
 		return nil
 	}
 	// A crash after the commit leaves receipts in user.db. Re-entering this
@@ -88,7 +98,41 @@ func InitializeUserData(databasePath, configPath string) error {
 	if _, err := cfg.SyncInitializationFiles(initialScripts...); err != nil {
 		return fmt.Errorf("record completed scripts in app.init_files: %w", err)
 	}
+	if len(plugins) != 0 {
+		if err := cfg.RetireLegacyPluginSettings(plugins); err != nil {
+			return err
+		}
+	}
 	return guard.Commit()
+}
+
+// A saved plugin configuration takes precedence over legacy YAML. The caller
+// holds an immediate write transaction, including during the existence check.
+func importLegacyPlugin(tx *sql.Tx, key string, fields map[string]any) error {
+	var previous sql.NullString
+	err := tx.QueryRow("SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&previous)
+	if err == nil {
+		var object map[string]json.RawMessage
+		if !previous.Valid || json.Unmarshal([]byte(previous.String), &object) != nil || object == nil {
+			return fmt.Errorf("invalid saved configuration for %s; legacy YAML retained", key)
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return fmt.Errorf("invalid legacy configuration for %s", key)
+	}
+	result, err := tx.Exec("INSERT INTO SYSTEM_DICT (TYPE,KEY,VALUE,NOTE) VALUES ('SystemConfig', ?, ?, '')", key, string(value))
+	if err != nil {
+		return fmt.Errorf("import %s: %w", key, err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("could not import configuration for %s", key)
+	}
+	return nil
 }
 
 func applyInitialScript(tx *sql.Tx, name string) error {
