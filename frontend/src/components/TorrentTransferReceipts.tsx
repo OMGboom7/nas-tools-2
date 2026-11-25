@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, getTorrentTransferReceipt, type TorrentTransferReceipt } from "../api/client";
 
 import { TorrentTransferReview } from "./TorrentTransferReview";
+import { TorrentTransferTarget } from "./TorrentTransferTarget";
 
 const stages = { bound: "已关联目标任务", checking: "已观察到校验", verified: "已核实文件完整" };
 const actions = { add: "暂停添加", verify: "请求校验", start: "请求启动", "remove-source": "移除源任务" };
@@ -51,6 +52,7 @@ export function TorrentTransferReceipts({ token, onSessionExpired }: { token: st
     </form>
     {error && <p role="alert">{error}</p>}
     {record && <div role="status">
+      {record.actions.some(item => item.action === "add" && item.state === "acknowledged") && <TorrentTransferTarget key={record.receipt} receipt={record.receipt} token={token} expired={onSessionExpired} refresh={() => void lookup(record.receipt)} />}
       <p>目标任务 · {record.targetStage ? stages[record.targetStage] : "尚未关联"}</p>
       {record.actions.length === 0 ? <p>尚无动作记录</p> : <ul>{record.actions.map(item =>
         <li key={item.action}>{actions[item.action]} · {states[item.state]} · <time dateTime={item.updated}>{new Date(item.updated).toLocaleString()}</time></li>

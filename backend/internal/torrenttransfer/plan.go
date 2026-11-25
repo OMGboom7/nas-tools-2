@@ -183,6 +183,10 @@ func (l *Ledger) ContinuePlan(ctx context.Context, receipt string, resolve Resol
 	if err != nil {
 		return "", err
 	}
+	if confirmOwnership != nil {
+		// A binding request must not issue a verify command if another worker already bound this task.
+		return "", ErrState
+	}
 	var start func(context.Context) error
 	if authorizeStart != nil {
 		start = func(ctx context.Context) error {

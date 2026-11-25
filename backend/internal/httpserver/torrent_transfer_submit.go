@@ -11,19 +11,23 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
-func (api torrentTransferAPI) submit(w http.ResponseWriter, r *http.Request) {
+func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Request) {
 	actor, ok := api.login.actor(w, r, true)
 	if !ok {
 		return
 	}
 	id := r.PathValue("id")
 	var in struct {
-		ConfirmPaused bool `json:"confirmPaused"`
+		Proof         string `json:"proof"`
+		ConfirmOwner  bool   `json:"confirmOwner"`
+		ConfirmAction bool   `json:"confirmAction"`
+		ConfirmPaused bool   `json:"confirmPaused"`
 	}
 	if !siteLoginJSON(w, r, &in) {
 		return
 	}
-	if !torrenttransfer.Hex(id, 64) || !in.ConfirmPaused {
+	action := r.PathValue("action")
+	if !torrenttransfer.Hex(id, 64) || action == "submit" && !in.ConfirmPaused {
 		writeAPIError(w, 400, 400, "请选择审核回执并确认暂停添加")
 		return
 	}
@@ -66,6 +70,74 @@ func (api torrentTransferAPI) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer guard.Close()
 	key := torrenttransfer.ActionKey{Receiver: plan.Receiver, WireID: plan.WireID, Action: "add"}
+	resolve := func(ctx context.Context) (torrenttransfer.Settings, torrenttransfer.SourceClient, torrenttransfer.ReceiverClient, string, error) {
+		current, err := api.reviewScope(ctx, actor)
+		return current.settings, current.source, current.target, current.fingerprint, err
+	}
+	if action != "submit" {
+		if action != "inspect" && action != "bind" && action != "verify" && action != "start" {
+			writeAPIError(w, 404, 404, "未知转种操作")
+			return
+		}
+		reply, err := ledger.AddReply(ctx, key, id)
+		if err != nil || reply.Duplicate {
+			writeAPIError(w, 409, 409, "缺少可用的原添加回执")
+			return
+		}
+		status, err := torrenttransfer.ReadStatus(ctx, db, id)
+		if err != nil {
+			writeAPIError(w, 503, 503, "无法读取绑定状态")
+			return
+		}
+		task, err := scope.target.TransferTask(ctx, plan.WireID)
+		if err != nil {
+			writeAPIError(w, 409, 409, "无法核对目标任务")
+			return
+		}
+		proofFor := func(task torrenttransfer.Task) string {
+			return torrenttransfer.Hash([]any{id, scope.fingerprint, task})
+		}
+		proof := proofFor(task)
+		if action == "inspect" {
+			canStart := scope.settings.AutoStart && task.Paused && task.HasTracker && status.TargetStage == "verified"
+			for _, a := range status.Actions {
+				if a.Action == "start" {
+					canStart = false
+				}
+			}
+			writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"receipt": id, "proof": proof, "target": scope.to, "wireId": task.WireID, "directory": task.Directory, "name": task.Name, "addedAt": task.AddedAt, "state": task.State, "targetStage": status.TargetStage, "canStart": canStart}})
+			return
+		}
+		if !in.ConfirmAction || in.Proof != proof || (action == "bind" && (!in.ConfirmOwner || status.TargetStage != "")) || (action == "verify" && status.TargetStage == "") || (action == "start" && status.TargetStage != "verified") {
+			writeAPIError(w, 409, 409, "请重新核对当前目标任务及操作")
+			return
+		}
+		var owner func(context.Context, torrenttransfer.AddReceipt, torrenttransfer.Task) error
+		var start func(context.Context, string, torrenttransfer.Task) error
+		if action == "bind" {
+			owner = func(_ context.Context, reply torrenttransfer.AddReceipt, current torrenttransfer.Task) error {
+				if reply.Duplicate || proofFor(current) != in.Proof {
+					return torrenttransfer.ErrState
+				}
+				return nil
+			}
+		}
+		if action == "start" {
+			start = func(_ context.Context, receipt string, frozen torrenttransfer.Task) error {
+				if receipt != id || !frozen.SameInstance(task) {
+					return torrenttransfer.ErrState
+				}
+				return nil
+			}
+		}
+		stage, err := ledger.ContinuePlan(ctx, id, resolve, owner, start)
+		if err != nil {
+			writeAPIError(w, 409, 409, "任务或授权已变化，请重新查看目标和回执")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]string{"receipt": id, "state": stage}})
+		return
+	}
 	prior, err := ledger.Lookup(ctx, key)
 	if err == nil {
 		state := prior.State
@@ -85,10 +157,6 @@ func (api torrentTransferAPI) submit(w http.ResponseWriter, r *http.Request) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		writeAPIError(w, 503, 503, "无法读取原提交记录")
 		return
-	}
-	resolve := func(ctx context.Context) (torrenttransfer.Settings, torrenttransfer.SourceClient, torrenttransfer.ReceiverClient, string, error) {
-		current, err := api.reviewScope(ctx, actor)
-		return current.settings, current.source, current.target, current.fingerprint, err
 	}
 	reply, err := ledger.SubmitPlan(ctx, id, resolve)
 	if err != nil {
