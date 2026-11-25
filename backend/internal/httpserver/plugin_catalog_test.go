@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -131,7 +132,7 @@ func TestGoOnlyCatalogDoesNotAdvertiseUnmigratedActionsAsAvailable(t *testing.T)
 		"ChineseSubFinder": true, "OpenSubtitles": true, "LibraryScraper": true, "LibraryRefresh": true,
 		"Webhook": true, "SpeedLimiter": true, "MediaSyncDel": true, "MovieLike": true,
 		"AutoSignIn": true, "CloudflareSpeedTest": true, "CookieCloud": true, "AutoBackup": true,
-		"DownloaderHelper": true, "IYUUAutoSeed": true, "MteamRssGen": true, "MovieRandom": mediaarchive.Supported, "DoubanRank": mediaarchive.Supported, "DoubanSync": mediaarchive.Supported, "MediaLibraryArchive": mediaarchive.Supported, "SyncTimer": true, "TorrentMark": true, "TorrentRemover": true, "TorrentTransfer": true,
+		"DiskSpaceSaver": organization.CopySupported, "DownloaderHelper": true, "IYUUAutoSeed": true, "MteamRssGen": true, "MovieRandom": mediaarchive.Supported, "DoubanRank": mediaarchive.Supported, "DoubanSync": mediaarchive.Supported, "MediaLibraryArchive": mediaarchive.Supported, "SyncTimer": true, "TorrentMark": true, "TorrentRemover": true, "TorrentTransfer": true,
 	}
 	for _, item := range payload.Data.Items {
 		if item.ActionsAvailable != (nativeMetadataPlugin(item.ID) || nativeIndexerPlugin(item.ID) || actions[item.ID]) {

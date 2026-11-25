@@ -24,6 +24,9 @@ type feedPluginDefinition struct {
 }
 
 func (service pluginService) feedPlugin(id string) feedPluginDefinition {
+	if id == diskID {
+		return service.disk.plugin()
+	}
 	if id == helperID {
 		return service.helper.plugin()
 	}
@@ -47,6 +50,9 @@ func (service pluginService) feedPlugin(id string) feedPluginDefinition {
 }
 
 func (s pluginService) nativeFeedPlugin(id string) bool {
+	if id == diskID {
+		return s.disk != nil
+	}
 	if id == helperID {
 		return s.helper != nil
 	}
@@ -69,6 +75,14 @@ func (service pluginService) serveFeedPlugin(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	ctx := r.Context()
+	if id == diskID && action != "get" && action != "status" {
+		g, err := service.disk.jobs.AcquireJob(ctx, diskID)
+		if err != nil {
+			writeAPIError(w, 409, 409, "磁盘空间释放任务正在执行，请稍后再试")
+			return
+		}
+		defer g.Close()
+	}
 	raw, err := service.system.ReadMany(ctx, p.keys)
 	if err != nil {
 		subscriptionHistoryError(w, err)
@@ -83,6 +97,13 @@ func (service pluginService) serveFeedPlugin(w http.ResponseWriter, r *http.Requ
 	changes := map[string]string{}
 	switch action {
 	case "install", "uninstall":
+		if id == diskID && action == "uninstall" && installed {
+			run, e := readDiskRun(raw[diskControlKey])
+			if e != nil || run.Status == "queued" {
+				writeAPIError(w, 409, 409, "请等待当前查重任务完成后再卸载")
+				return
+			}
+		}
 		if action == "install" && !installed {
 			ids = append(ids, p.id)
 			if p.control != "" {

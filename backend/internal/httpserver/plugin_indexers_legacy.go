@@ -49,6 +49,14 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.disk != nil && id == diskID {
+			if action {
+				writeAPIError(w, 400, 400, "查重结果只支持查看")
+			} else {
+				s.disk.page(w, probe, s, true)
+			}
+			return
+		}
 		if s.helper != nil && id == helperID {
 			if action {
 				writeAPIError(w, 400, 400, "下载器助手扩展页只支持查看")

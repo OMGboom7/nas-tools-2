@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	disk              *diskSpaceAPI
 	helper            *downloaderHelperAPI
 	iyuu              *iyuuAPI
 	mteamFeed         *mteamFeedService

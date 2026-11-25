@@ -93,6 +93,10 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		item.Native = service.ownsPlugin(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
+		if item.ID == diskID && service.disk != nil {
+			item.HasPage = administrator
+			item.ActionsAvailable = administrator
+		}
 		if item.ID == "IYUUAutoSeed" && service.iyuu != nil {
 			item.ActionsAvailable = administrator
 			item.HasPage = administrator

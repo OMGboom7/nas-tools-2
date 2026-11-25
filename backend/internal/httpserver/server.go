@@ -103,6 +103,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitDoubanSync := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣同步", runner.archivePlugin.doubanSync.tick)
 		waitRandom := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "电影随机订阅", runner.archivePlugin.doubanSync.movieRandomTick)
 		waitRank := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣榜单", runner.archivePlugin.doubanSync.rankTick)
+		waitDisk := startDiskSpace(workerContext, runner.archivePlugin.disk)
 		waitHelper := startDownloaderHelper(workerContext, runner.archivePlugin.helper)
 		waitIyuuSeeds := startIyuuSeeds(workerContext, runner.archivePlugin.iyuu)
 		waitMteamFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
@@ -138,6 +139,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitDoubanSync()
 			waitRank()
 			waitRandom()
+			waitDisk()
 			waitHelper()
 			waitIyuuSeeds()
 			waitMteamFeed()
@@ -742,6 +744,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/notifications/custom-message", notifications.sendCustomMessage)
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{archiveConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
+	if cfg.DisableLegacy && organization.CopySupported && nativeSiteLogin != nil && organizationJobs != nil && nativeSystemConfig != nil {
+		plugins.disk = &diskSpaceAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, cfg.ApplicationConfigPath}
+	}
 	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
 		if nativeDownloaders != nil && nativeSiteLogin != nil {
 			plugins.helper = &downloaderHelperAPI{transfer: &transferAPI, downloads: &downloads}
