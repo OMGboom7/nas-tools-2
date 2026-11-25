@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/crontab"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 )
 
@@ -36,7 +37,7 @@ func nextSyncTimer(timer organization.MonitorTimer, now time.Time) (time.Time, e
 		terms := strings.Split(strings.ToLower(fields[index]), ",")
 		for i, term := range terms {
 			base, step, found := strings.Cut(term, "/")
-			if found && len(base) > 0 && base[0] >= 'a' && base[0] <= 'z' && rssDigits(step) {
+			if found && len(base) > 0 && base[0] >= 'a' && base[0] <= 'z' && crontab.IsDecimal(step) {
 				terms[i] = base
 			}
 		}

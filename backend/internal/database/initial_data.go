@@ -84,6 +84,11 @@ func InitializeUserData(databasePath, configPath string) error {
 			return err
 		}
 	}
+	if legacy.SigninCron != "" {
+		if err := importLegacySignin(tx, legacy.SigninCron); err != nil {
+			return err
+		}
+	}
 	if err := importLegacyDownloaders(tx, legacy.Downloaders); err != nil {
 		return err
 	}

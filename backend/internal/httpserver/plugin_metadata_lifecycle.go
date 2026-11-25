@@ -5,25 +5,15 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 var errPluginNotInstalled = errors.New("plugin is not installed")
-var errInstalledPluginState = errors.New("installed plugin state is invalid")
+var errInstalledPluginState = systemconfig.ErrInstalledPluginState
 
 func decodeInstalledPlugins(raw string) ([]string, error) {
-	installed := []string{}
-	if raw == "" {
-		return installed, nil
-	}
-	if len(raw) > 64<<10 || json.Unmarshal([]byte(raw), &installed) != nil || len(installed) > 1024 {
-		return nil, errInstalledPluginState
-	}
-	for _, id := range installed {
-		if !pluginIDPattern.MatchString(id) {
-			return nil, errInstalledPluginState
-		}
-	}
-	return installed, nil
+	return systemconfig.DecodeInstalledPlugins(raw)
 }
 
 // These metadata plugins have no background workers: the Go matcher reads the

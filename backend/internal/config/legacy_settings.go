@@ -17,6 +17,7 @@ type LegacySettings struct {
 	RetireShared bool
 	// The client section may already have been moved by an older installation.
 	UnresolvedClient string
+	SigninCron       string
 }
 
 type LegacyDownloader struct {
@@ -27,7 +28,9 @@ type LegacyDownloader struct {
 	Directories                   []map[string]any
 }
 
-func (s LegacySettings) Empty() bool { return len(s.Records) == 0 && len(s.Downloaders) == 0 }
+func (s LegacySettings) Empty() bool {
+	return len(s.Records) == 0 && len(s.Downloaders) == 0 && s.SigninCron == ""
+}
 
 func (store *Store) LegacySettings() (LegacySettings, error) {
 	root, _, _, err := store.read()
@@ -56,12 +59,21 @@ func readLegacySettings(root *yaml.Node) (LegacySettings, error) {
 		return settings, errors.New("invalid legacy downloader configuration")
 	}
 	var selection struct {
-		Client string `yaml:"pt_client"`
+		Client any `yaml:"pt_client"`
+		Signin any `yaml:"ptsignin_cron"`
 	}
 	// Inspect the selector independently: old partially upgraded installations
 	// can have a database row and only the original pt_client left in YAML.
-	if err := source.PT.Decode(&selection); err == nil && (selection.Client == "qbittorrent" || selection.Client == "transmission") {
-		settings.UnresolvedClient = selection.Client
+	if err := source.PT.Decode(&selection); err == nil {
+		if kind, ok := selection.Client.(string); ok && (kind == "qbittorrent" || kind == "transmission") {
+			settings.UnresolvedClient = kind
+		}
+		if !emptyLegacySetting(selection.Signin) {
+			settings.SigninCron, err = legacySigninCron(selection.Signin)
+			if err != nil {
+				return settings, err
+			}
+		}
 	}
 	if emptyLegacySetting(source.QB) && emptyLegacySetting(source.TR) {
 		return settings, nil
@@ -132,6 +144,9 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 		return errors.New("legacy configuration changed during initialization")
 	}
 	var rootKeys, ptKeys []string
+	if current.SigninCron != "" {
+		ptKeys = append(ptKeys, "ptsignin_cron")
+	}
 	if current.Records["plugin.DoubanSync"] != nil {
 		rootKeys = append(rootKeys, "douban")
 	}

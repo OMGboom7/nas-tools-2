@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -75,7 +74,7 @@ type pluginsData struct {
 	UnknownStateCount int                    `json:"unknownStateCount"`
 }
 
-var pluginIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,79}$`)
+var pluginIDPattern = systemconfig.PluginIDPattern
 
 func (service pluginService) serveList(response http.ResponseWriter, request *http.Request) {
 	if service.system != nil {
