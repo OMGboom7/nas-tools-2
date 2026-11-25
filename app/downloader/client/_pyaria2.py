@@ -6,7 +6,6 @@ import xmlrpc.client
 from base64 import b64encode
 
 import log
-from app.utils import Torrent
 
 DEFAULT_HOST = 'localhost'
 DEFAULT_PORT = 6800
@@ -82,8 +81,10 @@ class PyAria2(object):
 
         return: This method returns GID of registered download.
         """
-        magnet_link = Torrent.binary_data_to_magnet_link(torrent)
-        return self._send_request("aria2.addUri", [[magnet_link], options or {}])
+        params = [b64encode(torrent).decode("ascii"), uris or [], options or {}]
+        if position is not None:
+            params.append(position)
+        return self._send_request("aria2.addTorrent", params)
 
     def addMetalink(self, metalink, options=None, position=None):
         """

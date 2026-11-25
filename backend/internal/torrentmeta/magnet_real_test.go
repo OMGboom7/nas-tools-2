@@ -129,7 +129,7 @@ func TestRealAria2MetadataOnlyNeverRequestsMediaPayload(t *testing.T) {
 	}))
 	defer tracker.Close()
 	magnet := "magnet:?xt=urn:btih:" + hash + "&dn=Show.S01E02.mkv&tr=" + url.QueryEscape(tracker.URL+"/announce")
-	raw, err := ResolveMagnet(t.Context(), magnet, hash)
+	raw, err := ResolveLink(t.Context(), magnet)
 	if err != nil {
 		t.Fatal("real metadata-only exchange failed", err, "metadata requests", metadataRequests.Load(), "peer port", strconv.Itoa(port))
 	}

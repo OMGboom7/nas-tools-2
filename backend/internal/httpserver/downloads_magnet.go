@@ -2,8 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"encoding/base32"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -272,24 +270,5 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 }
 
 func magnetInfoHash(magnet string) string {
-	parsed, err := url.Parse(magnet)
-	if err != nil {
-		return ""
-	}
-	exact := parsed.Query().Get("xt")
-	if !strings.HasPrefix(strings.ToLower(exact), "urn:btih:") {
-		return ""
-	}
-	hash := exact[9:]
-	if len(hash) == 40 && qbittorrent.ValidHash(hash) {
-		return strings.ToLower(hash)
-	}
-	if len(hash) != 32 {
-		return ""
-	}
-	decoded, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(hash))
-	if err != nil || len(decoded) != 20 {
-		return ""
-	}
-	return hex.EncodeToString(decoded)
+	return torrentmeta.MagnetInfoHash(magnet)
 }

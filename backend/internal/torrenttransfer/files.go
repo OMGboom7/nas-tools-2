@@ -18,11 +18,12 @@ import (
 // MetainfoRoot owns only read access. A source snapshot can neither overwrite
 // the original torrent/resume nor create or remove any payload file.
 type MetainfoRoot struct {
-	configured string
-	root       *os.Root
-	physical   string
-	info       os.FileInfo
-	identity   string
+	configured   string
+	root         *os.Root
+	physical     string
+	info         os.FileInfo
+	identity     string
+	durableProof bool
 }
 type FileProof struct {
 	Name     string `json:"name"`
@@ -41,6 +42,10 @@ type Source struct {
 }
 
 func OpenMetainfoRoot(name string) (*MetainfoRoot, error) {
+	return openMetainfoRoot(name, true)
+}
+
+func openMetainfoRoot(name string, durableProof bool) (*MetainfoRoot, error) {
 	if len(name) > 4096 || !filepath.IsAbs(name) || filepath.Clean(name) == string(filepath.Separator) || strings.ContainsAny(name, "\x00\r\n") {
 		return nil, ErrState
 	}
@@ -53,14 +58,14 @@ func OpenMetainfoRoot(name string) (*MetainfoRoot, error) {
 		return nil, ErrState
 	}
 	identity, err := fileIdentity(info)
-	if err != nil {
+	if durableProof && err != nil {
 		return nil, err
 	}
 	bound, err := os.OpenRoot(physical)
 	if err != nil {
 		return nil, ErrState
 	}
-	r := &MetainfoRoot{root: bound, configured: filepath.Clean(name), physical: physical, info: info, identity: identity}
+	r := &MetainfoRoot{root: bound, configured: filepath.Clean(name), physical: physical, info: info, identity: identity, durableProof: durableProof}
 	if err := r.check(); err != nil {
 		bound.Close()
 		return nil, err
@@ -133,7 +138,7 @@ func (r *MetainfoRoot) read(ctx context.Context, name string) ([]byte, FileProof
 		return nil, proof, ErrState
 	}
 	identity, err := fileIdentity(before)
-	if err != nil {
+	if r.durableProof && err != nil {
 		return nil, proof, err
 	}
 	digest := sha256.Sum256(content)

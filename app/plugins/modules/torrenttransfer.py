@@ -1,22 +1,21 @@
+import json
 import os.path
+import subprocess
+import tempfile
 from copy import deepcopy
 from datetime import datetime, timedelta
+from pathlib import Path
 from threading import Event
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-try:
-    from bencode import bencode, bdecode
-except ImportError:
-    from bencode import encode as bencode, decode as bdecode
 
 from app.downloader import Downloader
 from app.media.meta import MetaInfo
 from app.plugins.modules._base import _IPluginModule
-from app.utils import Torrent
 from app.utils.types import DownloaderType
-from config import Config
+from config import Config, run_go_helper
 
 
 class TorrentTransfer(_IPluginModule):
@@ -412,6 +411,8 @@ class TorrentTransfer(_IPluginModule):
                     continue
             hash_strs.append({
                 "hash": hash_str,
+                "v1": (torrent.get("infohash_v1") or "") if downloader_type == DownloaderType.QB else "",
+                "v2": (torrent.get("infohash_v2") or "") if downloader_type == DownloaderType.QB else "",
                 "save_path": save_path
             })
         # 开始转移任务
@@ -422,13 +423,6 @@ class TorrentTransfer(_IPluginModule):
             success = 0
             fail = 0
             for hash_item in hash_strs:
-                # 检查种子文件是否存在
-                torrent_file = os.path.join(self._fromtorrentpath,
-                                            f"{hash_item.get('hash')}.torrent")
-                if not os.path.exists(torrent_file):
-                    self.error(f"种子文件不存在：{torrent_file}")
-                    fail += 1
-                    continue
                 # 查询hash值是否已经在目的下载器中
                 torrent_info = self.downloader.get_torrents(downloader_id=todownloader,
                                                             ids=[hash_item.get('hash')])
@@ -444,71 +438,32 @@ class TorrentTransfer(_IPluginModule):
                     fail += 1
                     continue
 
-                # 如果是QB检查是否有Tracker，没有的话补充解析
-                if downloader_type == DownloaderType.QB:
-                    # 读取种子内容、解析种子文件
-                    content, _, _, retmsg = Torrent().read_torrent_content(torrent_file)
-                    if not content:
-                        self.error(f"读取种子文件失败：{retmsg}")
-                        fail += 1
-                        continue
-                    # 读取trackers
-                    try:
-                        torrent_main = bdecode(content)
-                        main_announce = torrent_main.get('announce')
-                    except Exception as err:
-                        self.error(f"解析种子文件 {torrent_file} 失败：{err}")
-                        fail += 1
-                        continue
-
-                    if not main_announce:
-                        self.info(f"{hash_item.get('hash')} 未发现tracker信息，尝试补充tracker信息...")
-                        # 读取fastresume文件
-                        fastresume_file = os.path.join(self._fromtorrentpath,
-                                                       f"{hash_item.get('hash')}.fastresume")
-                        if not os.path.exists(fastresume_file):
-                            self.error(f"fastresume文件不存在：{fastresume_file}")
-                            fail += 1
-                            continue
-                        # 尝试补充trackers
-                        try:
-                            with open(fastresume_file, 'rb') as f:
-                                fastresume = f.read()
-                            # 解析fastresume文件
-                            torrent_fastresume = bdecode(fastresume)
-                            # 读取trackers
-                            fastresume_trackers = torrent_fastresume.get('trackers')
-                            if isinstance(fastresume_trackers, list) \
-                                    and len(fastresume_trackers) > 0 \
-                                    and fastresume_trackers[0]:
-                                # 重新赋值
-                                torrent_main['announce'] = fastresume_trackers[0][0]
-                                # 替换种子文件路径
-                                torrent_file = os.path.join(Config().get_temp_path(),
-                                                            f"{hash_item.get('hash')}.torrent")
-                                # 编码并保存到临时文件
-                                with open(torrent_file, 'wb') as f:
-                                    f.write(bencode(torrent_main))
-                        except Exception as err:
-                            self.error(f"解析fastresume文件 {fastresume_file} 失败：{err}")
-                            fail += 1
-                            continue
-
-                # 发送到另一个下载器中下载：默认暂停、传输下载路径、关闭自动管理模式
-                _, download_id, dir, retmsg = self.downloader.download(
-                    media_info=MetaInfo("自动转移做种"),
-                    torrent_file=torrent_file,
-                    is_paused=True,
-                    tag=deepcopy(self._torrent_tags),
-                    downloader_id=todownloader,
-                    download_dir=download_dir,
-                    download_setting="-2",
-                )
+                # Go 核对源任务身份，并在需要时从同一任务的 fastresume 补齐 tracker。
+                request = {"directory": os.path.abspath(self._fromtorrentpath), "id": hash_item["hash"],
+                           "v1": hash_item["v1"], "v2": hash_item["v2"], "qb": downloader_type == DownloaderType.QB}
+                try:
+                    content = run_go_helper("torrent-metadata", "transfer", payload=json.dumps(request).encode())
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    self.error(f"无法核实源任务 {hash_item['hash']} 的种子文件或 tracker")
+                    fail += 1
+                    continue
+                with tempfile.TemporaryDirectory() as temporary:
+                    torrent_file = Path(temporary) / (hash_item["hash"] + ".torrent")
+                    torrent_file.write_bytes(content)
+                    _, download_id, _, retmsg = self.downloader.download(
+                        media_info=MetaInfo("自动转移做种"),
+                        torrent_file=str(torrent_file),
+                        is_paused=True,
+                        tag=deepcopy(self._torrent_tags),
+                        downloader_id=todownloader,
+                        download_dir=download_dir,
+                        download_setting="-2",
+                    )
                 if not download_id:
                     # 下载失败
                     self.warn(f"添加转移任务出错，"
                               f"错误原因：{retmsg or '下载器添加任务失败'}，"
-                              f"种子文件：{torrent_file}")
+                              f"源任务：{hash_item['hash']}")
                     fail += 1
                     continue
                 else:
@@ -518,7 +473,7 @@ class TorrentTransfer(_IPluginModule):
                         self._recheck_torrents[todownloader] = []
                     self._recheck_torrents[todownloader].append(download_id)
                     # 下载成功
-                    self.info(f"成功添加转移做种任务，种子文件：{torrent_file}")
+                    self.info(f"成功添加转移做种任务：{download_id}")
                     # TR会自动校验
                     if to_downloader_type == DownloaderType.QB:
                         # 开始校验种子
@@ -526,7 +481,7 @@ class TorrentTransfer(_IPluginModule):
                     # 删除源种子，不能删除文件！
                     if self._deletesource:
                         self.downloader.delete_torrents(downloader_id=downloader,
-                                                        ids=[download_id],
+                                                        ids=[hash_item["hash"]],
                                                         delete_file=False)
                     success += 1
                     # 插入转种记录

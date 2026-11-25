@@ -26,7 +26,6 @@ decorator==5.1.1
 executing==1.1.0
 Flask==2.2.3
 Flask-Login==0.6.2
-bencode.py==4.0.0
 flask-compress==1.13
 flask-restx==1.0.6
 flask-sock==0.6.0
@@ -46,7 +45,6 @@ jsonpath==0.82
 jsonschema==4.16.0
 loguru==0.6.0
 lxml==4.9.1
-libtorrent==2.0.9
 MarkupSafe==2.1.1
 matplotlib-inline==0.1.6
 msgpack==1.0.4

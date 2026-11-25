@@ -18,9 +18,17 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
 	"github.com/0xforee/nas-tools/backend/internal/searchresults"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
+	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "torrent-metadata" {
+		if err := torrenttransfer.MetadataCommand(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("torrent metadata unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "search-results" {
 		if err := searchresults.Command(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("search results unavailable")

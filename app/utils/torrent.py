@@ -1,19 +1,10 @@
-import datetime
-import os.path
-import time
-import re
-import tempfile
-import hashlib
 import json
+import os
+import re
 import subprocess
+import tempfile
 from pathlib import Path
-from urllib.parse import quote, unquote, urlencode, urlparse
-
-import libtorrent
-try:
-    from bencode import bencode, bdecode
-except ImportError:
-    from bencode import encode as bencode, decode as bdecode
+from urllib.parse import unquote, urlparse
 
 import log
 from app.utils import StringUtils
@@ -44,45 +35,41 @@ class Torrent:
         if not url:
             return None, None, "", [], "URL为空"
         if url.startswith("magnet:"):
-            return None, url, "", [], f"{url} 为磁力链接"
+            return None, url, "", [], "磁力链接"
         try:
-            # 下载保存种子文件
-            file_path, content, errmsg = self.save_torrent_file(url=url,
-                                                                cookie=cookie,
-                                                                ua=ua,
-                                                                referer=referer,
-                                                                proxy=proxy)
-            if not file_path:
-                return None, content, "", [], errmsg
-            # 解析种子文件
-            files_folder, files, retmsg = self.get_torrent_files(file_path)
-            # 种子文件路径、种子内容、种子文件列表主目录、种子文件列表、错误信息
-            return file_path, content, files_folder, files, retmsg
-
-        except Exception as err:
-            return None, None, "", [], "下载种子文件出现异常：%s" % str(err)
+            return self._download(url, cookie, ua, referer, proxy)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None, None, "", [], "读取或解析种子文件失败"
 
     def save_torrent_file(self, url, cookie=None, ua=None, referer=None, proxy=False):
-        """
-        把种子下载到本地
-        :return: 种子保存路径，错误信息
-        """
+        path, content, _, _, error = self.get_torrent_info(url, cookie, ua, referer, proxy)
+        return path, content, error
+
+    def _download(self, url, cookie, ua, referer, proxy):
         try:
             host = (urlparse(url).hostname or "").lower()
         except ValueError:
-            return None, None, "种子链接无效"
+            return None, None, "", [], "种子链接无效"
         if host in ("kp.m-team.info", "api.m-team.info", "m-team.cc", "m-team.io") or host.endswith((".m-team.cc", ".m-team.io")):
-            return self.__download_mteam(url, ua, proxy)
+            path, content, message = self.__download_mteam(url, ua, proxy)
+            if not path:
+                return None, content, "", [], message
+            folder, names = self._layout(content)
+            return path, content, folder, names, ""
         req = RequestUtils(
             headers=ua,
             cookies=cookie,
             referer=referer,
             proxies=Config().get_proxies() if proxy else None
         ).get_res(url=url, allow_redirects=False)
-        while req and req.status_code in [301, 302]:
-            url = req.headers['Location']
+        redirects = 0
+        while req and req.status_code in (301, 302):
+            url = req.headers.get("Location")
+            redirects += 1
+            if not url or redirects > 10:
+                return None, None, "", [], "无效的种子下载重定向"
             if url and url.startswith("magnet:"):
-                return None, url, f"获取到磁力链接：{url}"
+                return None, url, "", [], "磁力链接"
             req = RequestUtils(
                 headers=ua,
                 cookies=cookie,
@@ -91,12 +78,12 @@ class Torrent:
             ).get_res(url=url, allow_redirects=False)
         if req and req.status_code == 200:
             if not req.content:
-                return None, None, "未下载到种子数据"
+                return None, None, "", [], "未下载到种子数据"
             # 解析内容格式
-            if req.text and str(req.text).startswith("magnet:"):
+            if req.content.startswith(b"magnet:"):
                 # 磁力链接
-                return None, req.text, "磁力链接"
-            elif req.text and "下载种子文件" in req.text:
+                return None, req.text, "", [], "磁力链接"
+            elif not req.content.startswith(b"d") and "下载种子文件" in req.text:
                 # 首次下载提示页面
                 skip_flag = False
                 try:
@@ -120,45 +107,28 @@ class Torrent:
                                 proxies=Config().get_proxies() if proxy else None
                             ).post_res(url=action, data=data)
                             if req and req.status_code == 200:
-                                # 检查是不是种子文件，如果不是抛出异常
-                                bdecode(req.content)
-                                # 跳过成功
-                                log.info(f"【Downloader】触发了站点首次种子下载，已自动跳过：{url}")
                                 skip_flag = True
                             elif req is not None:
                                 log.warn(f"【Downloader】触发了站点首次种子下载，且无法自动跳过，"
                                          f"返回码：{req.status_code}，错误原因：{req.reason}")
                             else:
-                                log.warn(f"【Downloader】触发了站点首次种子下载，且无法自动跳过：{url}")
-                except Exception as err:
-                    log.warn(f"【Downloader】触发了站点首次种子下载，尝试自动跳过时出现错误：{str(err)}，链接：{url}")
+                                log.warn("【Downloader】无法通过站点首次种子下载提示")
+                except Exception:
+                    log.warn("【Downloader】处理站点首次种子下载提示失败")
 
                 if not skip_flag:
-                    return None, None, "种子数据有误，请确认链接是否正确，如为PT站点则需手工在站点下载一次种子"
-            else:
-                # 检查是不是种子文件，如果不是仍然抛出异常
-                try:
-                    bdecode(req.content)
-                except Exception as err:
-                    print(str(err))
-                    return None, None, "种子数据有误，请确认链接是否正确"
-            # 读取种子文件名
-            file_name = self.__get_url_torrent_filename(req, url)
-            # 种子文件路径
-            file_path = os.path.join(self._torrent_temp_path, file_name)
-            # 种子内容
-            file_content = req.content
-            # 写入磁盘
-            with open(file_path, 'wb') as f:
-                f.write(file_content)
+                    return None, None, "", [], "种子数据有误，请确认链接是否正确，如为PT站点则需手工在站点下载一次种子"
+            content = req.content
+            folder, names = self._layout(content)
+            filename = self.__get_url_torrent_filename(req, url) or folder or names[0]
+            path = self._save_content(self._torrent_temp_path, filename, content)
+            return path, content, folder, names, ""
         elif req is None:
-            return None, None, "无法打开链接：%s" % url
+            return None, None, "", [], "无法打开种子链接"
         elif req.status_code == 429:
-            return None, None, "触发站点流控，请稍后重试"
+            return None, None, "", [], "触发站点流控，请稍后重试"
         else:
-            return None, None, "下载种子出错，状态码：%s" % req.status_code
-
-        return file_path, file_content, ""
+            return None, None, "", [], "下载种子出错，状态码：%s" % req.status_code
 
     def __download_mteam(self, url, ua, proxy):
         try:
@@ -177,52 +147,59 @@ class Torrent:
             if "status" in result:
                 return None, None, f"下载种子出错，状态码：{result['status']}"
             file_path = result["path"]
-            return file_path, Path(file_path).read_bytes(), ""
+            return file_path, self._read_bytes(file_path), ""
         except (KeyError, OSError, ValueError, subprocess.SubprocessError):
             return None, None, "M-Team 种子下载失败"
 
     @staticmethod
-    def get_torrent_files(path):
-        """
-        解析Torrent文件，获取文件清单
-        :return: 种子文件列表主目录、种子文件列表、错误信息
-        """
-        if not path or not os.path.exists(path):
-            return "", [], f"种子文件不存在：{path}"
-        file_names = []
-        file_folder = ""
-        try:
-            torrent = bdecode(open(path, 'rb').read())
-            if torrent.get("info"):
-                files = torrent.get("info", {}).get("files") or []
-                if files:
-                    for item in files:
-                        if item.get("path"):
-                            file_names.append(item["path"][0])
-                    file_folder = torrent.get("info", {}).get("name")
-                else:
-                    file_names.append(torrent.get("info", {}).get("name"))
-        except Exception as err:
-            return file_folder, file_names, "解析种子文件异常：%s" % str(err)
-        return file_folder, file_names, ""
+    def _read_bytes(path):
+        with open(path, "rb") as source:
+            content = source.read((8 << 20) + 1)
+        if len(content) > 8 << 20:
+            raise ValueError("种子文件过大")
+        return content
 
-    def read_torrent_content(self, path):
-        """
-        读取本地种子文件的内容
-        :return: 种子内容、种子文件列表主目录、种子文件列表、错误信息
-        """
-        if not path or not os.path.exists(path):
-            return None, "", [], "种子文件不存在：%s" % path
-        content, retmsg, file_folder, files = None, "", "", []
+    @staticmethod
+    def _layout(content):
+        layout = json.loads(run_go_helper("torrent-metadata", "layout", payload=content))
+        return layout["folder"], layout["files"]
+
+    @staticmethod
+    def _save_content(directory, filename, content):
+        name = Path(filename).name
+        if not name or name in (".", "..") or re.search(r'[\x00-\x1f<>:"/\\|?*]', name) or len(name.encode()) > 200:
+            name = "download.torrent"
+        if not name.lower().endswith(".torrent"):
+            name += ".torrent"
+        path = os.path.join(directory, name)
         try:
-            # 读取种子文件内容
-            with open(path, 'rb') as f:
-                content = f.read()
-            # 解析种子文件
-            file_folder, files, retmsg = self.get_torrent_files(path)
-        except Exception as e:
-            retmsg = "读取种子文件出错：%s" % str(e)
-        return content, file_folder, files, retmsg
+            target = os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb")
+        except FileExistsError:
+            target = tempfile.NamedTemporaryFile(dir=directory, prefix=name[:-8] + "-", suffix=".torrent", delete=False)
+            path = target.name
+        try:
+            with target:
+                target.write(content)
+        except OSError:
+            os.unlink(path)
+            raise
+        return path
+
+    @staticmethod
+    def get_torrent_files(path):
+        _, folder, files, error = Torrent.read_torrent_content(path)
+        return folder, files, error
+
+    @staticmethod
+    def read_torrent_content(path):
+        if not path:
+            return None, "", [], "种子文件不存在"
+        try:
+            content = Torrent._read_bytes(path)
+            folder, files = Torrent._layout(content)
+            return content, folder, files, ""
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None, "", [], "读取或解析种子文件失败"
 
     @staticmethod
     def __get_url_torrent_filename(req, url):
@@ -234,13 +211,17 @@ class Torrent:
         disposition = req.headers.get('content-disposition') or ""
         file_name = re.findall(r"filename=\"?(.+)\"?", disposition)
         if file_name:
-            file_name = unquote(str(file_name[0].encode('ISO-8859-1').decode()).split(";")[0].strip())
+            file_name = unquote(file_name[0].split(";")[0].strip())
+            try:
+                file_name = file_name.encode("latin-1").decode("utf-8")
+            except UnicodeError:
+                pass
             if file_name.endswith('"'):
                 file_name = file_name[:-1]
         elif url and url.endswith(".torrent"):
             file_name = unquote(url.split("/")[-1])
         else:
-            file_name = str(datetime.datetime.now())
+            file_name = ""
         return file_name.replace('/', '')
 
     @staticmethod
@@ -322,148 +303,28 @@ class Torrent:
 
     @staticmethod
     def magent2torrent(url, path, timeout=20):
-        """
-        磁力链接转种子文件
-        :param url: 磁力链接
-        :param path: 保存目录
-        :param timeout: 获取元数据超时时间
-        :return: 转换后种子路径
-        """
-
-        log.info(f"【Downloader】转换磁力链接：{url}")
-        session = libtorrent.session()
-        magnet_info = libtorrent.parse_magnet_uri(url)
-        magnet_info.save_path = path
-        handle = session.add_torrent(magnet_info)
-
-        log.debug("【Downloader】获取元数据中")
-        tout = 0
-        while not handle.status().name:
-            time.sleep(1)
-            tout += 1
-            if tout > timeout:
-                log.debug("【Downloader】元数据获取超时")
-                return None, "种子元数据获取超时"
-        session.pause()
-
-        log.debug("【Downloader】获取元数据完成")
-        tf = handle.torrent_file()
-        ti = libtorrent.torrent_info(tf)
-        torrent_file = libtorrent.create_torrent(ti)
-        torrent_file.set_comment(ti.comment())
-        torrent_file.set_creator(ti.creator())
-
-        file_path = os.path.join(path, "%s.torrent" % handle.status().name)
-
-        with open(file_path, 'wb') as f_handle:
-            f_handle.write(libtorrent.bencode(torrent_file.generate()))
-            f_handle.close()
-
-        session.remove_torrent(handle, 1)
-        log.info(f"【Downloader】转换后的种子路径：{file_path}")
-        return file_path, ""
-
-    @staticmethod
-    def _write_binary_to_temp_file(binary_data):
-        """
-        种子内容转种子文件
-        :param binary_data: 种子内容
-        :return: 转换后种子路径
-        """
         try:
-            temp_file = tempfile.NamedTemporaryFile(delete=False)
-            temp_file.write(binary_data)
-            temp_file.close()
-            return temp_file.name
-        except Exception as e:
-            log.error(f"【Downloader】种子内容无法写入临时文件")
-            return None
-
-    @staticmethod
-    def _parse_torrent_dict(torrent_data):
-        """
-        获取种子文件的信息
-        :param torrent_data: 种子内容的二进制数据
-        :return: 种子文件的信息
-        """
-        try:
-            torrent_dict = bdecode(torrent_data)
-            return torrent_dict
-        except Exception as e:
-            log.error(f"【Downloader】无法解析种子文件内容")
-            return None
-
-    @staticmethod
-    def _create_magnet_link(torrent_dict):
-        """
-        根据种子信息生成磁力链接
-        :param torrent_dict: 种子信息
-        :return: 磁力链接
-        """
-        if torrent_dict is None:
-            return None
-        
-        magnet_info = {}
-        
-        if 'info' in torrent_dict:
-            info_hash = hashlib.sha1(bencode(torrent_dict['info'])).hexdigest()
-            magnet_info['xt'] = 'urn:btih:' + info_hash
-        
-        if 'name' in torrent_dict['info']:
-            magnet_info['dn'] = torrent_dict['info']['name']
-        
-        if 'announce' in torrent_dict:
-            magnet_info['tr'] = torrent_dict['announce']
-        
-        if 'announce-list' in torrent_dict:
-            magnet_info['tr'] = [announce[0] for announce in torrent_dict['announce-list']]
-
-        magnet_link = 'magnet:?{}'.format(urlencode(magnet_info))
-        return magnet_link
+            seconds = min(45, int(timeout))
+            query = json.dumps({"magnet": url, "seconds": seconds}).encode()
+            raw = run_go_helper("torrent-metadata", "resolve", payload=query, timeout=max(seconds, 1) + 5)
+            folder, files = Torrent._layout(raw)
+            return Torrent._save_content(path, folder or files[0], raw), ""
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+            return None, "无法获取磁力链接元数据"
 
     @staticmethod
     def binary_data_to_magnet_link(binary_data):
-        """
-        根据种子内容生成磁力链接
-        :param binary_data: 种子内容
-        :return: 磁力链接
-        """
-        temp_file_path = Torrent._write_binary_to_temp_file(binary_data)
-        if not temp_file_path:
+        try:
+            return run_go_helper("torrent-metadata", "magnet", payload=binary_data).decode()
+        except (OSError, ValueError, subprocess.SubprocessError):
             return None
-        
-        with open(temp_file_path, 'rb') as torrent_file:
-            torrent_data = torrent_file.read()
-            torrent_dict = Torrent._parse_torrent_dict(torrent_data)
-            magnet_link = Torrent._create_magnet_link(torrent_dict)
-            Torrent._close_and_delete_file(temp_file_path)
-            return magnet_link
-
-    @staticmethod
-    def _close_and_delete_file(file_path):
-        """
-        清理临时生成的种子文件
-        :param file_path: 种子文件路径
-        :return: 是否删除成功
-        """
-        try:
-            with open(file_path, 'r+') as file:
-                file.close()
-        except:
-            pass
-
-        try:
-            os.remove(file_path)
-            return True
-        except Exception as e:
-            return False
 
     @staticmethod
     def is_magnet(link):
         """
         判断是否是磁力
         """
-        return link.lower().startswith("magnet:?xt=urn:btih:")
+        return link.lower().startswith(("magnet:?xt=urn:btih:", "magnet:?xt=urn:btmh:"))
 
     @staticmethod        
     def maybe_torrent_url(link):

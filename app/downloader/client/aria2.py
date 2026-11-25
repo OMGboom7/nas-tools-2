@@ -108,6 +108,11 @@ class Aria2(_IDownloadClient):
     def add_torrent(self, content, download_dir=None, **kwargs):
         if not self._client:
             return None
+        options = {}
+        if download_dir:
+            options["dir"] = download_dir
+        if kwargs.get("is_paused"):
+            options["pause"] = "true"
         if isinstance(content, str):
             # 转换为磁力链
             if re.match("^https*://", content):
@@ -117,9 +122,9 @@ class Aria2(_IDownloadClient):
                         content = p.headers.get("Location")
                 except Exception as result:
                     ExceptionUtils.exception_traceback(result)
-            return self._client.addUri(uris=[content], options=dict(dir=download_dir))
+            return self._client.addUri(uris=[content], options=options)
         else:
-            return self._client.addTorrent(torrent=content, uris=[], options=dict(dir=download_dir))
+            return self._client.addTorrent(torrent=content, uris=[], options=options)
 
     def start_torrents(self, ids):
         if not self._client:
