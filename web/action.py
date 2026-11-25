@@ -8,6 +8,7 @@ import re
 import shutil
 import signal
 import sqlite3
+import subprocess
 import time
 from math import floor
 from pathlib import Path
@@ -48,7 +49,7 @@ from app.utils import StringUtils, EpisodeFormat, RequestUtils, PathUtils, \
 from app.utils.time_utils import TimeUtils
 from app.utils.types import RmtMode, OsType, SearchType, SyncType, MediaType, MovieTypes, TvTypes, \
     EventType, SystemConfigKey, RssType
-from config import RMT_MEDIAEXT, RMT_SUBEXT, RMT_AUDIO_TRACK_EXT, Config
+from config import RMT_MEDIAEXT, RMT_SUBEXT, RMT_AUDIO_TRACK_EXT, Config, run_go_helper
 from web.backend.search_torrents import search_medias_for_web, search_media_by_message
 from web.backend.pro_user import ProUser
 from web.backend.web_utils import WebUtils
@@ -5266,12 +5267,10 @@ class WebAction:
         module_id = data.get("id")
         if not module_id:
             return {"code": -1, "msg": "参数错误"}
-        # 用户已安装插件列表
-        user_plugins = SystemConfig().get(SystemConfigKey.UserInstalledPlugins) or []
-        if module_id not in user_plugins:
-            user_plugins.append(module_id)
-        # 保存配置
-        SystemConfig().set(SystemConfigKey.UserInstalledPlugins, user_plugins)
+        try:
+            run_go_helper("plugin-installation", "install", module_id)
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            return {"code": -1, "msg": "插件安装记录未能保存"}
         # 重新加载插件
         if reload:
             PluginManager().init_config()
@@ -5285,12 +5284,10 @@ class WebAction:
         module_id = data.get("id")
         if not module_id:
             return {"code": -1, "msg": "参数错误"}
-        # 用户已安装插件列表
-        user_plugins = SystemConfig().get(SystemConfigKey.UserInstalledPlugins) or []
-        if module_id in user_plugins:
-            user_plugins.remove(module_id)
-        # 保存配置
-        SystemConfig().set(SystemConfigKey.UserInstalledPlugins, user_plugins)
+        try:
+            run_go_helper("plugin-installation", "uninstall", module_id)
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            return {"code": -1, "msg": "插件卸载记录未能保存"}
         # 重新加载插件
         PluginManager().init_config()
         return {"code": 0, "msg": "插件卸载功"}

@@ -42,9 +42,13 @@ class PluginManager:
         if not os.path.exists(self.user_plugin_path):
             os.makedirs(self.user_plugin_path, exist_ok=True)
         self.system_plugin_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "modules")
+        self._external_modules = {}
         if os.path.exists(self.user_plugin_path):
             for plugin_file in PathUtils.get_dir_level1_files(self.user_plugin_path, [".py"]):
-                SystemUtils.copy(plugin_file, self.system_plugin_path)
+                status, _ = SystemUtils.copy(plugin_file, self.system_plugin_path)
+                if status == 0:
+                    name = os.path.basename(plugin_file)
+                    self._external_modules["app.plugins.modules." + os.path.splitext(name)[0]] = name
         self.init_config()
 
     def init_config(self):
@@ -124,6 +128,17 @@ class PluginManager:
             # 初始化配置
             self.reload_plugin(module_id)
             log.info(f"加载插件：{plugin}")
+
+        # Keep the defining module of each discovered class for a later Go-only upgrade.
+        sources = {}
+        for pid, plugin in self._plugins.items():
+            name = self._external_modules.get(plugin.__module__)
+            if name:
+                sources.setdefault(name, []).append(pid)
+        for ids in sources.values():
+            ids.sort()
+        if sources != (self.systemconfig.get("GoExternalPluginSources") or {}):
+            self.systemconfig.set("GoExternalPluginSources", sources)
 
     def run_plugin(self, pid, method, *args, **kwargs):
         """

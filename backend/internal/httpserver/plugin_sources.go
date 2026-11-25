@@ -1,16 +1,21 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 type pluginSourceInventory struct {
-	Files      []string `json:"files"`
-	Incomplete bool     `json:"incomplete,omitempty"`
+	Classes    map[string][]string `json:"classes,omitempty"`
+	Files      []string            `json:"files"`
+	Incomplete bool                `json:"incomplete,omitempty"`
 }
 
 // The old loader copies top-level files, including links to regular files.
@@ -44,4 +49,32 @@ func readPluginSourceInventory(configPath string) *pluginSourceInventory {
 		}
 	}
 	return inventory
+}
+
+// Only associate files still present with identifiers observed by the old loader.
+// This snapshot never grants permissions or selects an executor.
+func (inventory *pluginSourceInventory) attachClasses(raw string) {
+	if raw == "" {
+		return
+	}
+	var known map[string][]string
+	if len(raw) > 1<<20 || json.Unmarshal([]byte(raw), &known) != nil {
+		inventory.Incomplete = true
+		return
+	}
+	for _, file := range inventory.Files {
+		ids := known[file]
+		if len(ids) == 0 {
+			continue
+		}
+		if len(ids) > 1024 || slices.ContainsFunc(ids, func(id string) bool { return !systemconfig.ValidStoredPluginID(id) }) {
+			inventory.Incomplete = true
+			continue
+		}
+		if inventory.Classes == nil {
+			inventory.Classes = make(map[string][]string)
+		}
+		slices.Sort(ids)
+		inventory.Classes[file] = slices.Compact(ids)
+	}
 }

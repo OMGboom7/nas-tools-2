@@ -1,7 +1,7 @@
 package httpserver
 
 import (
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -47,35 +47,13 @@ func (service pluginService) mutateNativeMetadataPlugin(response http.ResponseWr
 		}
 	}
 	alreadyInstalled := false
-	err = service.system.Update(ctx, "UserInstalledPlugins", func(raw string) (string, error) {
-		installed, err := decodeInstalledPlugins(raw)
-		if err != nil {
-			return "", err
+	err = service.system.Transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		alreadyInstalled, err = systemconfig.SetPluginInstalledTx(ctx, tx, id, install)
+		if err == nil && !install && !alreadyInstalled {
+			return errPluginNotInstalled
 		}
-		next := make([]string, 0, len(installed)+1)
-		for _, current := range installed {
-			if current == id {
-				alreadyInstalled = true
-				if !install {
-					continue
-				}
-			}
-			next = append(next, current)
-		}
-		if !install && !alreadyInstalled {
-			return "", errPluginNotInstalled
-		}
-		if install && !alreadyInstalled {
-			next = append(next, id)
-		}
-		if len(next) > 1024 {
-			return "", errInstalledPluginState
-		}
-		encoded, err := json.Marshal(next)
-		if err != nil || len(encoded) > 64<<10 {
-			return "", errInstalledPluginState
-		}
-		return string(encoded), nil
+		return err
 	})
 	if err != nil {
 		if errors.Is(err, errPluginNotInstalled) && request.URL.Path == "/api/v1/plugin/uninstall" {

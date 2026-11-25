@@ -84,3 +84,16 @@ func TestExternalPluginMutationChecksVisibleClassAndLocalInstallation(t *testing
 		}
 	}
 }
+
+func TestExternalSourceSnapshotOnlyReportsObservedClassesForPresentFiles(t *testing.T) {
+	inventory := pluginSourceInventory{Files: []string{"one.py", "unknown.py", "bad.py"}}
+	inventory.attachClasses(`{"one.py":["PluginB","外部扩展","PluginB","PluginA"],"bad.py":["bad.id"],"absent.py":["Hidden"]}`)
+	if !inventory.Incomplete || len(inventory.Classes) != 1 || !slices.Equal(inventory.Classes["one.py"], []string{"PluginA", "PluginB", "外部扩展"}) {
+		t.Fatal(inventory)
+	}
+	older := pluginSourceInventory{Files: []string{"one.py"}}
+	older.attachClasses("")
+	if older.Incomplete || len(older.Classes) != 0 {
+		t.Fatal("unobserved class inferred", older)
+	}
+}

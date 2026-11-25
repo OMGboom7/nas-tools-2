@@ -1,6 +1,4 @@
 import json
-import os
-from pathlib import Path
 import re
 import subprocess
 
@@ -14,7 +12,7 @@ from app.plugins import PluginManager
 from app.rsschecker import RssChecker
 from app.sites import Sites
 from app.utils import TokenCache
-from config import Config
+from config import Config, run_go_helper
 from web.action import WebAction
 from web.backend.pro_user import ProUser
 from web.security import require_auth, login_required, generate_access_token
@@ -41,20 +39,11 @@ _PLUGIN_PAGE_DELETE_ACTIONS = {
 
 
 def _render_plugin_page(plugin_id, title, content, action_func):
-    # run.py selects the matching helper for source, single-file and container installs.
-    helper = os.environ.get("NASTOOL_DB_BINARY")
-    if not helper:
-        binary = "nas-tools-db.exe" if os.name == "nt" else "nas-tools-db"
-        helper = Path(__file__).resolve().parents[1] / "backend" / "bin" / binary
-    if not Path(helper).is_absolute():
-        raise ValueError("invalid plugin page helper path")
     payload = json.dumps({"id": plugin_id, "title": str(title), "html": str(content),
                           "hasAction": bool(action_func)}, ensure_ascii=False).encode("utf-8")
     if len(payload) > 8 << 20:
         raise ValueError("plugin page is too large")
-    result = subprocess.run([helper, "plugin-page"], input=payload, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, check=True, timeout=15)
-    return json.loads(result.stdout)
+    return json.loads(run_go_helper("plugin-page", payload=payload))
 
 
 apiv1_bp = Blueprint("apiv1",

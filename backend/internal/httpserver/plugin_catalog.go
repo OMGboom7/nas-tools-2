@@ -63,7 +63,16 @@ func (service pluginService) serveNativePluginCatalog(response http.ResponseWrit
 		return
 	}
 	if administrator && service.applicationConfigPath != "" {
-		data.ExternalSources = readPluginSourceInventory(service.applicationConfigPath)
+		inventory := readPluginSourceInventory(service.applicationConfigPath)
+		if len(inventory.Files) > 0 {
+			raw, err := service.system.Get(request.Context(), "GoExternalPluginSources")
+			if err != nil {
+				inventory.Incomplete = true
+			} else {
+				inventory.attachClasses(raw)
+			}
+		}
+		data.ExternalSources = inventory
 	}
 	writeJSON(response, 200, map[string]any{"code": 0, "success": true, "data": data})
 }

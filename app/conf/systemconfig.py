@@ -1,5 +1,7 @@
 import json
 
+from config import run_go_helper
+
 from app.helper import DictHelper
 from app.utils.commons import singleton
 from app.utils.types import SystemConfigKey
@@ -54,7 +56,10 @@ class SystemConfig:
         获取系统设置
         """
         if not key:
-            return self.systemconfig
+            return {**self.systemconfig, SystemConfigKey.UserInstalledPlugins.value:
+                    self.get(SystemConfigKey.UserInstalledPlugins)}
         if isinstance(key, SystemConfigKey):
             key = key.value
+        if key == SystemConfigKey.UserInstalledPlugins.value:
+            return json.loads(run_go_helper("plugin-installation", "list"))
         return self.systemconfig.get(key)
