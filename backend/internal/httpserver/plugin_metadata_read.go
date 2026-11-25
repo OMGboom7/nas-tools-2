@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (service pluginService) nativeMetadataInstalled(ctx context.Context) ([]string, error) {
@@ -76,31 +77,77 @@ func (service pluginService) serveNativeMetadataStatus(response http.ResponseWri
 	writeJSON(response, 200, map[string]any{"code": 0, "state": nil})
 }
 
-func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http.Handler {
+func (service pluginService) metadataLegacyListRoute() http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		administrator, ok := service.catalogReader(response, request)
+		if !ok {
+			return
+		}
 		installed, err := service.nativeMetadataInstalled(request.Context())
 		if err != nil {
 			writeAPIError(response, 502, 502, "installed plugin state is unavailable")
 			return
 		}
-		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) && !service.nativeCookieCloud(id) && !service.nativeAutoBackup(id) && !service.nativeSyncTimer(id) && !service.nativeTorrentMark(id) && !service.nativeTorrentTransfer(id) && !service.nativeTorrentRemover(id) {
-				for _, other := range installed {
-					if service.nativeTorrentTransfer(other) || service.nativeTorrentRemover(other) || service.nativeTorrentMark(other) || service.nativeCookieCloud(other) || service.nativeAutoBackup(other) || service.nativeSyncTimer(other) {
-						writeAPIError(response, 501, 501, "混合插件配置请使用各自的配置页")
-						return
-					}
-					if service.nativeOpenSubtitles(other) {
-						writeAPIError(response, 501, 501, "mixed plugin configuration list cannot forward native subtitle credentials; use the individual native pages")
-						return
-					}
-				}
-				fallback.ServeHTTP(response, request)
-				return
-			}
+		catalog, err := bundledPluginCatalog()
+		if err != nil {
+			writeAPIError(response, 500, 500, "bundled plugin catalog is invalid")
+			return
 		}
 		result := map[string]any{}
+		var nativeIDs []string
+		seen := map[string]bool{}
+		var needsLegacy, privateConfig bool
 		for _, id := range installed {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			privateConfig = privateConfig || service.nativeTorrentTransfer(id) || service.nativeTorrentRemover(id) || service.nativeTorrentMark(id) || service.nativeCookieCloud(id) || service.nativeAutoBackup(id) || service.nativeSyncTimer(id) || service.nativeOpenSubtitles(id)
+			entry, bundled := catalog[id]
+			if !administrator && (!bundled || entry.AuthLevel > 1) {
+				continue
+			}
+			if service.ownsPlugin(id) {
+				nativeIDs = append(nativeIDs, id)
+				continue
+			}
+			needsLegacy = true
+			name := entry.Name
+			if !bundled {
+				name = id
+			}
+			result[id] = map[string]any{"name": name, "version": entry.Version, "installed": true, "native": false, "state": nil, "stateKnown": false, "actionsAvailable": false}
+		}
+		if needsLegacy && service.legacyURL != "" {
+			if privateConfig {
+				writeAPIError(response, 501, 501, "混合插件配置请使用各自的配置页")
+				return
+			}
+			request.Body = http.MaxBytesReader(response, request.Body, 128<<10)
+			if err := request.ParseForm(); err != nil {
+				writeAPIError(response, 400, 400, "invalid plugin list request")
+				return
+			}
+			ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+			defer cancel()
+			legacy, err := service.legacyInstalledPlugins(ctx, request.Header.Get("Authorization"), request.PostForm)
+			if !handlePluginResult(response, legacy, err, "plugin list is unavailable") {
+				return
+			}
+			rows, ok := legacy["result"].(map[string]any)
+			if !ok {
+				writeAPIError(response, 502, 502, "invalid installed plugin list")
+				return
+			}
+			// Only entries selected from the local installation and visible
+			// to this user can inherit their old editor configuration.
+			for id := range result {
+				if row, ok := rows[id].(map[string]any); ok {
+					result[id] = row
+				}
+			}
+		}
+		for _, id := range nativeIDs {
 			if service.nativeTorrentTransfer(id) {
 				actor, ok := service.torrentTransfer.login.actor(response, request, false)
 				if !ok {

@@ -828,7 +828,6 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("/api/v1/open-subtitles", nativeOpenSubtitles.manage)
 	mux.HandleFunc("/api/v1/open-subtitles/", nativeOpenSubtitles.manage)
-	mux.HandleFunc("/do", restore.legacy(nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
 	mux.HandleFunc("GET /stream-progress", nativeSiteLogin.legacyProgress)
 	mux.HandleFunc("/api/v1/media/subtitle/download", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)
@@ -849,14 +848,19 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	}
 	mux.HandleFunc("/api/v1/cloudflare", nativeCF.manage)
 	mux.HandleFunc("/api/v1/cloudflare/", nativeCF.manage)
+	pluginReads := map[string]http.HandlerFunc{}
 	if nativeSystemConfig != nil {
 		mux.HandleFunc("POST /api/v1/plugin/apps", plugins.serveNativeLegacyPluginApps)
 		for _, action := range []string{"install", "uninstall", "config", "status"} {
 			mux.Handle("POST /api/v1/plugin/"+action, plugins.metadataLegacyRoute(action, legacyFallback))
 		}
-		mux.Handle("POST /api/v1/plugin/list", plugins.metadataLegacyListRoute(legacyFallback))
+		installedList := plugins.metadataLegacyListRoute()
+		mux.Handle("POST /api/v1/plugin/list", installedList)
+		pluginReads["get_plugin_apps"] = plugins.serveNativeLegacyPluginApps
+		pluginReads["get_plugins_conf"] = installedList.ServeHTTP
 		mux.Handle("POST /api/v1/plugin/page", plugins.nativePluginPageRoute(legacyFallback))
 	}
+	mux.HandleFunc("/do", legacyCommandRoutes(pluginReads, nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
 	mux.HandleFunc("GET /api/v1/plugins", plugins.serveList)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/install", plugins.install)
 	mux.HandleFunc("GET /api/v1/plugins/{id}/page", plugins.servePage)

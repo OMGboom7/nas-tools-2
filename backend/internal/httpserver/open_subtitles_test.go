@@ -375,7 +375,7 @@ func TestOpenSubtitleNativeRoutesRejectUnknownActionsAndProtectRawSettings(t *te
 		t.Fatal(e)
 	}
 	w = performFormRequest(f.handler, "/api/v1/plugin/list", f.token, url.Values{})
-	if w.Code != 501 || strings.Contains(w.Body.String(), "private-open-key") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "UnmigratedPrivatePlugin") || strings.Contains(w.Body.String(), "private-open-key") {
 		t.Fatal("mixed config exposed a native secret", w.Code, w.Body.String())
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -248,16 +249,9 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
 	defer cancel()
-	data, result, err := service.list(ctx, token)
-	if !handlePluginResult(response, result, err, "plugin list is unavailable") {
+	current, ok := service.pluginForMutation(ctx, response, request, id, token)
+	if !ok {
 		return
-	}
-	var current *pluginSummary
-	for index := range data.Items {
-		if data.Items[index].ID == id {
-			current = &data.Items[index]
-			break
-		}
 	}
 	if current == nil {
 		writeAPIError(response, http.StatusNotFound, 404, "plugin not found")
@@ -271,11 +265,15 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 		writeAPIError(response, http.StatusConflict, 409, "plugin is not installed")
 		return
 	}
+	if service.legacyURL == "" {
+		writeAPIError(response, 501, 501, "此插件的安装和卸载仍需要旧后端")
+		return
+	}
 	action := "install"
 	if !install {
 		action = "uninstall"
 	}
-	result, err = postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/"+action, token, url.Values{"id": {id}})
+	result, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/"+action, token, url.Values{"id": {id}})
 	if !handlePluginResult(response, result, err, "plugin operation failed") {
 		return
 	}
@@ -286,12 +284,52 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": message})
 }
 
+// Bundled plugins use the same installation record as the market. External
+// extensions can still be discovered by their owner in a proxy deployment.
+func (service pluginService) pluginForMutation(ctx context.Context, response http.ResponseWriter, request *http.Request, id, token string) (*pluginSummary, bool) {
+	if service.system != nil {
+		administrator, ok := service.catalogReader(response, request)
+		if !ok {
+			return nil, false
+		}
+		catalog, err := bundledPluginCatalog()
+		if err != nil {
+			writeAPIError(response, 500, 500, "bundled plugin catalog is invalid")
+			return nil, false
+		}
+		if entry, found := catalog[id]; found {
+			if entry.AuthLevel > 1 && !administrator {
+				return nil, true
+			}
+			installed, err := service.nativeMetadataInstalled(ctx)
+			if err != nil {
+				writeAPIError(response, 502, 502, "installed plugin state is unavailable")
+				return nil, false
+			}
+			return &pluginSummary{ID: id, Installed: slices.Contains(installed, id)}, true
+		}
+		if service.legacyURL == "" {
+			return nil, true
+		}
+	}
+	data, result, err := service.list(ctx, token)
+	if !handlePluginResult(response, result, err, "plugin list is unavailable") {
+		return nil, false
+	}
+	for _, item := range data.Items {
+		if item.ID == id {
+			return &item, true
+		}
+	}
+	return nil, true
+}
+
 func (service pluginService) list(ctx context.Context, token string) (pluginsData, map[string]any, error) {
 	appsResult, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/apps", token, nil)
 	if err != nil || int(number(appsResult["code"])) != 0 {
 		return pluginsData{}, appsResult, err
 	}
-	runningResult, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/list", token, nil)
+	runningResult, err := service.legacyInstalledPlugins(ctx, token, nil)
 	if err != nil || int(number(runningResult["code"])) != 0 {
 		return pluginsData{}, runningResult, err
 	}

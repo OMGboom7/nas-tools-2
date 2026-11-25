@@ -3,9 +3,13 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/0xforee/nas-tools/backend/internal/auth"
 )
 
 type pluginCatalogEntry struct {
@@ -15,17 +19,44 @@ type pluginCatalogEntry struct {
 	Color     string `json:"color"`
 }
 
-func (service pluginService) serveNativePluginCatalog(response http.ResponseWriter, request *http.Request) {
+var bundledPluginCatalog = sync.OnceValues(func() (map[string]pluginCatalogEntry, error) {
+	var entries []pluginCatalogEntry
+	if err := json.Unmarshal([]byte(nativePluginCatalogJSON), &entries); err != nil {
+		return nil, err
+	}
+	catalog := make(map[string]pluginCatalogEntry, len(entries))
+	for _, entry := range entries {
+		catalog[entry.ID] = entry
+	}
+	return catalog, nil
+})
+
+func (service pluginService) catalogReader(response http.ResponseWriter, request *http.Request) (administrator, ok bool) {
 	if service.auth == nil {
 		writeAPIError(response, 503, 503, "native authentication is unavailable")
-		return
+		return false, false
 	}
 	claims, err := service.auth.service.VerifyToken(request.Header.Get("Authorization"))
 	if err != nil {
 		writeAPIError(response, 401, 401, "authorization token is invalid or expired")
+		return false, false
+	}
+	if _, err := service.auth.service.FindUser(request.Context(), claims.Username); err != nil {
+		if errors.Is(err, auth.ErrUserNotFound) {
+			writeAPIError(response, 401, 401, "current account is unavailable")
+		} else {
+			writeAPIError(response, 503, 503, "account information is unavailable")
+		}
+		return false, false
+	}
+	return service.auth.service.IsAdministrator(claims.Username), true
+}
+
+func (service pluginService) serveNativePluginCatalog(response http.ResponseWriter, request *http.Request) {
+	administrator, ok := service.catalogReader(response, request)
+	if !ok {
 		return
 	}
-	administrator := service.auth.service.IsAdministrator(claims.Username)
 	data, err := service.nativePluginCatalogData(request.Context(), administrator, true)
 	if err != nil {
 		writeAPIError(response, 502, 502, "plugin catalog or state is unavailable")
@@ -39,26 +70,22 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 	if err != nil {
 		return pluginsData{}, err
 	}
-	var catalog []pluginCatalogEntry
-	if err := json.Unmarshal([]byte(nativePluginCatalogJSON), &catalog); err != nil {
+	catalog, err := bundledPluginCatalog()
+	if err != nil {
 		return pluginsData{}, err
 	}
 	installedSet := map[string]bool{}
 	for _, id := range installed {
 		installedSet[id] = true
 	}
-	known := map[string]bool{}
 	data := pluginsData{Items: []pluginSummary{}}
 	for _, entry := range catalog {
 		item := entry.pluginSummary
-		known[item.ID] = true
 		if entry.AuthLevel > 1 && !administrator {
 			continue
 		}
 		item.Installed = installedSet[item.ID]
-		item.Native = nativeMetadataPlugin(item.ID) || service.nativeHosts(item.ID) || service.nativeIndexer(item.ID) || service.nativeSubtitle(item.ID) || service.nativeOpenSubtitles(item.ID) || service.nativeLibrary(item.ID) || service.nativeMediaRefresh(item.ID) || service.nativeEventWebhook(item.ID) || service.nativeSpeedLimiter(item.ID) || service.nativeMovieLike(item.ID) || service.nativeMediaSyncDelete(item.ID)
-		item.Native = item.Native || service.nativeSignin(item.ID)
-		item.Native = item.Native || service.nativeCloudflare(item.ID) || service.nativeCookieCloud(item.ID) || service.nativeAutoBackup(item.ID) || service.nativeSyncTimer(item.ID) || service.nativeTorrentMark(item.ID) || service.nativeTorrentRemover(item.ID) || service.nativeTorrentTransfer(item.ID)
+		item.Native = service.ownsPlugin(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
 		if service.nativeCloudflare(item.ID) {
@@ -234,11 +261,10 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 	// Preserve out-of-catalog installed IDs for administrators. They are not
 	// silently dropped or presented as known stopped/running implementations.
 	if administrator {
-		for _, id := range installed {
-			if known[id] {
+		for id := range installedSet {
+			if _, known := catalog[id]; known {
 				continue
 			}
-			known[id] = true
 			data.Items = append(data.Items, pluginSummary{ID: id, Name: id, Description: "已安装，但不在当前内置插件目录中。", Installed: true})
 		}
 	}
@@ -257,7 +283,17 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		if data.Items[left].Installed != data.Items[right].Installed {
 			return data.Items[left].Installed
 		}
-		return strings.ToLower(data.Items[left].Name) < strings.ToLower(data.Items[right].Name)
+		a, b := strings.ToLower(data.Items[left].Name), strings.ToLower(data.Items[right].Name)
+		if a == b {
+			return data.Items[left].ID < data.Items[right].ID
+		}
+		return a < b
 	})
 	return data, nil
+}
+
+func (service pluginService) ownsPlugin(id string) bool {
+	return nativeMetadataPlugin(id) || service.nativeHosts(id) || service.nativeIndexer(id) || service.nativeSubtitle(id) || service.nativeOpenSubtitles(id) || service.nativeLibrary(id) || service.nativeMediaRefresh(id) || service.nativeEventWebhook(id) || service.nativeSpeedLimiter(id) || service.nativeMovieLike(id) || service.nativeMediaSyncDelete(id) ||
+		service.nativeSignin(id) ||
+		service.nativeCloudflare(id) || service.nativeCookieCloud(id) || service.nativeAutoBackup(id) || service.nativeSyncTimer(id) || service.nativeTorrentMark(id) || service.nativeTorrentRemover(id) || service.nativeTorrentTransfer(id)
 }

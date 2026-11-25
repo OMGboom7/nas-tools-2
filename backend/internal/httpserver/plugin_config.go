@@ -274,7 +274,7 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 }
 
 func (service pluginService) rawInstalledPlugin(ctx context.Context, token, id string) (map[string]any, map[string]any, error) {
-	result, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/list", token, nil)
+	result, err := service.legacyInstalledPlugins(ctx, token, nil)
 	if err != nil || int(number(result["code"])) != 0 {
 		return nil, result, err
 	}
@@ -283,6 +283,10 @@ func (service pluginService) rawInstalledPlugin(ctx context.Context, token, id s
 		return nil, result, nil
 	}
 	return objectValue(raw), result, nil
+}
+
+func (service pluginService) legacyInstalledPlugins(ctx context.Context, token string, form url.Values) (map[string]any, error) {
+	return postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/list", token, form)
 }
 
 func safePluginConfigDetail(id string, raw map[string]any) pluginConfigDetail {

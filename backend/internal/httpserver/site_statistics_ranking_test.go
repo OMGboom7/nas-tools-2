@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -24,7 +25,8 @@ func TestSiteStatisticsRankingAndLegacyReadsUseSameStoredSnapshot(t *testing.T) 
 	if err := os.WriteFile(f.api.catalogPath, []byte(base64.StdEncoding.EncodeToString([]byte(catalog))), 0600); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", f.path)
+	// The running service also writes to the fixture database.
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: f.path, RawQuery: "mode=rw&_pragma=busy_timeout(5000)"}).String())
 	if err != nil {
 		t.Fatal(err)
 	}
