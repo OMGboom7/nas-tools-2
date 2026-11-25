@@ -21,13 +21,14 @@ type transferTrigger struct {
 	Due  time.Time `json:"due"`
 }
 type transferSchedule struct {
-	Epoch    string           `json:"epoch"`
-	Actor    string           `json:"actor"`
-	Scope    string           `json:"scope"`
-	Timezone string           `json:"timezone"`
-	Once     *time.Time       `json:"once,omitempty"`
-	Next     *time.Time       `json:"next,omitempty"`
-	Pending  *transferTrigger `json:"pending,omitempty"`
+	Epoch    string               `json:"epoch"`
+	Actor    string               `json:"actor"`
+	Scope    string               `json:"scope"`
+	Timezone string               `json:"timezone"`
+	Once     *time.Time           `json:"once,omitempty"`
+	Next     *time.Time           `json:"next,omitempty"`
+	Pending  *transferTrigger     `json:"pending,omitempty"`
+	Latest   *transferBatchResult `json:"latest,omitempty"`
 }
 
 func parseTransferSchedule(raw string) (transferSchedule, error) {
@@ -203,7 +204,9 @@ func startTransferScheduler(ctx context.Context, api *torrentTransferAPI) func()
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				_ = api.queueDue(ctx, now)
+				if api.queueDue(ctx, now) == nil {
+					_ = api.processTransferBatch(ctx)
+				}
 			}
 		}
 	}()

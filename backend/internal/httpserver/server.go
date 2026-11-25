@@ -616,6 +616,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/torrent-transfer/records/{id}/{action}", transferAPI.transferAction)
 	rssRunner.torrentTransfer = &transferAPI
 	mux.HandleFunc("GET /api/v1/torrent-transfer/schedule", transferAPI.schedule)
+	mux.HandleFunc("GET /api/v1/torrent-transfer/batches/{id}", transferAPI.batchRecord)
 	mux.HandleFunc("POST /api/v1/torrent-transfer/schedule/{control}", transferAPI.schedule)
 	mux.HandleFunc("POST /api/v1/torrent-transfer/review", transferAPI.review)
 	mux.HandleFunc("GET /api/v1/torrent-transfer/records/{id}", transferAPI.record)

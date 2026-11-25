@@ -132,13 +132,26 @@ func (api torrentTransferAPI) review(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 503, 503, "无法打开转种账本")
 		return
 	}
+	items, existing, failed, err := collectTransferPlans(ctx, scope, root, ledger)
+	if err != nil {
+		writeAPIError(w, 502, 502, "无法完成源任务扫描或计划保存")
+		return
+	}
+	current, err := api.reviewScope(ctx, actor)
+	if err != nil || current.fingerprint != scope.fingerprint {
+		writeAPIError(w, 409, 409, "配置已变更，请重新审核")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"source": scope.from, "target": scope.to, "items": items, "existing": existing, "failed": failed}})
+}
+
+func collectTransferPlans(ctx context.Context, scope transferReviewScope, root *torrenttransfer.MetainfoRoot, ledger *torrenttransfer.Ledger) ([]transferReviewItem, int, int, error) {
 	items := []transferReviewItem{}
 	existing, failed := 0, 0
 	for src, err := range torrenttransfer.ScanSources(ctx, scope.settings, scope.source, root) {
 		if err != nil {
 			if src.Task.WireID == "" {
-				writeAPIError(w, 502, 502, "无法完成源下载器扫描")
-				return
+				return nil, 0, 0, err
 			}
 			failed++
 			continue
@@ -157,15 +170,9 @@ func (api torrentTransferAPI) review(w http.ResponseWriter, r *http.Request) {
 		}
 		id := torrenttransfer.Hash(plan)
 		if err := ledger.SavePlan(ctx, id, plan); err != nil {
-			writeAPIError(w, 503, 503, "转种计划保存失败，可重新审核")
-			return
+			return nil, 0, 0, err
 		}
 		items = append(items, transferReviewItem{id, src.Task.Name, src.Task.WireID, plan.WireID, src.Directory})
 	}
-	current, err := api.reviewScope(ctx, actor)
-	if err != nil || current.fingerprint != scope.fingerprint {
-		writeAPIError(w, 409, 409, "配置已变更，请重新审核")
-		return
-	}
-	writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"source": scope.from, "target": scope.to, "items": items, "existing": existing, "failed": failed}})
+	return items, existing, failed, ctx.Err()
 }

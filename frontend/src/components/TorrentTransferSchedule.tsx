@@ -4,7 +4,7 @@ import { ApiError } from "../api/client";
 type Schedule = {
   fingerprint: string; ready: boolean; source: string; target: string;
   cron: string; onlyOnce: boolean; autoStart: boolean; deleteSource: boolean;
-  control: { epoch: string; actor: string; next?: string; once?: string; pending?: {id: string; kind: string; due: string} };
+  control: { epoch: string; actor: string; next?: string; once?: string; pending?: {id: string; kind: string; due: string}; latest?: {id: string; submitted: number; existing: number; unknown: number; failed: number} };
 };
 const base = "/api/v1/torrent-transfer/schedule";
 
@@ -36,7 +36,8 @@ export function TorrentTransferSchedule({token, expired}: {token: string; expire
       if (!s?.control || typeof s.control.epoch !== "string" || typeof s.control.actor !== "string" ||
           ![s.source,s.target,s.cron,s.fingerprint].every(v => typeof v === "string") ||
           ![s.ready,s.onlyOnce,s.autoStart,s.deleteSource].every(v => typeof v === "boolean") ||
-          (s.control.pending && typeof s.control.pending.id !== "string")) throw new Error();
+          (s.control.pending && typeof s.control.pending.id !== "string") ||
+          (s.control.latest && (typeof s.control.latest.id !== "string" || ![s.control.latest.submitted, s.control.latest.existing, s.control.latest.unknown, s.control.latest.failed].every(n => Number.isSafeInteger(n) && n >= 0)))) throw new Error();
       if (!c.signal.aborted) setStatus(s);
     } catch (e) {
       if (c.signal.aborted) return;
@@ -53,6 +54,7 @@ export function TorrentTransferSchedule({token, expired}: {token: string; expire
       {status.control.next && <p>下次周期触发 {new Date(status.control.next).toLocaleString()}</p>}
       {(status.onlyOnce || status.control.once) && <p>已配置单次运行</p>}
       {status.control.pending && <p>等待执行的批次 <code>{status.control.pending.id}</code></p>}
+      {status.control.latest && <p>最近批次 <code>{status.control.latest.id}</code> · 暂停添加已应答 {status.control.latest.submitted} · 目标已有 {status.control.latest.existing} · 待核实 {status.control.latest.unknown} · 失败 {status.control.latest.failed}</p>}
       {status.control.actor ? <button disabled={busy} onClick={() => void operate("stop")}>停止调度</button> :
         <button disabled={busy || !status.ready} onClick={() => void operate("activate")}>启用调度</button>}
     </div>}

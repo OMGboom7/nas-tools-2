@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"database/sql"
 	"encoding/json"
 	"strconv"
 	"testing"
@@ -47,7 +48,7 @@ func TestTransferScheduleConsumesOnceAndKeepsPendingSlot(t *testing.T) {
 	if r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &out) != nil || out.Result.Once == nil || out.Result.Next == nil {
 		t.Fatal(r.Code, r.Body.String())
 	}
-	api := torrentTransferAPI{system: sys, login: m.f.api, organizer: m.f.removal.organizer, downloaders: ds}
+	api := torrentTransferAPI{database: m.f.path, system: sys, login: m.f.api, organizer: m.f.removal.organizer, downloaders: ds}
 	at := out.Result.Once.Add(time.Minute)
 	for range 2 {
 		if err := api.queueDue(ctx, at); err != nil {
@@ -65,6 +66,34 @@ func TestTransferScheduleConsumesOnceAndKeepsPendingSlot(t *testing.T) {
 	s, err := torrenttransfer.Parse(values[torrenttransfer.ConfigKey])
 	if err != nil || s.OnlyOnce {
 		t.Fatal(s, err)
+	}
+	// Simulate a restart after the final receipt was counted but before
+	// publishing the batch result. The fixture rejects downloader requests.
+	db, err := sql.Open("sqlite", m.f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("CREATE TABLE GO_TORRENT_TRANSFER_BATCHES(id TEXT PRIMARY KEY,manifest TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := json.Marshal(transferBatch{ID: st.Pending.ID, Receipts: []string{torrenttransfer.Hash("fixture receipt")}, Cursor: 1, Submitted: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("INSERT INTO GO_TORRENT_TRANSFER_BATCHES VALUES(?,?)", st.Pending.ID, string(manifest)); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.processTransferBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	values, err = sys.ReadMany(ctx, transferScheduleKeys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := parseTransferSchedule(values[transferScheduleKey])
+	if err != nil || finished.Pending != nil || finished.Latest == nil || finished.Latest.ID != st.Pending.ID || finished.Latest.Submitted != 1 {
+		t.Fatal(finished, err)
 	}
 	r = m.f.request(t, "POST", path+"/stop", map[string]any{"confirm": true, "epoch": st.Epoch})
 	if r.Code != 200 {
