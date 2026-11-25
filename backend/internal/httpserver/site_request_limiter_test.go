@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -19,12 +20,12 @@ import (
 )
 
 func TestSiteRequestPolicyUnitsBoundsAndPairs(t *testing.T) {
-	policy, err := parseSiteRequestPolicy(map[string]any{"limit_interval": "2", "limit_count": 3, "limit_seconds": "4"})
-	if err != nil || policy.interval != 2*time.Minute || policy.count != 3 || policy.gap != 4*time.Second {
+	policy, err := siteconfig.ParseRequestPolicy(map[string]any{"limit_interval": "2", "limit_count": 3, "limit_seconds": "4"})
+	if err != nil || policy.Interval != 2*time.Minute || policy.Count != 3 || policy.Gap != 4*time.Second {
 		t.Fatal(policy, err)
 	}
 	for _, note := range []map[string]any{nil, {}, {"limit_seconds": 0}, {"limit_interval": "0", "limit_count": "0"}} {
-		if policy, err := parseSiteRequestPolicy(note); err != nil || policy != (siteRequestPolicy{}) {
+		if policy, err := siteconfig.ParseRequestPolicy(note); err != nil || policy != (siteconfig.RequestPolicy{}) {
 			t.Fatal(policy, err)
 		}
 	}
@@ -33,19 +34,48 @@ func TestSiteRequestPolicyUnitsBoundsAndPairs(t *testing.T) {
 		{"limit_seconds": "-1"}, {"limit_seconds": "1.5"}, {"limit_seconds": true}, {"limit_seconds": "NaN"},
 		{"limit_seconds": "3153600001"}, {"limit_interval": "52560001", "limit_count": "1"}, {"limit_interval": "1", "limit_count": "1000000001"},
 	} {
-		if _, err := parseSiteRequestPolicy(note); err == nil {
+		if _, err := siteconfig.ParseRequestPolicy(note); err == nil {
 			t.Fatal("invalid policy accepted", note)
 		}
 	}
 }
 
+func admissionTestSite(t *testing.T, path string, note string) (*siteconfig.Store, siteconfig.Site) {
+	t.Helper()
+	store, err := siteconfig.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	site, err := store.Upsert(t.Context(), siteconfig.Site{Name: "tracker", Note: note})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, site
+}
+
+func admissionCount(t *testing.T, path string, id int64) int {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var count int
+	if err = db.QueryRow("SELECT COALESCE(SUM(VISITS),0) FROM GO_SITE_REQUEST_LIMIT WHERE SITE_ID=?", id).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestSiteRequestLimiterIdleWindowSpacingAndPolicyChanges(t *testing.T) {
 	now := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
 	limiter := &siteRequestLimiter{now: func() time.Time { return now }}
-	policy := siteRequestPolicy{interval: time.Minute, count: 2, gap: 10 * time.Second}
+	path := filepath.Join(t.TempDir(), "user.db")
+	store, site := admissionTestSite(t, path, `{"limit_interval":1,"limit_count":2,"limit_seconds":10}`)
 	acquire := func(want time.Duration) {
 		t.Helper()
-		delay, err := limiter.acquire(t.Context(), 1, policy)
+		delay, err := limiter.try(t.Context(), store, site.ID)
 		if err != nil || delay != want {
 			t.Fatal(delay, want, err)
 		}
@@ -61,18 +91,25 @@ func TestSiteRequestLimiterIdleWindowSpacingAndPolicyChanges(t *testing.T) {
 	acquire(10 * time.Second)
 	now = now.Add(10 * time.Second)
 	acquire(0)
-	policy.gap = 20 * time.Second
-	acquire(20 * time.Second)
-	if limiter.states[1].count != 1 {
-		t.Fatal("policy edit reset history", limiter.states[1])
+	site.Note = `{"limit_interval":1,"limit_count":2,"limit_seconds":20}`
+	if _, err := store.Upsert(t.Context(), site); err != nil {
+		t.Fatal(err)
 	}
-	if delay, err := limiter.acquire(t.Context(), 2, policy); err != nil || delay != 0 {
+	acquire(20 * time.Second)
+	if admissionCount(t, path, site.ID) != 1 {
+		t.Fatal("policy edit reset history", admissionCount(t, path, site.ID))
+	}
+	other, err := store.Upsert(t.Context(), siteconfig.Site{Name: "other", Note: site.Note})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delay, err := limiter.try(t.Context(), store, other.ID); err != nil || delay != 0 {
 		t.Fatal("sites share a budget", delay, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	before := limiter.states[1]
-	if _, err := limiter.acquire(ctx, 1, policy); !errors.Is(err, context.Canceled) || limiter.states[1] != before {
+	before := admissionCount(t, path, site.ID)
+	if _, err := limiter.try(ctx, store, site.ID); !errors.Is(err, context.Canceled) || admissionCount(t, path, site.ID) != before {
 		t.Fatal("cancelled request consumed budget", err)
 	}
 }
@@ -80,14 +117,21 @@ func TestSiteRequestLimiterIdleWindowSpacingAndPolicyChanges(t *testing.T) {
 func TestSiteRequestLimiterConcurrentAdmissionIsAtomic(t *testing.T) {
 	now := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
 	limiter := &siteRequestLimiter{now: func() time.Time { return now }}
-	policy := siteRequestPolicy{interval: time.Minute, count: 3}
+	path := filepath.Join(t.TempDir(), "user.db")
+	store, site := admissionTestSite(t, path, `{"limit_interval":1,"limit_count":3}`)
+	second, err := siteconfig.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	stores := []*siteconfig.Store{store, second}
 	var allowed atomic.Int32
 	var group sync.WaitGroup
 	for n := 0; n < 32; n++ {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			delay, err := limiter.acquire(t.Context(), 1, policy)
+			delay, err := limiter.try(t.Context(), stores[n%2], site.ID)
 			if err != nil {
 				t.Error(err)
 				return
@@ -100,15 +144,16 @@ func TestSiteRequestLimiterConcurrentAdmissionIsAtomic(t *testing.T) {
 		}()
 	}
 	group.Wait()
-	if allowed.Load() != 3 || limiter.states[1].count != 3 {
-		t.Fatal("parallel callers bypassed rate limit", allowed.Load(), limiter.states[1])
+	if allowed.Load() != 3 || admissionCount(t, path, site.ID) != 3 {
+		t.Fatal("parallel callers bypassed rate limit", allowed.Load(), admissionCount(t, path, site.ID))
 	}
 }
 
 func TestSiteRequestLimiterWaitHotReloadDeletionAndCancellation(t *testing.T) {
 	for _, operation := range []string{"disable", "delete", "cancel", "invalid"} {
 		t.Run(operation, func(t *testing.T) {
-			store, err := siteconfig.Open(filepath.Join(t.TempDir(), "user.db"))
+			path := filepath.Join(t.TempDir(), "user.db")
+			store, err := siteconfig.Open(path)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -152,8 +197,12 @@ func TestSiteRequestLimiterWaitHotReloadDeletionAndCancellation(t *testing.T) {
 			if operation == "cancel" && !errors.Is(err, context.Canceled) {
 				t.Fatal(err)
 			}
-			if limiter.states[site.ID].count != 1 {
-				t.Fatal("waiter pre-reserved a request", limiter.states[site.ID])
+			want := 1
+			if operation == "delete" {
+				want = 0
+			}
+			if got := admissionCount(t, path, site.ID); got != want {
+				t.Fatal("unexpected admission history", got, want)
 			}
 		})
 	}

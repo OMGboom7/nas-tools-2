@@ -3,11 +3,13 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 
+	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
 	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/config"
@@ -102,6 +104,11 @@ func RenderCatalogCommand(ctx context.Context, path, catalogPath string, in io.R
 	if selected == nil {
 		return builtinindexer.ErrConfig
 	}
+	release, err := backuprestore.HoldStartup(path)
+	if err != nil {
+		return err
+	}
+	defer release()
 	store, err := siteconfig.Open((config.Application{Path: path}).UserDatabasePath())
 	if err != nil {
 		return err
@@ -141,6 +148,8 @@ func RenderCatalogCommand(ctx context.Context, path, catalogPath string, in io.R
 	if err != nil {
 		return err
 	}
+	limits := &siteBatchLimiter{}
+	limitedRows := func() error { return json.NewEncoder(out).Encode(map[string]any{"rows": []any{}, "limited": true}) }
 	if !shouldRenderCatalog(plan, options) {
 		// A catalog with several media-specific paths can mix ordinary GET
 		// searches with browser forms. Fetch only the path selected by Go.
@@ -148,6 +157,13 @@ func RenderCatalogCommand(ctx context.Context, path, catalogPath string, in io.R
 		if truthy(options["proxy"]) || options["proxy"] == "Y" {
 			value := text(objectValue(objectValue(cfg["app"])["proxies"])[plan.URL.Scheme])
 			request.Proxy = &value
+		}
+		if site.ID > 0 {
+			if err := limits.Wait(ctx, store, site.ID); errors.Is(err, errSiteRequestBusy) {
+				return limitedRows()
+			} else if err != nil {
+				return err
+			}
 		}
 		rows, err := builtinindexer.CatalogPage(ctx, request, nil)
 		if err != nil {
@@ -163,8 +179,11 @@ func RenderCatalogCommand(ctx context.Context, path, catalogPath string, in io.R
 	if binary == "" {
 		binary = "auto"
 	}
-	browser := siteBrowser{browserruntime.New(binary), store, app, &siteRequestLimiter{}, http.DefaultTransport}
+	browser := siteBrowser{browserruntime.New(binary), store, app, limits, http.DefaultTransport}
 	rendered, session, err := browser.renderCatalog(ctx, site, cfg, plan, empty, catalogPath, catalog)
+	if errors.Is(limits.firstErr, errSiteRequestBusy) {
+		return limitedRows()
+	}
 	if err != nil {
 		return err
 	}

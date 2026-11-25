@@ -143,10 +143,6 @@ class BuiltinIndexer(_IIndexClient):
         """
         if not indexer or not key_word:
             return None
-        # 站点流控
-        if self.sites.check_ratelimit(indexer.siteid):
-            self.progress.update(ptype=ProgressKey.Search, text=f"{indexer.name} 触发站点流控，跳过 ...")
-            return []
         # fix 共用同一个dict时会导致某个站点的更新全局全效
         if filter_args is None:
             _filter_args = {}
@@ -173,19 +169,18 @@ class BuiltinIndexer(_IIndexClient):
         # 开始索引
         result_array = []
         try:
-            if indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech"):
-                if indexer.parser == "MTeamSpider" and not search_word:
-                    error_flag = True
-                else:
-                    error_flag, result_array = self.__site_resources(indexer, search_word)
-            elif indexer.parser not in ("HaiDanSpider", "RenderSpider") and PluginsSpider().status(indexer=indexer):
-                error_flag, result_array = PluginsSpider().search(keyword=search_word, indexer=indexer)
+            kind = match_media.type if match_media and match_media.tmdb_info else None
+            if indexer.parser == "MTeamSpider" and not search_word:
+                error_flag, result_array = True, []
             else:
-                kind = match_media.type if match_media and match_media.tmdb_info else None
-                error_flag, result_array = catalog_resources(indexer, search_word, mtype=kind)
+                error_flag, result_array = self._resources(indexer, search_word, mtype=kind)
         except Exception as err:
             error_flag = True
             print(str(err))
+
+        if error_flag is None:
+            self.progress.update(ptype=ProgressKey.Search, text=f"{indexer.name} 触发站点流控，跳过 ...")
+            return []
 
         # 索引花费的时间
         seconds = round((datetime.datetime.now() - start_time).seconds, 1)
@@ -257,12 +252,9 @@ class BuiltinIndexer(_IIndexClient):
         # 计算耗时
         start_time = datetime.datetime.now()
 
-        if indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech"):
-            error_flag, result_array = self.__site_resources(indexer, keyword, page)
-        elif indexer.parser not in ("HaiDanSpider", "RenderSpider") and PluginsSpider().status(indexer=indexer):
-            error_flag, result_array = PluginsSpider().search(keyword=keyword, indexer=indexer, page=page)
-        else:
-            error_flag, result_array = catalog_resources(indexer, keyword, page)
+        error_flag, result_array = self._resources(indexer, keyword, page)
+        if error_flag is None:
+            return []
         # 索引花费的时间
         seconds = round((datetime.datetime.now() - start_time).seconds, 1)
 
@@ -272,6 +264,17 @@ class BuiltinIndexer(_IIndexClient):
                                                 seconds=seconds,
                                                 result='N' if error_flag else 'Y')
         return result_array
+
+    def _resources(self, indexer, keyword, page=0, mtype=None):
+        special = indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech")
+        plugin = not special and indexer.parser not in ("HaiDanSpider", "RenderSpider") and PluginsSpider().status(indexer=indexer)
+        if not special and not plugin:
+            return catalog_resources(indexer, keyword, page, mtype)
+        if self.sites.check_ratelimit(indexer.siteid):
+            return None, []
+        if plugin:
+            return PluginsSpider().search(keyword=keyword, indexer=indexer, page=page)
+        return self.__site_resources(indexer, keyword, page)
 
     @staticmethod
     def __site_resources(indexer, keyword, page=0):

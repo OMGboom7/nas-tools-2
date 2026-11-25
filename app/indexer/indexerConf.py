@@ -119,6 +119,8 @@ _browser_slots = BoundedSemaphore(2)
 
 
 def catalog_resources(indexer, keyword=None, page=None, mtype=None):
+    from app.sites.sites import Sites
+
     try:
         config = Config()
         query = {"page": int(page or 0), "kind": mtype.name.lower() if mtype else ""}
@@ -133,6 +135,8 @@ def catalog_resources(indexer, keyword=None, page=None, mtype=None):
                 raw = run_go_helper("render-catalog", config.get_user_sites_bin_path(),
                                     payload=json.dumps(query, ensure_ascii=False).encode(), timeout=90)
             result = json.loads(raw)
+            if result.get("limited"):
+                return None, []
             if "cookie" in result:
                 indexer.cookie, indexer.ua = result["cookie"], result["ua"]
             return False, result["rows"]
@@ -146,6 +150,8 @@ def catalog_resources(indexer, keyword=None, page=None, mtype=None):
                                      "category": indexer.category, "browse": indexer.browse},
                       "limit": int(config.get_config("pt").get("site_search_result_num") or 100),
                       "cookie": indexer.cookie or "", "ua": indexer.ua or config.get_ua(), "proxy": proxy})
+        if Sites().check_ratelimit(indexer.siteid):
+            return None, []
         raw = run_go_helper("catalog-resources", payload=json.dumps(query, ensure_ascii=False).encode(), timeout=35)
         return False, json.loads(raw)
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):

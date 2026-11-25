@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -90,6 +91,18 @@ func TestRenderedCatalogCommandUsesSavedSiteAndInstalledRules(t *testing.T) {
 		rows := result["rows"].([]any)
 		if len(rows) != 1 || rows[0].(map[string]any)["title"] != "JS result" || result["ua"] != "fixture-agent" || !strings.Contains(result["cookie"].(string), "rotated=fixture") || hits.Load() != 1 {
 			t.Fatal("invalid rendered response")
+		}
+		site.Note = `{"limit_interval":1,"limit_count":1}`
+		if _, err = sites.Upsert(t.Context(), site); err != nil {
+			t.Fatal(err)
+		}
+		var admission bytes.Buffer
+		if err = SiteAdmissionCommand(t.Context(), configPath, strconv.FormatInt(site.ID, 10), &admission); err != nil || admission.String() != "true\n" {
+			t.Fatal(admission.String(), err)
+		}
+		limited, err := run()
+		if err != nil || limited["limited"] != true || hits.Load() != 1 {
+			t.Fatal("busy site contacted by browser", limited, err, hits.Load())
 		}
 		saved, err := sites.Get(t.Context(), site.ID)
 		if err != nil || saved.Cookie != "saved=fixture" {

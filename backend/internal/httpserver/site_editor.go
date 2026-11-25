@@ -279,7 +279,7 @@ func validateSiteInput(input siteUpsertRequest, creating bool) string {
 	if input.RSSURL != "" && !validSiteURL(input.RSSURL) {
 		return "invalid RSS address"
 	}
-	if _, err := parseSiteRequestPolicy(map[string]any{"limit_interval": input.LimitInterval, "limit_count": input.LimitCount, "limit_seconds": input.LimitSeconds}); err != nil {
+	if _, err := siteconfig.ParseRequestPolicy(map[string]any{"limit_interval": input.LimitInterval, "limit_count": input.LimitCount, "limit_seconds": input.LimitSeconds}); err != nil {
 		return "rate limits require bounded non-negative integers and a paired interval/count"
 	}
 	return ""

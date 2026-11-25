@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -48,14 +49,14 @@ func ScheduledStatisticsCommand(ctx context.Context, path string, in io.Reader, 
 		return err
 	}
 	defer release()
-	rows, err := collectScheduledStatistics(ctx, path, targets, "", false, nil)
+	rows, err := collectScheduledStatistics(ctx, path, targets, nil, "", false, nil)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(out).Encode(rows)
 }
 
-func collectScheduledStatistics(ctx context.Context, path string, targets []scheduledStatsTarget, reference string, summary bool, occurrence *statisticsOccurrence) ([]scheduledStatsResult, error) {
+func collectScheduledStatistics(ctx context.Context, path string, targets []scheduledStatsTarget, names []string, reference string, summary bool, occurrence *statisticsOccurrence) ([]scheduledStatsResult, error) {
 	seen := map[int64]bool{}
 	for _, target := range targets {
 		if target.ID <= 0 || seen[target.ID] || target.Name == "" || target.URL == "" {
@@ -137,13 +138,17 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 		if err != nil || !truthy(row["statistic_enable"]) {
 			continue
 		}
-		counts[text(row["strict_url"])]++
+		address := text(row["strict_url"])
+		counts[address]++
+		if names != nil && (len(names) == 0 || slices.Contains(names, site.Name)) {
+			targets = append(targets, scheduledStatsTarget{site.ID, site.Name, address})
+			seen[site.ID] = true
+		}
 		if seen[site.ID] {
 			selected[site.ID] = site
 		}
 	}
 	engine := browserruntime.New(defaultString(os.Getenv("NASTOOL_BROWSER_BINARY"), "auto"))
-	limits := &siteRequestLimiter{}
 	fingerprint := statsNetworkConfig(cfg)
 	browserAvailable := engine.Available()
 	results := make([]scheduledStatsResult, len(targets))
@@ -172,7 +177,11 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 				}
 				return ctx.Err()
 			}
+			limits := &siteBatchLimiter{}
 			before := func(ctx context.Context, r sitestats.Request) error {
+				if err := guard(ctx); err != nil {
+					return err
+				}
 				if err := limits.Wait(ctx, sites, site.ID); err != nil {
 					return err
 				}
@@ -182,6 +191,10 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 			client := sitestats.Client{Transport: http.DefaultTransport, Renderer: engine, Emulate: browserAvailable,
 				ReadMessages: notify, Guard: guard, Before: before}
 			v, err := collectSiteStatistics(ctx, site, cfg, client)
+			if errors.Is(limits.firstErr, errSiteRequestBusy) {
+				results[i] = scheduledStatsResult{}
+				return
+			}
 			if err == nil {
 				err = guard(ctx)
 			}
@@ -232,7 +245,7 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 			return nil, err
 		}
 	}
-	return results, nil
+	return slices.DeleteFunc(results, func(row scheduledStatsResult) bool { return row.Name == "" }), nil
 }
 
 func statsNetworkConfig(cfg map[string]any) string {

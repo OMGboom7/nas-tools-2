@@ -40,15 +40,16 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create site database directory: %w", err)
 	}
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=rwc"}).String()
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=rwc&_txlock=immediate&_pragma=busy_timeout(5000)"}).String()
 	database, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open site database: %w", err)
 	}
 	database.SetMaxOpenConns(1)
 	for _, statement := range []string{
-		"PRAGMA busy_timeout = 5000",
 		"CREATE TABLE IF NOT EXISTS CONFIG_SITE (ID INTEGER PRIMARY KEY AUTOINCREMENT, NAME TEXT, PRI TEXT, RSSURL TEXT, SIGNURL TEXT, COOKIE TEXT, APIKEY TEXT, INCLUDE TEXT, EXCLUDE TEXT, SIZE TEXT, NOTE TEXT)",
+		"CREATE TABLE IF NOT EXISTS GO_SITE_REQUEST_LIMIT (SITE_ID INTEGER PRIMARY KEY, LAST_NS INTEGER NOT NULL, VISITS INTEGER NOT NULL)",
+		"CREATE TRIGGER IF NOT EXISTS GO_SITE_REQUEST_LIMIT_DELETE AFTER DELETE ON CONFIG_SITE BEGIN DELETE FROM GO_SITE_REQUEST_LIMIT WHERE SITE_ID=OLD.ID; END",
 		"CREATE TABLE IF NOT EXISTS INDEXER_STATISTICS (ID INTEGER NOT NULL PRIMARY KEY, INDEXER TEXT, TYPE TEXT, SECONDS INTEGER, RESULT TEXT, DATE TEXT)",
 	} {
 		if _, err := database.Exec(statement); err != nil {

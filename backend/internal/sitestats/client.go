@@ -50,11 +50,6 @@ func (c *Client) Fetch(ctx context.Context, r Request) ([]byte, error) {
 			return nil, e
 		}
 	}
-	if c.Before != nil {
-		if e = c.Before(ctx, r); e != nil {
-			return nil, e
-		}
-	}
 	if c.Emulate && !api && !r.Raw && r.Form == nil && r.JSON == nil {
 		var currentCookies []string
 		for _, cookie := range c.jar.Cookies(u) {
@@ -149,6 +144,11 @@ func (c *Client) Fetch(ctx context.Context, r Request) ([]byte, error) {
 		}
 		return nil
 	}}
+	if c.Before != nil {
+		if e = c.Before(ctx, r); e != nil {
+			return nil, e
+		}
+	}
 	res, e := client.Do(req)
 	if e != nil {
 		return nil, ErrResponse

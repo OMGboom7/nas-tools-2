@@ -15,10 +15,12 @@ import (
 // Browser sessions are private read credentials, bound to the original saved
 // site and complete application settings. They never update CONFIG_SITE.
 type siteBrowser struct {
-	renderer  browserruntime.Renderer
-	sites     *siteconfig.Store
-	config    *config.Store
-	limits    *siteRequestLimiter
+	renderer browserruntime.Renderer
+	sites    *siteconfig.Store
+	config   *config.Store
+	limits   interface {
+		Wait(context.Context, *siteconfig.Store, int64) error
+	}
 	transport http.RoundTripper
 }
 
@@ -87,7 +89,7 @@ func (b siteBrowser) render(ctx context.Context, site siteconfig.Site, configura
 			if err := guard(ctx); err != nil {
 				return nil, err
 			}
-			if site.ID > 0 {
+			if site.ID > 0 && b.limits != nil {
 				if err := b.limits.Wait(ctx, b.sites, site.ID); err != nil {
 					return nil, err
 				}

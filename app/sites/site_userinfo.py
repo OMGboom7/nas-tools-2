@@ -27,11 +27,7 @@ def read_site_statistics(action, data=None):
 
 
 def _serve_refresh(worker, selected=None):
-    sites = Sites()
-    targets = [{"id": site["id"], "name": site["name"], "url": site["strict_url"]}
-               for site in sites.get_sites(statistic=True)
-               if (not selected or site["name"] in selected) and not sites.check_ratelimit(site["id"])]
-    worker.stdin.write(json.dumps(targets) + "\n")
+    worker.stdin.write(json.dumps({"sites": sorted(selected or [])}) + "\n")
     worker.stdin.flush()
     try:
         for line in worker.stdout:
@@ -56,11 +52,11 @@ def _serve_refresh(worker, selected=None):
                 return
         raise ValueError("incomplete statistics refresh")
     finally:
-        sites.init_favicons()
+        Sites().init_favicons()
 
 
 class StatisticsScheduler:
-    """Connect the Go scheduler to the running client's site limiter and message center."""
+    """Connect the Go scheduler to the running client's message center and notification templates."""
 
     def __init__(self):
         self._stopped = Event()

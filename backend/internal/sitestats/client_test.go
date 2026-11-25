@@ -95,8 +95,8 @@ func TestClientUsesEncodingGuardLimitsAndNativeBrowser(t *testing.T) {
 		return browserruntime.Result{HTML: []byte("native fixture"), URL: r.URL}, nil
 	})
 	out, e = c.Fetch(t.Context(), Request{Path: "/profile"})
-	if e != nil || string(out) != "native fixture" {
-		t.Fatal(string(out), e)
+	if e != nil || string(out) != "native fixture" || admitted != 2 {
+		t.Fatal(string(out), admitted, e)
 	}
 	c.Emulate = false
 	c.Transport = roundTrip(func(*http.Request) (*http.Response, error) { return response(strings.Repeat("x", (8<<20)+1)), nil })

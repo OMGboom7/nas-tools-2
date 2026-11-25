@@ -245,7 +245,7 @@ func subscriptionRSSSiteNote(site siteconfig.Site) (map[string]any, *int64, int,
 			note[key] = "N"
 		}
 	}
-	if _, err := parseSiteRequestPolicy(note); err != nil {
+	if _, err := siteconfig.ParseRequestPolicy(note); err != nil {
 		return nil, nil, 0, err
 	}
 	var group *int64

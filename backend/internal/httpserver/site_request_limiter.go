@@ -4,106 +4,83 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
+	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
-type siteRequestPolicy struct {
-	interval, gap time.Duration
-	count         int64
-}
-
-func parseSiteRequestPolicy(note map[string]any) (siteRequestPolicy, error) {
-	values := map[string]int64{}
-	for _, key := range []string{"limit_interval", "limit_count", "limit_seconds"} {
-		raw := strings.TrimSpace(text(note[key]))
-		if raw == "" {
-			continue
-		}
-		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || n < 0 {
-			return siteRequestPolicy{}, errors.New("invalid site request limit")
-		}
-		values[key] = n
-	}
-	// Bound durations before multiplying into nanoseconds. Window units are
-	// minutes in the saved editor; spacing units are seconds.
-	if values["limit_interval"] > 52560000 || values["limit_seconds"] > 3153600000 || values["limit_count"] > 1000000000 {
-		return siteRequestPolicy{}, errors.New("site request limit exceeded bounds")
-	}
-	if (values["limit_interval"] > 0) != (values["limit_count"] > 0) {
-		return siteRequestPolicy{}, errors.New("site request window and count must be configured together")
-	}
-	return siteRequestPolicy{interval: time.Duration(values["limit_interval"]) * time.Minute, gap: time.Duration(values["limit_seconds"]) * time.Second, count: values["limit_count"]}, nil
-}
-
-type siteRequestState struct {
-	last  time.Time
-	count int64
-}
-
-// Shared by the handler's native site clients. Reservations are atomic; failed
-// requests still count, but cancelled waiters do not reserve a future slot.
-// Like the old Sites limiter, the counter resets after an idle interval.
 type siteRequestLimiter struct {
-	mu     sync.Mutex
-	states map[int64]siteRequestState
-	now    func() time.Time
-	wait   func(context.Context, time.Duration) error
+	now  func() time.Time
+	wait func(context.Context, time.Duration) error
 }
 
-func (limiter *siteRequestLimiter) acquire(ctx context.Context, id int64, policy siteRequestPolicy) (time.Duration, error) {
-	limiter.mu.Lock()
-	defer limiter.mu.Unlock()
-	if ctx.Err() != nil {
-		return 0, ctx.Err()
+func (limiter *siteRequestLimiter) try(ctx context.Context, store *siteconfig.Store, id int64) (time.Duration, error) {
+	if store == nil {
+		return 0, errors.New("site request configuration is unavailable")
 	}
-	if policy.interval == 0 && policy.gap == 0 {
-		return 0, nil
-	}
-	if id <= 0 {
-		return 0, errors.New("site request identity is unavailable")
-	}
-	if limiter.states == nil {
-		limiter.states = map[int64]siteRequestState{}
-	}
-	state, exists := limiter.states[id]
-	if !exists && len(limiter.states) >= 10000 {
-		return 0, errors.New("site request limiter capacity exceeded")
-	}
-	now := time.Now()
+	clock := time.Now
 	if limiter.now != nil {
-		now = limiter.now()
+		clock = limiter.now
 	}
-	if !state.last.IsZero() && policy.interval > 0 && now.Sub(state.last) >= policy.interval {
-		state.count = 0
-	}
-	delay := time.Duration(0)
-	if !state.last.IsZero() {
-		if remaining := state.last.Add(policy.gap).Sub(now); remaining > delay {
-			delay = remaining
+	return store.AdmitRequest(ctx, id, clock)
+}
+
+var errSiteRequestBusy = errors.New("site request limit reached")
+
+// One batch per site. Its first exchange skips a busy site. Subsequent
+// exchanges wait their turn, including parallel browser resource requests.
+type siteBatchLimiter struct {
+	limiter  siteRequestLimiter
+	once     sync.Once
+	firstErr error
+}
+
+func (batch *siteBatchLimiter) Wait(ctx context.Context, store *siteconfig.Store, id int64) error {
+	first := false
+	batch.once.Do(func() {
+		first = true
+		delay, err := batch.limiter.try(ctx, store, id)
+		batch.firstErr = err
+		if err == nil && delay > 0 {
+			batch.firstErr = errSiteRequestBusy
 		}
-		if policy.interval > 0 && state.count >= policy.count {
-			if remaining := state.last.Add(policy.interval).Sub(now); remaining > delay {
-				delay = remaining
-			}
-		}
+	})
+	if first || batch.firstErr != nil {
+		return batch.firstErr
 	}
-	if delay > 0 {
-		return delay, nil
+	return batch.limiter.Wait(ctx, store, id)
+}
+
+func SiteAdmissionCommand(ctx context.Context, path, rawID string, out io.Writer) error {
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || id <= 0 {
+		return errors.New("invalid site id")
 	}
-	state.last = now
-	// Keep admission history across policy edits instead of resetting and
-	// allowing concurrent requests to bypass newly tightened limits.
-	if state.count < 1000000000 {
-		state.count++
+	release, err := backuprestore.HoldStartup(path)
+	if err != nil {
+		return err
 	}
-	limiter.states[id] = state
-	return 0, nil
+	defer release()
+	db := (config.Application{Path: path}).UserDatabasePath()
+	if info, err := os.Stat(db); err != nil || !info.Mode().IsRegular() {
+		return errors.New("site database unavailable")
+	}
+	store, err := siteconfig.Open(db)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	delay, err := store.AdmitRequest(ctx, id, time.Now)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(delay == 0)
 }
 
 func waitSiteRequestDelay(ctx context.Context, delay time.Duration) error {
@@ -128,22 +105,7 @@ func (limiter *siteRequestLimiter) Wait(ctx context.Context, store *siteconfig.S
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		site, err := store.Get(ctx, id)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return errors.New("site request configuration is unavailable")
-		}
-		note := map[string]any{}
-		if len(site.Note) > 64<<10 || site.Note != "" && site.Note != "null" && json.Unmarshal([]byte(site.Note), &note) != nil {
-			return errors.New("invalid site request configuration")
-		}
-		policy, err := parseSiteRequestPolicy(note)
-		if err != nil {
-			return err
-		}
-		delay, err := limiter.acquire(ctx, id, policy)
+		delay, err := limiter.try(ctx, store, id)
 		if err != nil || delay == 0 {
 			return err
 		}

@@ -45,8 +45,14 @@ func runStatistics(ctx context.Context, path, mode string, readLine func() ([]by
 		return err
 	}
 	var targets []scheduledStatsTarget
+	var selection struct {
+		Sites []string `json:"sites"`
+	}
 	if json.Unmarshal(raw, &targets) != nil || targets == nil {
-		return sitestats.ErrState
+		if json.Unmarshal(raw, &selection) != nil || selection.Sites == nil {
+			return sitestats.ErrState
+		}
+		targets = nil
 	}
 	id := sitelogin.Random()
 	if id == "" {
@@ -58,7 +64,7 @@ func runStatistics(ctx context.Context, path, mode string, readLine func() ([]by
 		return err
 	}
 	defer release()
-	rows, err := collectScheduledStatistics(ctx, path, targets, reference, mode == "summary", occurrence)
+	rows, err := collectScheduledStatistics(ctx, path, targets, selection.Sites, reference, mode == "summary", occurrence)
 	if err != nil {
 		return err
 	}

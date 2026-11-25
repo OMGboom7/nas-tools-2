@@ -137,7 +137,7 @@ func TestStatisticsTimerDisabledDuringRequestStopsCollection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
 	go func() {
-		_, err := collectScheduledStatistics(ctx, path, []scheduledStatsTarget{{site.ID, site.Name, tracker.URL}}, "legacy-stats:fixture", true, &statisticsOccurrence{cron: "6", claim: func(context.Context) error { return nil }})
+		_, err := collectScheduledStatistics(ctx, path, []scheduledStatsTarget{{site.ID, site.Name, tracker.URL}}, nil, "legacy-stats:fixture", true, &statisticsOccurrence{cron: "6", claim: func(context.Context) error { return nil }})
 		done <- err
 	}()
 	select {

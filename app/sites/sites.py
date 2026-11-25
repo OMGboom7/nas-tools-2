@@ -1,14 +1,14 @@
 import json
+import subprocess
 from datetime import datetime
 
 import log
 from app.helper import ChromeHelper, SiteHelper, DbHelper
 from app.message import Message
-from app.sites.site_limiter import SiteRateLimiter
 from app.utils import RequestUtils, StringUtils
 from app.utils import RequestUtils, StringUtils, ExceptionUtils, MteamUtils
 from app.utils.commons import singleton
-from config import Config
+from config import Config, run_go_helper
 
 
 @singleton
@@ -24,7 +24,6 @@ class Sites:
     _brush_sites = []
     _statistic_sites = []
     _signin_sites = []
-    _limiters = {}
 
     _MAX_CONCURRENCY = 10
 
@@ -48,8 +47,6 @@ class Sites:
         self._statistic_sites = []
         # 开启签到功能站点：
         self._signin_sites = []
-        # 站点限速器
-        self._limiters = {}
         # 站点图标
         self.init_favicons()
         # 站点数据
@@ -109,17 +106,6 @@ class Sites:
             site_strict_url = StringUtils.get_url_domain(site.SIGNURL or site.RSSURL)
             if site_strict_url:
                 self._siteByUrls[site_strict_url] = site_info
-            # 初始化站点限速器
-            self._limiters[site.ID] = SiteRateLimiter(
-                limit_interval=int(site_note.get("limit_interval")) * 60 if site_note.get("limit_interval") and str(
-                    site_note.get("limit_interval")).isdigit() and site_note.get("limit_count") and str(
-                    site_note.get("limit_count")).isdigit() else None,
-                limit_count=int(site_note.get("limit_count")) if site_note.get("limit_interval") and str(
-                    site_note.get("limit_interval")).isdigit() and site_note.get("limit_count") and str(
-                    site_note.get("limit_count")).isdigit() else None,
-                limit_seconds=int(site_note.get("limit_seconds")) if site_note.get("limit_seconds") and str(
-                    site_note.get("limit_seconds")).isdigit() else None
-            )
 
     def init_favicons(self):
         """
@@ -163,18 +149,22 @@ class Sites:
         """
         return self._siteByUrls.get(StringUtils.get_url_domain(url))
 
-    def check_ratelimit(self, site_id):
+    @staticmethod
+    def check_ratelimit(site_id):
         """
         检查站点是否触发流控
         :param site_id: 站点ID
         :return: True为触发了流控，False为未触发
         """
-        if not self._limiters.get(site_id):
+        if site_id in (None, "", 0):
             return False
-        state, msg = self._limiters[site_id].check_rate_limit()
-        if msg:
-            log.warn(f"【Sites】站点 {self._siteByIds[site_id].get('name')} {msg}")
-        return state
+        try:
+            if json.loads(run_go_helper("site-admission", str(site_id))) is True:
+                return False
+            log.warn(f"【Sites】站点 {site_id} 已达到访问限额")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            log.warn(f"【Sites】无法核实站点 {site_id} 的访问限额，已跳过")
+        return True
 
     def get_sites_by_suffix(self, suffix):
         """

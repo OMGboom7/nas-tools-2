@@ -264,7 +264,7 @@ func siteLoginAddress(site siteconfig.Site, cfg map[string]any, catalog indexerc
 	if _, err = siteconfig.CookieNote(site.Note, ""); err != nil {
 		return "", "", sitelogin.ErrScope
 	}
-	if _, err = parseSiteRequestPolicy(note); err != nil {
+	if _, err = siteconfig.ParseRequestPolicy(note); err != nil {
 		return "", "", err
 	}
 	agent := text(note["ua"])
