@@ -14,11 +14,11 @@ func TestRetireInheritedPluginSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewStore(path)
-	plans, err := store.LegacyPluginSettings()
-	if err != nil || len(plans) != 2 {
+	plans, err := store.LegacySettings()
+	if err != nil || len(plans.Plugins) != 2 {
 		t.Fatal("missing inherited settings", err)
 	}
-	if err := store.RetireLegacyPluginSettings(plans); err != nil {
+	if err := store.RetireLegacySettings(plans, false); err != nil {
 		t.Fatal(err)
 	}
 	values, err := store.Snapshot()
@@ -28,8 +28,8 @@ func TestRetireInheritedPluginSettings(t *testing.T) {
 	if values["subtitle"] != nil || values["laboratory"].(map[string]any)["extra"] != "keep" || values["base"].(map[string]any)["subtitle"] == nil {
 		t.Fatal("lost inherited fields")
 	}
-	next, err := store.LegacyPluginSettings()
-	if err != nil || len(next) != 0 {
+	next, err := store.LegacySettings()
+	if err != nil || len(next.Plugins) != 0 {
 		t.Fatal("legacy fields remain active", err)
 	}
 	current, err := os.ReadFile(path)
@@ -45,15 +45,15 @@ func TestLegacyPluginCleanupRequiresMatchingSource(t *testing.T) {
 		if err := os.WriteFile(path, []byte("subtitle: "+disabled+"\nlaboratory: {release_groups: "+disabled+"}\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		fields, err := store.LegacyPluginSettings()
-		if err != nil || len(fields) != 0 {
+		fields, err := store.LegacySettings()
+		if err != nil || len(fields.Plugins) != 0 {
 			t.Fatal("disabled legacy setting", err)
 		}
 	}
 	if err := os.WriteFile(path, []byte("laboratory: {release_groups: A}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	fields, err := store.LegacyPluginSettings()
+	fields, err := store.LegacySettings()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestLegacyPluginCleanupRequiresMatchingSource(t *testing.T) {
 	if err := os.WriteFile(path, []byte(changed), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RetireLegacyPluginSettings(fields); err == nil {
+	if err := store.RetireLegacySettings(fields, false); err == nil {
 		t.Fatal("removed edited settings")
 	}
 	got, err := os.ReadFile(path)

@@ -1,4 +1,3 @@
-import json
 import os
 import time
 
@@ -8,7 +7,7 @@ from werkzeug.security import generate_password_hash
 
 import log
 from app.conf import SystemConfig
-from app.helper import DbHelper, ProgressHelper
+from app.helper import ProgressHelper
 from app.plugins import PluginManager
 from app.media import Category
 from app.utils import ConfigLoadCache, CategoryLoadCache, ExceptionUtils, StringUtils
@@ -81,7 +80,6 @@ def update_config():
     升级配置文件
     """
     _config = Config().get_config()
-    _dbhelper = DbHelper()
     overwrite_cofig = False
 
     # 密码初始化
@@ -95,88 +93,6 @@ def update_config():
     if not _config.get("security", {}).get("api_key"):
         _config['security']['api_key'] = StringUtils.generate_random_str(32)
         overwrite_cofig = True
-
-    # 下载器兼容旧配置
-    try:
-        # pt
-        pt = Config().get_config('pt')
-        pt_client = pt.get("pt_client")
-        pt_monitor = pt.get("pt_monitor")
-        pt_monitor_only = pt.get("pt_monitor_only")
-        rmt_mode = pt.get("rmt_mode")
-        # downloaddir
-        download_dir_conf = []
-        downloaddir = Config().get_config('downloaddir')
-        if downloaddir:
-            for dl_dir in downloaddir:
-                download_dir_conf.append({
-                    "save_path": dl_dir.get("save_path"),
-                    "type": dl_dir.get("type"),
-                    "category": dl_dir.get("category"),
-                    "container_path": dl_dir.get("container_path"),
-                    "label": dl_dir.get("label")
-                })
-            _config.pop("downloaddir")
-            overwrite_cofig = True
-        downloaddir = json.dumps(download_dir_conf)
-        # qbittorrent
-        qbittorrent = Config().get_config('qbittorrent')
-        if qbittorrent:
-            enabled = 1 if pt_client == "qbittorrent" else 0
-            transfer = 1 if pt_monitor else 0
-            only_nastool = 1 if pt_monitor_only else 0
-            config = json.dumps({
-                "host": qbittorrent.get("qbhost"),
-                "port": qbittorrent.get("qbport"),
-                "username": qbittorrent.get("qbusername"),
-                "password": qbittorrent.get("qbpassword")
-            })
-            _dbhelper.update_downloader(did=None,
-                                        name="Qbittorrent",
-                                        dtype="qbittorrent",
-                                        enabled=enabled,
-                                        transfer=transfer,
-                                        only_nastool=only_nastool,
-                                        rmt_mode=rmt_mode,
-                                        config=config,
-                                        download_dir=downloaddir)
-            _config.pop("qbittorrent")
-            overwrite_cofig = True
-        # transmission
-        transmission = Config().get_config('transmission')
-        if transmission:
-            enabled = 1 if pt_client == "transmission" else 0
-            transfer = 1 if pt_monitor else 0
-            only_nastool = 1 if pt_monitor_only else 0
-            config = json.dumps({
-                "host": transmission.get("trhost"),
-                "port": transmission.get("trport"),
-                "username": transmission.get("trusername"),
-                "password": transmission.get("trpassword")
-            })
-            _dbhelper.update_downloader(did=None,
-                                        name="Transmission",
-                                        dtype="transmission",
-                                        enabled=enabled,
-                                        transfer=transfer,
-                                        only_nastool=only_nastool,
-                                        rmt_mode=rmt_mode,
-                                        config=config,
-                                        download_dir=downloaddir)
-            _config.pop("transmission")
-            overwrite_cofig = True
-        # pt
-        if pt_client is not None:
-            pt.pop("pt_client")
-        if pt_monitor is not None:
-            pt.pop("pt_monitor")
-        if pt_monitor_only is not None:
-            pt.pop("pt_monitor_only")
-        if rmt_mode is not None:
-            pt.pop("rmt_mode")
-
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
 
     # 站点数据刷新时间默认配置
     try:

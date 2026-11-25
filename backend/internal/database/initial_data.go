@@ -44,7 +44,7 @@ func InitializeUserData(databasePath, configPath string) error {
 	if err != nil {
 		return err
 	}
-	plugins, err := cfg.LegacyPluginSettings()
+	legacy, err := cfg.LegacySettings()
 	if err != nil {
 		return err
 	}
@@ -77,15 +77,22 @@ func InitializeUserData(databasePath, configPath string) error {
 			return fmt.Errorf("cannot record completion of %s", name)
 		}
 	}
-	for key, fields := range plugins {
+	for key, fields := range legacy.Plugins {
 		if err := importLegacyPlugin(tx, key, fields); err != nil {
 			return err
 		}
 	}
+	if err := importLegacyDownloaders(tx, legacy.Downloaders); err != nil {
+		return err
+	}
+	resolvedSelection, err := importLegacySelection(tx, legacy.UnresolvedClient)
+	if err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if !needsMirror && len(plugins) == 0 {
+	if !needsMirror && legacy.Empty() && !resolvedSelection {
 		return nil
 	}
 	// A crash after the commit leaves receipts in user.db. Re-entering this
@@ -98,8 +105,13 @@ func InitializeUserData(databasePath, configPath string) error {
 	if _, err := cfg.SyncInitializationFiles(initialScripts...); err != nil {
 		return fmt.Errorf("record completed scripts in app.init_files: %w", err)
 	}
-	if len(plugins) != 0 {
-		if err := cfg.RetireLegacyPluginSettings(plugins); err != nil {
+	if !legacy.Empty() || resolvedSelection {
+		if err := cfg.RetireLegacySettings(legacy, resolvedSelection); err != nil {
+			return err
+		}
+	}
+	for _, client := range legacy.Downloaders {
+		if _, err := guard.Exec("DELETE FROM GO_LEGACY_DOWNLOADER_IMPORT WHERE TYPE=?", client.Type); err != nil {
 			return err
 		}
 	}
