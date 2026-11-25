@@ -8,7 +8,7 @@ from werkzeug.security import generate_password_hash
 import log
 from app.helper import ProgressHelper
 from app.media import Category
-from app.utils import ConfigLoadCache, CategoryLoadCache, ExceptionUtils, StringUtils
+from app.utils import ConfigLoadCache, CategoryLoadCache, StringUtils
 from app.utils.commons import INSTANCES
 from app.utils.types import BuiltinIndexerFileMd5
 from config import Config
@@ -90,42 +90,6 @@ def update_config():
     if not _config.get("security", {}).get("api_key"):
         _config['security']['api_key'] = StringUtils.generate_random_str(32)
         overwrite_cofig = True
-
-    # 站点数据刷新时间默认配置
-    try:
-        if "ptrefresh_date_cron" not in _config['pt']:
-            _config['pt']['ptrefresh_date_cron'] = '6'
-            overwrite_cofig = True
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
-
-    # TMDB代理服务开关迁移
-    try:
-        tmdb_proxy = Config().get_config('laboratory').get("tmdb_proxy")
-        if tmdb_proxy:
-            _config['app']['tmdb_domain'] = 'api.tmdb.org'
-            _config['laboratory'].pop("tmdb_proxy")
-            overwrite_cofig = True
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
-
-    # baiduocr配置文件迁移
-    try:
-        ocr = Config().get_config('ocr')
-        if not ocr:
-            _config['ocr'] = {}
-            _config['ocr']['custom_ocr_url'] = ''
-            _config['ocr']['baiduocr_api_key'] = ''
-            _config['ocr']['baiduocr_secret_key'] = ''
-            overwrite_cofig = True
-        baidu_ocr = Config().get_config('baiduocr')
-        if baidu_ocr:
-            _config['ocr']['baiduocr_api_key'] = baidu_ocr.get('api_key', '') or ''
-            _config['ocr']['baiduocr_secret_key'] = baidu_ocr.get('secret_key', '') or ''
-            _config.pop("baiduocr")
-            overwrite_cofig = True
-    except Exception as e:
-        ExceptionUtils.exception_traceback(e)
 
     # 重写配置文件
     if overwrite_cofig:

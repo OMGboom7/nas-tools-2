@@ -3,9 +3,11 @@ package config
 import (
 	"bytes"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,6 +20,7 @@ type LegacySettings struct {
 	// The client section may already have been moved by an older installation.
 	UnresolvedClient string
 	SigninCron       string
+	application      legacyApplication
 }
 
 type LegacyDownloader struct {
@@ -29,7 +32,7 @@ type LegacyDownloader struct {
 }
 
 func (s LegacySettings) Empty() bool {
-	return len(s.Records) == 0 && len(s.Downloaders) == 0 && s.SigninCron == ""
+	return len(s.Records) == 0 && len(s.Downloaders) == 0 && s.SigninCron == "" && s.application.empty()
 }
 
 func (store *Store) LegacySettings() (LegacySettings, error) {
@@ -49,6 +52,10 @@ func readLegacySettings(root *yaml.Node) (LegacySettings, error) {
 		return settings, err
 	}
 	settings.Records = records
+	settings.application, err = readLegacyApplication(root)
+	if err != nil {
+		return settings, err
+	}
 	var source struct {
 		QB   any       `yaml:"qbittorrent"`
 		TR   any       `yaml:"transmission"`
@@ -143,7 +150,22 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 	if !reflect.DeepEqual(current, saved) {
 		return errors.New("legacy configuration changed during initialization")
 	}
-	var rootKeys, ptKeys []string
+	var rootKeys, ptKeys, labKeys []string
+	application := current.application
+	if application.OldTMDB {
+		labKeys = append(labKeys, "tmdb_proxy")
+	}
+	if application.OldBaidu {
+		rootKeys = append(rootKeys, "baiduocr")
+	}
+	if application.SetTMDB {
+		if err := modifyLegacyMapping(root, "app", nil, map[string]any{"tmdb_domain": "api.tmdb.org"}); err != nil {
+			return err
+		}
+	}
+	if err := modifyLegacyMapping(root, "ocr", nil, application.OCR); err != nil {
+		return err
+	}
 	if current.SigninCron != "" {
 		ptKeys = append(ptKeys, "ptsignin_cron")
 	}
@@ -164,9 +186,7 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 		rootKeys = append(rootKeys, "subtitle")
 	}
 	if current.Records["plugin.CustomReleaseGroups"] != nil {
-		if err := retireMappingKeys(root, "laboratory", []string{"release_groups"}); err != nil {
-			return err
-		}
+		labKeys = append(labKeys, "release_groups")
 	}
 	for _, client := range current.Downloaders {
 		rootKeys = append(rootKeys, client.Type)
@@ -177,10 +197,17 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 	} else if resolvedSelection {
 		ptKeys = append(ptKeys, "pt_client")
 	}
-	if err := retireMappingKeys(root, "pt", ptKeys); err != nil {
+	if err := modifyLegacyMapping(root, "laboratory", labKeys, nil); err != nil {
 		return err
 	}
-	if err := retireMappingKeys(root, "", rootKeys); err != nil {
+	var ptValues map[string]any
+	if application.RefreshDefault {
+		ptValues = map[string]any{"ptrefresh_date_cron": "6"}
+	}
+	if err := modifyLegacyMapping(root, "pt", ptKeys, ptValues); err != nil {
+		return err
+	}
+	if err := modifyLegacyMapping(root, "", rootKeys, nil); err != nil {
 		return err
 	}
 	restoreYAMLDefinitions(root, make(map[*yaml.Node]bool))
@@ -193,9 +220,9 @@ func (store *Store) RetireLegacySettings(saved LegacySettings, resolvedSelection
 	return syncConfigDirectory(filepath.Dir(store.path))
 }
 
-// Retire selected keys without changing other users of an anchor or merge.
-func retireMappingKeys(root *yaml.Node, section string, keys []string) error {
-	if len(keys) == 0 {
+// Apply local changes without modifying other users of an anchor or merge.
+func modifyLegacyMapping(root *yaml.Node, section string, keys []string, values map[string]any) error {
+	if len(keys) == 0 && len(values) == 0 {
 		return nil
 	}
 	mapping := root
@@ -205,28 +232,32 @@ func retireMappingKeys(root *yaml.Node, section string, keys []string) error {
 		if err != nil {
 			return err
 		}
-		if mapping == nil {
-			// A root-level merge may supply this section.
+		// A root-level merge can provide an inherited section. Materialize a
+		// local mapping only when this section actually needs to change.
+		if mapping == nil || mapping.Kind != yaml.MappingNode && (mapping.Kind != yaml.AliasNode || mapping.Alias.Kind != yaml.MappingNode) {
 			var effective map[string]any
 			if err := root.Decode(&effective); err != nil {
 				return err
 			}
-			if effective[section] == nil {
-				return nil
+			source := effective[section]
+			if emptyLegacySetting(source) {
+				if len(values) == 0 {
+					return nil
+				}
+				source = map[string]any{}
 			}
-			switch fields := effective[section].(type) {
-			case map[string]any:
-				for _, key := range keys {
-					delete(fields, key)
-				}
-			case map[any]any:
-				for _, key := range keys {
-					delete(fields, key)
-				}
+			switch source.(type) {
+			case map[string]any, map[any]any:
 			default:
 				return errors.New("invalid legacy configuration section " + section)
 			}
-			return setNodePath(root, section, effective[section])
+			if err := setNodePath(root, section, source); err != nil {
+				return err
+			}
+			mapping, err = findNodePath(root, section, false)
+			if err != nil {
+				return err
+			}
 		}
 		if mapping.Kind == yaml.AliasNode || mapping.Anchor != "" {
 			override := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!merge", Value: "<<"}, mapping}}
@@ -252,6 +283,11 @@ func retireMappingKeys(root *yaml.Node, section string, keys []string) error {
 			if err := setNodePath(mapping, key, nil); err != nil {
 				return err
 			}
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		if err := setNodePath(mapping, key, values[key]); err != nil {
+			return err
 		}
 	}
 	return nil

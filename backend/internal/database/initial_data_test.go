@@ -133,7 +133,7 @@ func TestInitialDataHonorsOldMarkersAndOccupiedPresets(t *testing.T) {
 }
 
 func TestInitialDataImportsFullyInitializedLegacyInstall(t *testing.T) {
-	original := "app: {init_files: [" + strings.Join(initialScripts, ", ") + "]} # old installation\n"
+	original := "app: {init_files: [" + strings.Join(initialScripts, ", ") + "]} # old installation\nocr: {custom_ocr_url: ''}\n"
 	db, path, cfg := initialFixture(t, original)
 	if err := InitializeUserData(path, cfg); err != nil {
 		t.Fatal(err)
