@@ -71,6 +71,29 @@ func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
 	if _, err := ledger.SubmitPlan(ctx, receipt, resolve); !errors.Is(err, ErrPriorAdd) || dst.sent != 1 {
 		t.Fatal(err, dst.sent)
 	}
+	dst.task = src.task
+	dst.task.State, dst.task.Paused, dst.task.SourceSeeding = "stopped", true, false
+	dst.task.Labels = []string{"转移做种", "已整理"}
+	dst.task.AddedAt++
+	if _, err := ledger.ContinuePlan(ctx, receipt, resolve, nil, nil); !errors.Is(err, ErrState) {
+		t.Fatal("unconfirmed target", err)
+	}
+	confirm := func(_ context.Context, reply AddReceipt, task Task) error {
+		if !reply.CreatedKnown || !task.SameInstance(dst.task) {
+			return ErrState
+		}
+		return nil
+	}
+	if stage, err := ledger.ContinuePlan(ctx, receipt, resolve, confirm, nil); err != nil || stage != "bound" {
+		t.Fatal(stage, err)
+	}
+	if _, err := ledger.ContinuePlan(ctx, receipt, resolve, nil, nil); err != nil || dst.checks != 1 || dst.sent != 1 {
+		t.Fatal(err, dst.checks, dst.sent)
+	}
+	status, err := ReadStatus(ctx, db, receipt)
+	if err != nil || status.TargetStage != "bound" || len(status.Actions) != 2 {
+		t.Fatal(status, err)
+	}
 	plan.GrantDigest = Hash("replacement")
 	if err := ledger.SavePlan(ctx, receipt, plan); !errors.Is(err, ErrState) {
 		t.Fatal(err)

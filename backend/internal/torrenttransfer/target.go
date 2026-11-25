@@ -91,10 +91,10 @@ func (i AddIntent) target(ctx context.Context) (Task, string, error) {
 	return task, stage, nil
 }
 
-// AdvanceTarget observes or issues at most one mutation per call. Read the
+// advanceTarget observes or issues at most one mutation per call. Read the
 // durable stage before sampling the daemon so an older snapshot cannot prove
 // completion of a check observed by a concurrent worker.
-func (i AddIntent) AdvanceTarget(ctx context.Context, c TargetClient, m torrentmeta.TransferMetadata, allowStart bool) (string, error) {
+func (i AddIntent) advanceTarget(ctx context.Context, c TargetClient, m torrentmeta.TransferMetadata, authorizeStart func(context.Context) error) (string, error) {
 	if err := i.checkTarget(ctx, c, m); err != nil {
 		return "", err
 	}
@@ -123,7 +123,7 @@ func (i AddIntent) AdvanceTarget(ctx context.Context, c TargetClient, m torrentm
 		if stage != "bound" || !task.Paused {
 			return stage, nil
 		}
-		return i.targetAction(ctx, key, proof, func() error { return c.RecheckTransfer(ctx, task, m) })
+		return i.targetAction(ctx, key, proof, nil, func() error { return c.RecheckTransfer(ctx, task, m) })
 	}
 	next := stage
 	switch stage {
@@ -147,8 +147,8 @@ func (i AddIntent) AdvanceTarget(ctx context.Context, c TargetClient, m torrentm
 		if !errors.Is(err, sql.ErrNoRows) {
 			return stage, err
 		}
-		if allowStart && task.Paused && task.HasTracker && task.FullComplete(m) {
-			return i.targetAction(ctx, key, proof, func() error { return c.StartTransfer(ctx, task, m) })
+		if authorizeStart != nil && task.Paused && task.HasTracker && task.FullComplete(m) {
+			return i.targetAction(ctx, key, proof, authorizeStart, func() error { return c.StartTransfer(ctx, task, m) })
 		}
 	default:
 		return "", ErrState
@@ -165,9 +165,14 @@ func (i AddIntent) AdvanceTarget(ctx context.Context, c TargetClient, m torrentm
 	return next, nil
 }
 
-func (i AddIntent) targetAction(ctx context.Context, k ActionKey, proof string, send func() error) (string, error) {
+func (i AddIntent) targetAction(ctx context.Context, k ActionKey, proof string, authorize func(context.Context) error, send func() error) (string, error) {
 	if err := i.Revalidate(ctx); err != nil {
 		return "", err
+	}
+	if authorize != nil {
+		if err := authorize(ctx); err != nil {
+			return "", err
+		}
 	}
 	row, won, err := i.Ledger.Claim(ctx, k, i.Receipt, proof)
 	if err != nil {

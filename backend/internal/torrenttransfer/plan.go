@@ -2,7 +2,9 @@ package torrenttransfer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 )
@@ -118,21 +120,71 @@ func (p Plan) live(ctx context.Context, resolve ResolveScope) (SourceReview, Rec
 	return review, dst, nil
 }
 
-func (l *Ledger) SubmitPlan(ctx context.Context, receipt string, resolve ResolveScope) (AddReceipt, error) {
+type livePlan struct {
+	grantDigest string
+	intent      AddIntent
+	source      SourceReview
+	receiver    ReceiverClient
+}
+
+func (l *Ledger) openPlan(ctx context.Context, receipt string, resolve ResolveScope) (livePlan, error) {
 	if resolve == nil {
-		return AddReceipt{}, ErrState
+		return livePlan{}, ErrState
 	}
 	p, err := l.LoadPlan(ctx, receipt)
 	if err != nil {
-		return AddReceipt{}, err
+		return livePlan{}, err
 	}
 	review, dst, err := p.live(ctx, resolve)
 	if err != nil {
-		return AddReceipt{}, err
+		return livePlan{}, err
 	}
 	intent := AddIntent{Ledger: l, Receipt: receipt, ScopeProof: Hash(p), Receiver: p.Receiver, WireID: p.WireID, Directory: p.Source.Directory, ContentDigest: p.ContentDigest, Revalidate: func(ctx context.Context) error {
 		_, _, err := p.live(ctx, resolve)
 		return err
 	}}
-	return dst.AddReviewedTransfer(ctx, review.Source.Prepared.Content, p.Source.Directory, intent)
+	return livePlan{grantDigest: p.GrantDigest, intent: intent, source: review, receiver: dst}, nil
+}
+
+func (l *Ledger) SubmitPlan(ctx context.Context, receipt string, resolve ResolveScope) (AddReceipt, error) {
+	run, err := l.openPlan(ctx, receipt, resolve)
+	if err != nil {
+		return AddReceipt{}, err
+	}
+	return run.receiver.AddReviewedTransfer(ctx, run.source.Source.Prepared.Content, run.source.Directory, run.intent)
+}
+
+// ContinuePlan recovers an existing submission without calling add. Ownership
+// is checked on first binding. Starting requires both the live plugin option
+// and a separate approval specific to this receipt and target incarnation.
+func (l *Ledger) ContinuePlan(ctx context.Context, receipt string, resolve ResolveScope, confirmOwnership func(context.Context, AddReceipt, Task) error, authorizeStart func(context.Context, string, Task) error) (string, error) {
+	run, err := l.openPlan(ctx, receipt, resolve)
+	if err != nil {
+		return "", err
+	}
+	intent := run.intent
+	frozen, _, err := intent.target(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		if err := intent.BindTarget(ctx, run.receiver, run.source.Source.Prepared, confirmOwnership); err != nil {
+			return "", err
+		}
+		return "bound", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var start func(context.Context) error
+	if authorizeStart != nil {
+		start = func(ctx context.Context) error {
+			settings, _, _, grant, err := resolve(ctx)
+			if err != nil {
+				return err
+			}
+			if !settings.AutoStart || Hash(settings) != run.source.SettingsDigest || grant != run.grantDigest {
+				return ErrState
+			}
+			return authorizeStart(ctx, receipt, frozen)
+		}
+	}
+	return intent.advanceTarget(ctx, run.receiver, run.source.Source.Prepared, start)
 }

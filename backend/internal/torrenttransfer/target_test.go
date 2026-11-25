@@ -58,12 +58,16 @@ func TestTargetRequiresOriginalGrantAndObservedCheckBeforeStart(t *testing.T) {
 	}
 	changed := i
 	changed.ScopeProof = Hash("another grant")
-	if _, err := changed.AdvanceTarget(ctx, c, m, true); !errors.Is(err, ErrState) {
+	if _, err := changed.advanceTarget(ctx, c, m, nil); !errors.Is(err, ErrState) {
 		t.Fatal(err)
 	}
 	step := func(start bool, want string) {
 		t.Helper()
-		got, err := i.AdvanceTarget(ctx, c, m, start)
+		var authorize func(context.Context) error
+		if start {
+			authorize = func(context.Context) error { return nil }
+		}
+		got, err := i.advanceTarget(ctx, c, m, authorize)
 		if err != nil || got != want {
 			t.Fatalf("stage %q, want %q: %v", got, want, err)
 		}
