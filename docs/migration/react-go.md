@@ -27,7 +27,7 @@ make frontend-dev
 
 打开 <http://localhost:5173>。Go 健康检查位于 <http://localhost:3001/api/v1/health>。
 
-首次启动会在仓库的 `.nastool-dev/config.yaml` 生成配置。从该文件读取 `app.login_user` 和 `app.login_password` 登录。要沿用旧数据，先停止旧后台服务，再将 `NASTOOL_CONFIG` 指向原配置文件的绝对路径。Linux 和 macOS 上，旧配置缺少 `security.api_key` 时，Go 先将原件保存为同目录的 `.pre-go-key.bak` 备份，再生成密钥；原账户和密码继续有效。其他平台可在原配置中填写该密钥。数据目录已有数据库但缺失配置时，请恢复原配置。
+首次启动会在仓库的 `.nastool-dev/config.yaml` 生成配置。管理员账户为 `admin`，初始密码在相邻的 `config.yaml.initial-password` 中。配置只保存新密码的哈希值。要沿用旧数据，先停止旧后台服务，再将 `NASTOOL_CONFIG` 指向原配置文件的绝对路径。Go 沿用原管理员和已有 API 密钥，并转换原明文密码。旧配置缺少 `security.api_key` 时，先将原件备份为 `config.yaml.pre-go-key.bak`，再生成密钥。已有数据库但缺失配置时，请恢复原配置；已有配置缺少管理员或密码时，请先在该配置中设置。
 
 只运行开发前端的机器可用 `NASTOOL_GO_ORIGIN=https://nas.example.test make frontend-dev` 连接数据所在机器的 Go 服务。生产环境使用 Go 托管已构建的 React。候选容器可通过 `NASTOOL_CONFIG_DIR` 选择配置目录，挂载目录需允许容器用户 UID 911 读写。
 

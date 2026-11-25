@@ -46,7 +46,7 @@ func TestNativeConfigurationUpdateIsAtomicAndReloadsAuthentication(t *testing.T)
 	if !strings.Contains(text, "# preserve this comment") || !strings.Contains(text, "http://new:8096") {
 		t.Fatalf("updated config lost data:\n%s", text)
 	}
-	if strings.Contains(text, "new-password") || !strings.Contains(text, "[hash]scrypt:32768:8:1$") {
+	if strings.Contains(text, "new-password") || !strings.Contains(text, "[hash]pbkdf2:sha256:600000$") {
 		t.Fatalf("updated config did not securely hash password:\n%s", text)
 	}
 	backup, err := os.ReadFile(configPath + ".bak")

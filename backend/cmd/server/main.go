@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -105,26 +104,8 @@ func holdApplication(cfg config.Config) (func(), error) {
 			return nil, err
 		}
 	}
-	release, err := backuprestore.HoldStartup(path)
-	if err != nil || !cfg.DisableLegacy {
-		return release, err
+	if !cfg.DisableLegacy {
+		return backuprestore.HoldStartup(path)
 	}
-	created, err := config.InitializeApplication(path)
-	if err == nil {
-		_, err = config.LoadApplication(path)
-	}
-	if err == nil {
-		if created {
-			slog.Info("initial configuration created; read app.login_user and app.login_password from this file to sign in", "path", path)
-		}
-		return release, nil
-	}
-	release()
-	if !errors.Is(err, config.ErrMissingAPIKey) {
-		return nil, err
-	}
-	if err := backuprestore.PrepareStartup(path, func() error { return config.InitializeSigningKey(path) }); err != nil {
-		return nil, fmt.Errorf("initialize security.api_key (or set it in the original configuration): %w", err)
-	}
-	return backuprestore.HoldStartup(path)
+	return dbinit.HoldApplication(path)
 }

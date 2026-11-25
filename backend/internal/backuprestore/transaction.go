@@ -59,12 +59,9 @@ func holdStartup(configPath string, exclusive bool) (func(), error) {
 		return nil, err
 	}
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		if exclusive {
-			return nil, errors.ErrUnsupported
-		}
 		_, err := os.Lstat(w.private())
 		if errors.Is(err, os.ErrNotExist) {
-			return func() {}, nil
+			return portableStartupLock(w, exclusive)
 		}
 		return nil, ErrHold
 	}

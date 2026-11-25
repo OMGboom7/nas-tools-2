@@ -3,7 +3,6 @@ import time
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
-from werkzeug.security import generate_password_hash
 
 import log
 from app.helper import ProgressHelper
@@ -70,30 +69,6 @@ def check_config():
 ------------------------------------------------------------------
         """
         log.error(recovery_msg)
-
-
-def update_config():
-    """
-    升级配置文件
-    """
-    _config = Config().get_config()
-    overwrite_cofig = False
-
-    # 密码初始化
-    login_password = _config.get("app", {}).get("login_password") or "password"
-    if login_password and not login_password.startswith("[hash]"):
-        _config['app']['login_password'] = "[hash]%s" % generate_password_hash(
-            login_password)
-        overwrite_cofig = True
-
-    # API密钥初始化
-    if not _config.get("security", {}).get("api_key"):
-        _config['security']['api_key'] = StringUtils.generate_random_str(32)
-        overwrite_cofig = True
-
-    # 重写配置文件
-    if overwrite_cofig:
-        Config().save_config(_config)
 
 
 class ConfigMonitor(FileSystemEventHandler):

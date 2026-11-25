@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/0xforee/nas-tools/backend/internal/auth"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 )
 
@@ -17,14 +18,18 @@ func TestInitializeDatabaseProvisionsEmptyVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 	app, err := config.LoadApplication(path)
-	if err != nil || len(app.App.LoginPassword) != 48 {
+	if err != nil || !strings.HasPrefix(app.App.LoginPassword, "[hash]pbkdf2:") {
 		t.Fatalf("first sign-in unavailable: %v", err)
 	}
 	before, err := config.LoadApplication(path + ".bak")
 	if err != nil || before.App != app.App {
 		t.Fatalf("first sign-in backup: %v", err)
 	}
-	if stat, err := os.Stat(path + ".bak"); err != nil || (runtime.GOOS != "windows" && stat.Mode().Perm()&0077 != 0) {
+	raw, err := os.ReadFile(path + config.InitialPasswordSuffix)
+	if err != nil || !auth.VerifyPassword(app.App.LoginPassword, strings.TrimSpace(string(raw))) {
+		t.Fatal("cannot sign in using first-login file", err)
+	}
+	if stat, err := os.Stat(path + config.InitialPasswordSuffix); err != nil || (runtime.GOOS != "windows" && stat.Mode().Perm()&0077 != 0) {
 		t.Fatal("initial configuration backup permissions", err)
 	}
 	if err := Run(path, "init-db"); err != nil {
@@ -76,6 +81,27 @@ func TestInitializeDatabaseRejectsInvalidRecordsBeforeSchemaChanges(t *testing.T
 	for _, name := range []string{"user.db", "media.db"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
 			t.Fatalf("unexpected %s after invalid configuration: %v", name, err)
+		}
+	}
+}
+
+func TestIncompleteExistingAdminKeepsOriginalConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	original := []byte("app: {login_user: fixture, login_password: null}\nsecurity: {api_key: saved}\n")
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(path, "init-db"); err == nil {
+		t.Fatal("initialized an existing account without a password")
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || string(current) != string(original) {
+		t.Fatal("existing settings changed", err)
+	}
+	for _, name := range []string{"user.db", "config.yaml" + config.InitialPasswordSuffix} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatal("unexpected initialization output", name, err)
 		}
 	}
 }

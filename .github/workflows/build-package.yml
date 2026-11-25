@@ -35,7 +35,7 @@ jobs:
           mkdir -p bin
           go build -trimpath ./cmd/server
           go build -trimpath -ldflags="-s -w" -o bin/ ./cmd/nas-tools-db
-          go test ./internal/dbinit ./internal/diskusage
+          go test ./cmd/server ./internal/dbinit ./internal/diskusage
       - name: Install package dependencies
         shell: bash
         run: |
@@ -62,10 +62,21 @@ jobs:
           import subprocess
           import sys
 
+          from ruamel.yaml import YAML
+          from werkzeug.security import check_password_hash
+
           executable = Path(sys.argv[1]).resolve()
           config_dir = executable.parent / "config"
+          saved = None
           for _ in range(2):
               subprocess.run([executable, "--init-db"], check=True)
+              config = YAML(typ="safe").load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+              stored = config["app"]["login_password"]
+              password = (config_dir / "config.yaml.initial-password").read_text().strip()
+              assert stored.startswith("[hash]") and check_password_hash(stored[6:], password)
+              current = stored, config["security"]["api_key"]
+              assert current[1] and (saved is None or current == saved)
+              saved = current
           with sqlite3.connect((config_dir / "user.db").as_uri() + "?mode=ro", uri=True) as db:
               assert db.execute("SELECT count(*) FROM GO_INITIAL_DATA_SCRIPTS").fetchone() == (8,)
           with sqlite3.connect((config_dir / "media.db").as_uri() + "?mode=ro", uri=True) as db:

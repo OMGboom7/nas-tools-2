@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/0xforee/nas-tools/backend/internal/auth"
 	"github.com/0xforee/nas-tools/backend/internal/autobackup"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/cookiecloud"
@@ -175,11 +174,11 @@ func normalizeSensitiveConfiguration(items map[string]any) error {
 			return errors.New("登录密码不能为空")
 		}
 		if !strings.HasPrefix(password, "[hash]") {
-			hash, err := auth.HashPassword(password)
+			hash, err := config.HashAdminPassword(password)
 			if err != nil {
 				return errors.New("登录密码加密失败")
 			}
-			items["app.login_password"] = "[hash]" + hash
+			items["app.login_password"] = hash
 		}
 	}
 	if value, exists := items["security.api_key"]; exists {

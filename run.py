@@ -49,7 +49,7 @@ from web.action import WebAction
 from web.main import App
 from app.db import init_data
 from app.helper import init_chrome
-from initializer import update_config, check_config,  start_config_monitor, stop_config_monitor
+from initializer import check_config, start_config_monitor, stop_config_monitor
 from version import APP_VERSION
 
 
@@ -117,8 +117,6 @@ def init_system():
     log.console('NAStool 当前版本号：%s' % APP_VERSION)
     # 数据初始化
     init_data()
-    # 升级配置文件
-    update_config()
     # 检查配置文件
     check_config()
 

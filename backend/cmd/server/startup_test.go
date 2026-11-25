@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/0xforee/nas-tools/backend/internal/auth"
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 )
@@ -31,7 +32,9 @@ func TestNativeFirstStartAndRestart(t *testing.T) {
 		return app
 	}
 	app := start()
-	if app.App.LoginUser != "admin" || len(app.App.LoginPassword) != 48 || len(app.Security.APIKey) != 48 || app.App.LoginPassword == app.Security.APIKey {
+	raw, err := os.ReadFile(path + config.InitialPasswordSuffix)
+	password := strings.TrimSpace(string(raw))
+	if err != nil || len(password) != 48 || password == app.Security.APIKey || app.App.LoginUser != "admin" || len(app.Security.APIKey) != 48 || !auth.VerifyPassword(app.App.LoginPassword, password) || !strings.HasPrefix(app.App.LoginPassword, "[hash]pbkdf2:") {
 		t.Fatal("expected a private password and a distinct signing key")
 	}
 	info, err := os.Stat(path)
@@ -44,8 +47,8 @@ func TestNativeFirstStartAndRestart(t *testing.T) {
 }
 
 func TestNativeUpgradePreservesOldConfiguration(t *testing.T) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		t.Skip("startup locking requires flock")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		t.Skip("startup locking unavailable on this platform")
 	}
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	original := []byte("# retained comment\napp: {login_user: fixture, login_password: '[hash]old'}\nsecurity: {api_key: null, extra: keep}\ncustom: original\n")
