@@ -1,4 +1,6 @@
 import difflib
+import json
+import subprocess
 import os
 import random
 import re
@@ -13,9 +15,10 @@ from app.helper import MetaHelper
 from app.helper.openai_helper import OpenAiHelper
 from app.media.meta.metainfo import MetaInfo
 from app.media.tmdbv3api import TMDb, Search, Movie, TV, Person, Find, TMDbException, Discover, Trending, Episode, Genre
+from app.media.tmdbv3api.as_obj import AsObj
 from app.utils import PathUtils, EpisodeFormat, RequestUtils, NumberUtils, StringUtils, cacheman
 from app.utils.types import MediaType, MatchMode
-from config import Config, KEYWORD_BLACKLIST, KEYWORD_SEARCH_WEIGHT_3, KEYWORD_SEARCH_WEIGHT_2, KEYWORD_SEARCH_WEIGHT_1, \
+from config import Config, run_go_helper, KEYWORD_BLACKLIST, KEYWORD_SEARCH_WEIGHT_3, KEYWORD_SEARCH_WEIGHT_2, KEYWORD_SEARCH_WEIGHT_1, \
     KEYWORD_STR_SIMILARITY_THRESHOLD, KEYWORD_DIFF_SCORE_THRESHOLD
 
 
@@ -626,70 +629,18 @@ class Media:
             return []
         if not title:
             return []
-        # 设置语言
-        self.__set_language(language)
-        if not mtype and not year:
-            results = self.__search_multi_tmdbinfos(title)
-        else:
-            if not mtype:
-                results = list(
-                    set(self.__search_movie_tmdbinfos(title, year)).union(set(self.__search_tv_tmdbinfos(title, year))))
-                # 组合结果的情况下要排序
-                results = sorted(results,
-                                 key=lambda x: x.get("release_date") or x.get("first_air_date") or "0000-00-00",
-                                 reverse=True)
-            elif mtype == MediaType.MOVIE:
-                results = self.__search_movie_tmdbinfos(title, year)
-            else:
-                results = self.__search_tv_tmdbinfos(title, year)
-        return results[(page - 1) * 20:page * 20]
-
-    def __search_multi_tmdbinfos(self, title):
-        """
-        同时查询模糊匹配的电影、电视剧TMDB信息
-        """
-        if not title:
-            return []
-        ret_infos = []
-        multis = self.search.multi({"query": title}) or []
-        for multi in multis:
-            if multi.get("media_type") in ["movie", "tv"]:
-                multi['media_type'] = MediaType.MOVIE if multi.get("media_type") == "movie" else MediaType.TV
-                ret_infos.append(multi)
-        return ret_infos
-
-    def __search_movie_tmdbinfos(self, title, year):
-        """
-        查询模糊匹配的所有电影TMDB信息
-        """
-        if not title:
-            return []
-        ret_infos = []
-        if year:
-            movies = self.search.movies({"query": title, "year": year}) or []
-        else:
-            movies = self.search.movies({"query": title}) or []
-        for movie in movies:
-            movie['media_type'] = MediaType.MOVIE
-            ret_infos.append(movie)
-        return ret_infos
-
-    def __search_tv_tmdbinfos(self, title, year):
-        """
-        查询模糊匹配的所有电视剧TMDB信息
-        """
-        if not title:
-            return []
-        ret_infos = []
-        if year:
-            tvs = self.search.tv_shows({"query": title, "first_air_date_year": year}) or []
-        else:
-            tvs = self.search.tv_shows({"query": title}) or []
-        for tv in tvs:
-            if title in tv.get("name"):
-                tv['media_type'] = MediaType.TV
-                ret_infos.append(tv)
-        return ret_infos
+        kind = "movie" if mtype == MediaType.MOVIE else "tv" if mtype else ""
+        query = {"title": title, "year": str(year or ""), "kind": kind, "page": int(page)}
+        try:
+            rows = json.loads(run_go_helper("search-titles", "tmdb", payload=json.dumps(query).encode(), timeout=40))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise TMDbException("TMDB 词条搜索暂不可用") from None
+        results = []
+        for row in rows:
+            info = AsObj(**row["info"])
+            info["media_type"] = MediaType.MOVIE if row["kind"] == "movie" else MediaType.TV
+            results.append(info)
+        return results
 
     @staticmethod
     def __make_cache_key(meta_info):

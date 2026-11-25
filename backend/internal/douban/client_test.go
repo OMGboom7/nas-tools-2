@@ -106,3 +106,21 @@ func TestFrodoSearchWithKnownTruncationCannotProveUniqueMedia(t *testing.T) {
 		}
 	}
 }
+
+func TestTitleChoicesUseMixedCatalogPagesAndPreserveDisplayFields(t *testing.T) {
+	c := Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		q := r.URL.Query()
+		if r.URL.Path != "/api/v2/search/weixin" || q.Get("q") != "节目" || q.Get("start") != "20" || q.Get("count") != "20" || q.Get("_sig") == "" {
+			t.Fatal(r.URL)
+		}
+		return reply(r, `{"items":[{"type_name":"电影","target":{"title":"Film","id":10}},{"type_name":"电视剧","target":{"id":"9007199254740993","title":"节目 第二季","year":2025,"card_subtitle":"测试","cover_url":"https://qnmob12.doubanio.com/p.jpg?v=2","rating":{"value":8.1}}},{"type_name":"人物","target":{"id":"2","title":"人"}}]}`), nil
+	})}
+	rows, err := c.TitleChoices(t.Context(), "节目", "tv", 2)
+	if err != nil || len(rows) != 1 {
+		t.Fatal(rows, err)
+	}
+	r := rows[0]
+	if ID(r.ID) != "9007199254740993" || r.Kind != "tv" || r.Image != "https://img1.doubanio.com/p.jpg" || string(r.Year) != "2025" || string(r.Vote) != "8.1" || r.Overview != "测试" {
+		t.Fatal(r)
+	}
+}

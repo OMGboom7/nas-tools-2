@@ -146,11 +146,8 @@ class WebUtils:
         else:
             use_douban_titles = Config().get_config("laboratory").get("use_douban_titles")
         if use_douban_titles:
-            medias = DouBan().search_douban_medias(keyword=key_word,
-                                                   mtype=mtype,
-                                                   season=season_num,
-                                                   episode=episode_num,
-                                                   page=page)
+            medias = DouBan.search_douban_medias(keyword=key_word, mtype=mtype, season=season_num,
+                                                 episode=episode_num, page=page)
         else:
             meta_info = MetaInfo(title=content)
             tmdbinfos = Media().get_tmdb_infos(title=meta_info.get_name(),

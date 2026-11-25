@@ -1303,6 +1303,7 @@ def wechat():
                 # 处理消息内容
                 WebAction().handle_message_job(msg=content,
                                                in_from=SearchType.WX,
+                                               channel_scope=interactive_client["id"],
                                                user_id=user_id,
                                                user_name=user_id)
             return make_response(content, 200)
@@ -1436,6 +1437,7 @@ def synology():
             log.info(f"收到Synology Chat消息：userid={user_id}, username={user_name}, text={text}")
             WebAction().handle_message_job(msg=text,
                                            in_from=SearchType.SYNOLOGY,
+                                           channel_scope=interactive_client["id"],
                                            user_id=user_id,
                                            user_name=user_name)
     return 'Ok'
@@ -1570,6 +1572,7 @@ def slack():
         log.info(f"收到Slack消息：userid={userid}, username={username}, text={text}")
         WebAction().handle_message_job(msg=text,
                                        in_from=SearchType.SLACK,
+                                       channel_scope=interactive_client["id"],
                                        user_id=userid,
                                        user_name=username)
     return "Ok"

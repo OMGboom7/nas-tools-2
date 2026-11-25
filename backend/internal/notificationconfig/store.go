@@ -40,6 +40,7 @@ func Open(path string) (*Store, error) {
 	for _, statement := range []string{
 		"PRAGMA busy_timeout = 5000",
 		centerSchema,
+		chatChoiceSchema,
 		telegramHandoffSchema,
 		telegramNativeInputSchema,
 		telegramCursorSchema,

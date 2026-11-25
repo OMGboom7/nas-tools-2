@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import time
@@ -154,7 +155,7 @@ class Message(object):
                 return state
         return True
 
-    def send_channel_msg(self, channel, title, text="", image="", url="", user_id=""):
+    def send_channel_msg(self, channel, title, text="", image="", url="", user_id="", expected_scope=None):
         """
         按渠道发送消息，用于消息交互
         :param channel: 消息渠道
@@ -170,7 +171,7 @@ class Message(object):
             self.messagecenter.insert_system_message(title=title, content=text)
             return True
         # 发送消息
-        client = self._interactive_client(channel)
+        client = self._interactive_client(channel, expected_scope)
         if client:
             state = self.__sendmsg(client=client,
                                    title=title,
@@ -197,7 +198,7 @@ class Message(object):
             log.error(f"【Message】{cname} 发送消息失败：%s" % ret_msg)
         return state
 
-    def send_channel_list_msg(self, channel, title, medias: list, user_id=""):
+    def send_channel_list_msg(self, channel, title, medias: list, user_id="", expected_scope=None):
         """
         发送列表选择消息，用于消息交互
         :param channel: 消息渠道
@@ -214,7 +215,7 @@ class Message(object):
                 index += 1
             self.messagecenter.insert_system_message(title=title, content="\n".join(texts))
             return True
-        client = self._interactive_client(channel)
+        client = self._interactive_client(channel, expected_scope)
         if client:
             state = self.__send_list_msg(client=client,
                                          title=title,
@@ -768,23 +769,32 @@ class Message(object):
             return self._client_configs.get(str(cid))
         return self._client_configs
 
-    def get_interactive_client(self, client_type=None):
+    def get_interactive_client(self, client_type=None, expected_scope=None):
         """
         查询当前可以交互的渠道
         """
         if client_type:
-            return self._interactive_client(client_type)
+            return self._interactive_client(client_type, expected_scope)
         return list(self._active_interactive_clients.values())
 
-    def _interactive_client(self, client_type):
+    def _interactive_client(self, client_type, expected_scope=None):
         if client_type == SearchType.TG:
             # The paired Go settings page can change the active bot while this process runs.
             rows = [row for row in self.dbhelper.get_message_client() or []
                     if row.TYPE == "telegram" and row.ENABLED and row.INTERACTIVE]
             if len(rows) == 1:
-                return self.__configured_client(self.__channel_record(rows[0]))
+                channel = self.__channel_record(rows[0])
+                if expected_scope:
+                    token = channel["config"].get("token") or ""
+                    digest = hashlib.sha256(token.encode()).hexdigest()
+                    if expected_scope != f'{channel["id"]}/{digest}':
+                        return None
+                return self.__configured_client(channel)
             return None
-        return self._active_interactive_clients.get(client_type)
+        channel = self._active_interactive_clients.get(client_type)
+        if expected_scope and (not channel or str(channel["id"]) != expected_scope):
+            return None
+        return channel
 
     @staticmethod
     def get_search_types():

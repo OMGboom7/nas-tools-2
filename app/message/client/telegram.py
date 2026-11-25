@@ -28,7 +28,8 @@ def dispatch_telegram(result):
         return result["text"]
     if result["action"] == "dispatch":
         WebAction().handle_message_job(msg=result["text"], in_from=SearchType.TG,
-                                       user_id=result["user_id"], user_name=result.get("name"))
+                                       user_id=result["user_id"], user_name=result.get("name"),
+                                       channel_scope=f'{channel["id"]}/{result["token_digest"]}')
     return "Ok"
 
 

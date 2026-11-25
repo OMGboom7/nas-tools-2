@@ -127,35 +127,41 @@ func discoverySubscribed(ctx context.Context, database *sql.DB, kind, id, title,
 	return exists != 0, nil
 }
 
-type tmdbPage struct {
-	Results    []tmdbRecommendation `json:"results"`
-	TotalPages *int                 `json:"total_pages"`
+type tmdbPage = tmdbResultPage[tmdbRecommendation]
+
+type tmdbResultPage[T any] struct {
+	Results    []T  `json:"results"`
+	TotalPages *int `json:"total_pages"`
 }
 
 func fetchTMDBPage(ctx context.Context, clientSource *http.Client, snapshot map[string]any, endpoint string, page int, filters map[string]string) (tmdbPage, error) {
+	return fetchTMDBResultPage[tmdbRecommendation](ctx, clientSource, snapshot, endpoint, page, filters)
+}
+
+func fetchTMDBResultPage[T any](ctx context.Context, clientSource *http.Client, snapshot map[string]any, endpoint string, page int, filters map[string]string) (tmdbResultPage[T], error) {
 	app := objectValue(snapshot["app"])
 	media := objectValue(snapshot["media"])
 	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
 	if key == "" {
-		return tmdbPage{}, errors.New("TMDB API key is unavailable")
+		return tmdbResultPage[T]{}, errors.New("TMDB API key is unavailable")
 	}
 	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
 	if host == "" {
 		host = "api.themoviedb.org"
 	}
 	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
-		return tmdbPage{}, errors.New("invalid TMDB API domain")
+		return tmdbResultPage[T]{}, errors.New("invalid TMDB API domain")
 	}
 	apiURL := url.URL{Scheme: "https", Host: host, Path: "/3" + endpoint}
 	if apiURL.Hostname() == "" {
-		return tmdbPage{}, errors.New("invalid TMDB API domain")
+		return tmdbResultPage[T]{}, errors.New("invalid TMDB API domain")
 	}
 	language := strings.TrimSpace(text(media["tmdb_language"]))
 	if language == "" {
 		language = "zh"
 	}
 	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
-		return tmdbPage{}, errors.New("invalid TMDB language")
+		return tmdbResultPage[T]{}, errors.New("invalid TMDB language")
 	}
 	query := url.Values{"api_key": {key}, "page": {strconv.Itoa(page)}, "language": {language}}
 	if truthy(media["tmdb_include_adult"]) {
@@ -169,7 +175,7 @@ func fetchTMDBPage(ctx context.Context, clientSource *http.Client, snapshot map[
 	apiURL.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL.String(), nil)
 	if err != nil {
-		return tmdbPage{}, err
+		return tmdbResultPage[T]{}, err
 	}
 	request.Header.Set("Accept", "application/json")
 	client := *clientSource
@@ -177,19 +183,19 @@ func fetchTMDBPage(ctx context.Context, clientSource *http.Client, snapshot map[
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	upstream, err := client.Do(request)
 	if err != nil {
-		return tmdbPage{}, err
+		return tmdbResultPage[T]{}, err
 	}
 	defer upstream.Body.Close()
 	if upstream.StatusCode != http.StatusOK {
-		return tmdbPage{}, fmt.Errorf("TMDB status %d", upstream.StatusCode)
+		return tmdbResultPage[T]{}, fmt.Errorf("TMDB status %d", upstream.StatusCode)
 	}
 	contents, err := io.ReadAll(io.LimitReader(upstream.Body, 2<<20+1))
 	if err != nil || len(contents) > 2<<20 {
-		return tmdbPage{}, errors.New("TMDB response is unavailable or too large")
+		return tmdbResultPage[T]{}, errors.New("TMDB response is unavailable or too large")
 	}
-	var payload tmdbPage
+	var payload tmdbResultPage[T]
 	if err := json.Unmarshal(contents, &payload); err != nil || payload.Results == nil {
-		return tmdbPage{}, errors.New("invalid TMDB response")
+		return tmdbResultPage[T]{}, errors.New("invalid TMDB response")
 	}
 	return payload, nil
 }

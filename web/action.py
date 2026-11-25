@@ -51,7 +51,7 @@ from app.utils import StringUtils, EpisodeFormat, RequestUtils, PathUtils, \
 from app.utils.types import RmtMode, OsType, SearchType, SyncType, MediaType, MovieTypes, TvTypes, \
     EventType, SystemConfigKey, RssType
 from config import RMT_MEDIAEXT, RMT_SUBEXT, RMT_AUDIO_TRACK_EXT, Config, run_go_helper
-from web.backend.search_torrents import search_medias_for_web, search_media_by_message
+from web.backend.search_torrents import search_medias_for_web, search_media_by_message, start_media_message
 from web.backend.pro_user import ProUser
 from web.backend.web_utils import WebUtils
 
@@ -370,7 +370,7 @@ class WebAction:
             else:
                 os.system("pkill -f 'python3 run.py'")
 
-    def handle_message_job(self, msg, in_from=SearchType.OT, user_id=None, user_name=None):
+    def handle_message_job(self, msg, in_from=SearchType.OT, user_id=None, user_name=None, channel_scope=""):
         """
         处理消息事件
         """
@@ -408,8 +408,9 @@ class WebAction:
                 return
 
         # 站点搜索或者添加订阅
-        ThreadHelper().start_thread(search_media_by_message,
-                                    (msg, in_from, user_id, user_name))
+        started = start_media_message(msg, in_from, user_id, channel_scope)
+        if started:
+            ThreadHelper().start_thread(search_media_by_message, (started, in_from, user_id, user_name))
 
     @staticmethod
     def set_config_value(cfg, cfg_key, cfg_value):

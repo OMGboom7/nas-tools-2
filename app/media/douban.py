@@ -1,4 +1,6 @@
+import json
 import random
+import subprocess
 from threading import Lock
 from time import sleep
 
@@ -11,6 +13,7 @@ from app.utils import ExceptionUtils, StringUtils
 from app.utils import RequestUtils
 from app.utils.commons import singleton
 from app.utils.types import MediaType
+from config import run_go_helper
 
 lock = Lock()
 prefer_webp = True
@@ -175,49 +178,37 @@ class DouBan:
             sleep(time)
         return self.doubanweb.user(cookie=self.cookie, userid=userid)
 
-    def search_douban_medias(self, keyword, mtype: MediaType = None, season=None, episode=None, page=1):
-        """
-        根据关键字搜索豆瓣，返回可能的标题和年份信息
-        """
-        if not keyword:
+    @staticmethod
+    def search_douban_medias(keyword, mtype: MediaType = None, season=None, episode=None, page=1):
+        if not keyword or mtype not in (None, MediaType.MOVIE, MediaType.TV):
             return []
-        result = self.doubanapi.search(keyword)
-        if not result:
+        kind = "movie" if mtype == MediaType.MOVIE else "tv" if mtype else ""
+        query = {"title": keyword, "kind": kind, "page": int(page)}
+        try:
+            rows = json.loads(run_go_helper("search-titles", "douban", payload=json.dumps(query).encode(), timeout=40))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            log.warn("【Douban】豆瓣词条搜索暂不可用")
             return []
-        ret_medias = []
-        for item_obj in result.get("items"):
-            if mtype and mtype.value != item_obj.get("type_name"):
+        medias = []
+        for row in rows:
+            media = MetaInfo(title=row["title"])
+            media.title = row["title"]
+            media.type = MediaType.MOVIE if row["kind"] == "movie" else MediaType.TV
+            if (season or episode) and media.type != MediaType.TV:
                 continue
-            if item_obj.get("type_name") not in (MediaType.TV.value, MediaType.MOVIE.value):
+            if season and season != 1 and media.begin_season != season:
                 continue
-            item = item_obj.get("target")
-            meta_info = MetaInfo(title=item.get("title"))
-            meta_info.title = item.get("title")
-            if item_obj.get("type_name") == MediaType.MOVIE.value:
-                meta_info.type = MediaType.MOVIE
-            else:
-                meta_info.type = MediaType.TV
-            if season:
-                if meta_info.type != MediaType.TV:
-                    continue
-                if season != 1 and meta_info.begin_season != season:
-                    continue
             if episode and str(episode).isdigit():
-                if meta_info.type != MediaType.TV:
-                    continue
-                meta_info.begin_episode = int(episode)
-                meta_info.title = "%s 第%s集" % (meta_info.title, episode)
-            meta_info.year = item.get("year")
-            meta_info.tmdb_id = "DB:%s" % item.get("id")
-            meta_info.douban_id = item.get("id")
-            meta_info.overview = item.get("card_subtitle") or ""
-            meta_info.poster_path = item.get("cover_url").split('?')[0]
-            rating = item.get("rating", {}) or {}
-            meta_info.vote_average = rating.get("value")
-            if meta_info not in ret_medias:
-                ret_medias.append(meta_info)
-
-        return ret_medias[(page - 1) * 20:page * 20]
+                media.begin_episode = int(episode)
+                media.title = f"{media.title} 第{episode}集"
+            media.year = row["year"]
+            media.tmdb_id = f"DB:{row['id']}"
+            media.douban_id = row["id"]
+            media.overview = row["overview"]
+            media.poster_path = row["image"]
+            media.vote_average = row["vote"]
+            medias.append(media)
+        return medias
 
     def get_media_detail_from_web(self, doubanid):
         """
