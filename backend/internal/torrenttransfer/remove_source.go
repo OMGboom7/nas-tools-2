@@ -107,6 +107,13 @@ func (l *Ledger) RemoveSource(ctx context.Context, receipt string, resolve Resol
 		}
 		return ErrState
 	}
+	current, currentSource, currentTarget, currentGrant, err := resolve(ctx)
+	if err != nil {
+		return err
+	}
+	if currentGrant != grant || Hash(current) != p.Source.SettingsDigest || currentSource == nil || currentTarget == nil || Hash(currentSource.Address()) != p.Source.Endpoint || Hash(currentTarget.Address()) != p.Receiver {
+		return ErrState
+	}
 	return l.sourceHistory(ctx, p, settings, receipt, true)
 }
 

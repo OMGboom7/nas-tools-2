@@ -22,6 +22,7 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 		ConfirmOwner  bool   `json:"confirmOwner"`
 		ConfirmAction bool   `json:"confirmAction"`
 		ConfirmPaused bool   `json:"confirmPaused"`
+		KeepFiles     bool   `json:"keepFiles"`
 	}
 	if !siteLoginJSON(w, r, &in) {
 		return
@@ -75,7 +76,7 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 		return current.settings, current.source, current.target, current.fingerprint, err
 	}
 	if action != "submit" {
-		if action != "inspect" && action != "bind" && action != "verify" && action != "start" {
+		if action != "inspect" && action != "bind" && action != "verify" && action != "start" && action != "remove-source" && action != "confirm-absence" {
 			writeAPIError(w, 404, 404, "未知转种操作")
 			return
 		}
@@ -98,6 +99,36 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 			return torrenttransfer.Hash([]any{id, scope.fingerprint, task})
 		}
 		proof := proofFor(task)
+		source := plan.Source.Task
+		removalState := ""
+		started := false
+		for _, a := range status.Actions {
+			if a.Action == "remove-source" {
+				removalState = a.State
+			}
+			if a.Action == "start" && a.State == "acknowledged" {
+				started = true
+			}
+		}
+		canRemove := scope.settings.DeleteSource && status.TargetStage == "verified" && task.Complete && !task.Error && (!scope.settings.AutoStart || started && task.SourceSeeding) && removalState == ""
+		if action == "remove-source" || action == "confirm-absence" {
+			if !in.ConfirmAction || in.Proof != proof || (action == "remove-source" && (!in.KeepFiles || !canRemove)) || (action == "confirm-absence" && removalState != "acknowledged") {
+				writeAPIError(w, 409, 409, "请重新核对源任务、目标任务和移除回执")
+				return
+			}
+			authorize := func(_ context.Context, receipt string, liveSource, liveTarget torrenttransfer.Task) error {
+				if action != "remove-source" || receipt != id || !source.SameInstance(liveSource) || proofFor(liveTarget) != in.Proof {
+					return torrenttransfer.ErrState
+				}
+				return nil
+			}
+			if err := ledger.RemoveSource(ctx, id, resolve, authorize); err != nil {
+				writeAPIError(w, 409, 409, "源移除尚未核实，请刷新回执并核对做种要求和原任务")
+				return
+			}
+			writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]string{"receipt": id, "state": "source-absent"}})
+			return
+		}
 		if action == "inspect" {
 			canStart := scope.settings.AutoStart && task.Paused && task.HasTracker && status.TargetStage == "verified"
 			for _, a := range status.Actions {
@@ -105,7 +136,7 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 					canStart = false
 				}
 			}
-			writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"receipt": id, "proof": proof, "target": scope.to, "wireId": task.WireID, "directory": task.Directory, "name": task.Name, "addedAt": task.AddedAt, "state": task.State, "targetStage": status.TargetStage, "canStart": canStart}})
+			writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"receipt": id, "proof": proof, "target": scope.to, "wireId": task.WireID, "directory": task.Directory, "name": task.Name, "addedAt": task.AddedAt, "state": task.State, "targetStage": status.TargetStage, "canStart": canStart, "sourceName": scope.from, "sourceId": source.WireID, "sourceDirectory": source.Directory, "sourceTask": source.Name, "canRemove": canRemove, "canConfirmAbsence": removalState == "acknowledged"}})
 			return
 		}
 		if !in.ConfirmAction || in.Proof != proof || (action == "bind" && (!in.ConfirmOwner || status.TargetStage != "")) || (action == "verify" && status.TargetStage == "") || (action == "start" && status.TargetStage != "verified") {
