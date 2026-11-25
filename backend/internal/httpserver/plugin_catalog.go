@@ -321,7 +321,12 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			if _, known := catalog[id]; known {
 				continue
 			}
-			data.Items = append(data.Items, pluginSummary{ID: id, Name: id, Description: "已保留原安装记录和配置。此扩展需要对应的 Go 实现才能运行。", Installed: true})
+			item := pluginSummary{ID: id, Name: id, Description: "已保留原安装记录和配置。此扩展需要对应的 Go 实现才能运行。", Installed: true}
+			if service.legacyURL != "" {
+				item.LegacyConfigEditor = true
+				item.Description = "已保留安装记录，可向旧服务查询此扩展当前提供的配置。"
+			}
+			data.Items = append(data.Items, item)
 		}
 	}
 	for i := range data.Items {

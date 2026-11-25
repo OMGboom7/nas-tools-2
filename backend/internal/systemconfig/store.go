@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -152,7 +153,7 @@ func readMany(ctx context.Context, tx *sql.Tx, keys []string) (map[string]string
 	}
 	values := map[string]string{}
 	for _, key := range keys {
-		if key == "" || len(key) > 160 {
+		if key == "" || len(key) > 160 && !(strings.HasPrefix(key, "plugin.") && ValidStoredPluginID(strings.TrimPrefix(key, "plugin."))) {
 			return nil, ErrInvalidSetting
 		}
 		if _, ok := values[key]; ok {

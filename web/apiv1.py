@@ -2485,7 +2485,7 @@ class PluginList(ClientResource):
         """
         获取已安装插件
         """
-        return WebAction().api_action(cmd='get_plugins_conf')
+        return WebAction().api_action(cmd='get_plugins_conf', data={'id': request.form.get('id')})
 
 
 @plugin.route('/status')
@@ -2507,6 +2507,8 @@ class PluginConfig(ClientResource):
     parser.add_argument('id', type=str, help='插件ID', location='form', required=True)
     parser.add_argument('config', type=str, help='插件配置（JSON）', location='form', required=True)
 
+    parser.add_argument('config_revision', type=str, location='form')
+
     @plugin.doc(parser=parser)
     def post(self):
         """
@@ -2515,13 +2517,17 @@ class PluginConfig(ClientResource):
         data = self.parser.parse_args()
         try:
             config = json.loads(data.get('config') or '')
+            revision = data.get('config_revision')
+            if revision is not None and not re.fullmatch(r'[0-9a-f]{64}', revision):
+                raise ValueError()
         except (TypeError, ValueError):
             return {"code": 400, "success": False, "message": "插件配置格式错误"}, 400
         if not isinstance(config, dict):
             return {"code": 400, "success": False, "message": "插件配置格式错误"}, 400
         return WebAction().api_action(cmd='update_plugin_config', data={
             'plugin': data.get('id'),
-            'config': config
+            'config': config,
+            'revision': revision
         })
 
 
@@ -2536,7 +2542,7 @@ class PluginPage(ClientResource):
         获取插件扩展页的安全结构化只读内容（React + Go 迁移兼容接口）
         """
         plugin_id = self.parser.parse_args().get('id')
-        visible_plugins = WebAction().get_plugins_conf().get('result') or {}
+        visible_plugins = WebAction().get_plugins_conf({'id': plugin_id}).get('result') or {}
         if plugin_id not in visible_plugins or not visible_plugins.get(plugin_id, {}).get('page'):
             return {'code': 404, 'success': False, 'message': '插件扩展页不存在'}
         title, content, action_func = PluginManager().get_plugin_page(plugin_id)
@@ -2570,7 +2576,7 @@ class PluginPageAction(ClientResource):
             return {'code': 400, 'success': False, 'message': '记录ID格式错误'}
         if spec.get('requires_confirmation') and data.get('confirmation') != record_id:
             return {'code': 400, 'success': False, 'message': '归档文件确认文本不匹配'}
-        visible_plugins = WebAction().get_plugins_conf().get('result') or {}
+        visible_plugins = WebAction().get_plugins_conf({'id': plugin_id}).get('result') or {}
         if plugin_id not in visible_plugins or not visible_plugins.get(plugin_id, {}).get('page'):
             return {'code': 404, 'success': False, 'message': '插件扩展页不存在'}
         result = PluginManager().run_plugin_method(

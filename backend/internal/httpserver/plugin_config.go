@@ -2,13 +2,24 @@ package httpserver
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
+
+// Open editors must refresh after the serving process restarts.
+var pluginEditorKey = sync.OnceValue(rand.Text)
 
 type pluginConfigChoice struct {
 	Value string `json:"value"`
@@ -61,7 +72,7 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 		return
 	}
 	id := strings.TrimSpace(request.PathValue("id"))
-	if !pluginIDPattern.MatchString(id) {
+	if !systemconfig.ValidStoredPluginID(id) {
 		writeAPIError(response, http.StatusBadRequest, 400, "invalid plugin id")
 		return
 	}
@@ -91,7 +102,7 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 		return
 	}
 	id := strings.TrimSpace(request.PathValue("id"))
-	if !pluginIDPattern.MatchString(id) {
+	if !systemconfig.ValidStoredPluginID(id) {
 		writeAPIError(response, http.StatusBadRequest, 400, "invalid plugin id")
 		return
 	}
@@ -113,6 +124,10 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 		return
 	}
 	detail := safePluginConfigDetail(id, raw)
+	if input.Fingerprint != "" && input.Fingerprint != detail.Meta.Fingerprint {
+		writeAPIError(response, 409, 409, "插件配置已变化，请刷新后重新保存")
+		return
+	}
 	merged, message := mergePluginConfig(objectValue(raw["config"]), detail.Fields, input)
 	if message != "" {
 		writeAPIError(response, http.StatusBadRequest, 400, message)
@@ -123,10 +138,15 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 		writeAPIError(response, http.StatusBadRequest, 400, "plugin configuration is invalid")
 		return
 	}
-	result, err = postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/config", token, url.Values{
-		"id":     {id},
-		"config": {string(encoded)},
-	})
+	form := url.Values{"id": {id}, "config": {string(encoded)}}
+	if revision, ok := raw["config_revision"].(string); ok {
+		form.Set("config_revision", revision)
+	}
+	result, err = postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/config", token, form)
+	if err == nil && number(result["code"]) == 409 {
+		writeAPIError(response, http.StatusConflict, 409, "插件配置已变化，请刷新后重新保存")
+		return
+	}
 	if !handlePluginResult(response, result, err, "plugin configuration could not be saved") {
 		return
 	}
@@ -134,15 +154,30 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 }
 
 func (service pluginService) rawInstalledPlugin(ctx context.Context, token, id string) (map[string]any, map[string]any, error) {
-	result, err := service.legacyInstalledPlugins(ctx, token, nil)
+	result, err := service.legacyInstalledPlugins(ctx, token, url.Values{"id": {id}})
 	if err != nil || int(number(result["code"])) != 0 {
 		return nil, result, err
 	}
-	raw, ok := objectValue(result["result"])[id]
+	rows, ok := legacyPayload(result)["result"].(map[string]any)
 	if !ok {
+		return nil, result, errors.New("invalid installed plugin list")
+	}
+	raw, found := rows[id]
+	if !found {
 		return nil, result, nil
 	}
-	return objectValue(raw), result, nil
+	row, ok := raw.(map[string]any)
+	if !ok {
+		return nil, result, errors.New("invalid installed plugin")
+	}
+	if value, versioned := row["config_revision"]; versioned {
+		revision, _ := value.(string)
+		digest, err := hex.DecodeString(revision)
+		if _, ok := row["config"].(map[string]any); !ok || err != nil || len(digest) != sha256.Size {
+			return nil, result, errors.New("invalid stored plugin configuration")
+		}
+	}
+	return row, result, nil
 }
 
 func (service pluginService) legacyInstalledPlugins(ctx context.Context, token string, form url.Values) (map[string]any, error) {
@@ -181,9 +216,11 @@ func safePluginConfigDetail(id string, raw map[string]any) pluginConfigDetail {
 	if name == "" {
 		name = id
 	}
+	mac := hmac.New(sha256.New, []byte(pluginEditorKey()))
+	_ = json.NewEncoder(mac).Encode([]any{id, current, raw["fields"], raw["config_revision"]})
 	return pluginConfigDetail{
 		ID: id, Name: name, Fields: fields, Values: values,
-		Meta: pluginConfigDetailMeta{HasPage: cleanPluginText(raw["page"], 120) != ""},
+		Meta: pluginConfigDetailMeta{HasPage: cleanPluginText(raw["page"], 120) != "", Fingerprint: hex.EncodeToString(mac.Sum(nil))},
 	}
 }
 

@@ -47,23 +47,24 @@ type pluginService struct {
 }
 
 type pluginSummary struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Description       string `json:"description"`
-	Version           string `json:"version"`
-	Author            string `json:"author"`
-	AuthorURL         string `json:"authorUrl"`
-	Installed         bool   `json:"installed"`
-	Running           bool   `json:"running"`
-	Configurable      bool   `json:"configurable"`
-	NativeBindingPage bool   `json:"nativeBindingPage,omitempty"`
-	NativeArchivePage bool   `json:"nativeArchivePage,omitempty"`
-	NativeHistoryPage bool   `json:"nativeHistoryPage,omitempty"`
-	CanViewPage       bool   `json:"canViewPage"`
-	HasPage           bool   `json:"hasPage"`
-	StateKnown        bool   `json:"stateKnown"`
-	Native            bool   `json:"native"`
-	ActionsAvailable  bool   `json:"actionsAvailable"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	Version            string `json:"version"`
+	Author             string `json:"author"`
+	AuthorURL          string `json:"authorUrl"`
+	Installed          bool   `json:"installed"`
+	Running            bool   `json:"running"`
+	LegacyConfigEditor bool   `json:"legacyConfigEditor,omitempty"`
+	Configurable       bool   `json:"configurable"`
+	NativeBindingPage  bool   `json:"nativeBindingPage,omitempty"`
+	NativeArchivePage  bool   `json:"nativeArchivePage,omitempty"`
+	NativeHistoryPage  bool   `json:"nativeHistoryPage,omitempty"`
+	CanViewPage        bool   `json:"canViewPage"`
+	HasPage            bool   `json:"hasPage"`
+	StateKnown         bool   `json:"stateKnown"`
+	Native             bool   `json:"native"`
+	ActionsAvailable   bool   `json:"actionsAvailable"`
 }
 
 type pluginsData struct {
@@ -182,7 +183,7 @@ func (service pluginService) pluginForMutation(ctx context.Context, response htt
 	if !handlePluginResult(response, result, err, "plugin list is unavailable") {
 		return nil, false
 	}
-	for key, raw := range objectValue(result["result"]) {
+	for key, raw := range objectValue(legacyPayload(result)["result"]) {
 		entry := objectValue(raw)
 		if pluginMarketID(key, entry) != id {
 			continue
@@ -225,8 +226,8 @@ func (service pluginService) list(ctx context.Context, token string) (pluginsDat
 		return pluginsData{}, runningResult, err
 	}
 
-	apps := objectValue(appsResult["result"])
-	running := objectValue(runningResult["result"])
+	apps := objectValue(legacyPayload(appsResult)["result"])
+	running := objectValue(legacyPayload(runningResult)["result"])
 	data := pluginsData{Items: make([]pluginSummary, 0, len(apps))}
 	for key, raw := range apps {
 		app := objectValue(raw)

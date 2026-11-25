@@ -802,6 +802,7 @@ export type PluginSummary = {
 	 hasPage: boolean;
   canViewPage?: boolean;
   nativeBindingPage?: boolean;
+  legacyConfigEditor?: boolean;
   nativeHistoryPage?: boolean;
   nativeArchivePage?: boolean;
   stateKnown?: boolean;

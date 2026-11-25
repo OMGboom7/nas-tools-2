@@ -136,7 +136,7 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 			if !handlePluginResult(response, legacy, err, "plugin list is unavailable") {
 				return
 			}
-			rows, ok := legacy["result"].(map[string]any)
+			rows, ok := legacyPayload(legacy)["result"].(map[string]any)
 			if !ok {
 				writeAPIError(response, 502, 502, "invalid installed plugin list")
 				return

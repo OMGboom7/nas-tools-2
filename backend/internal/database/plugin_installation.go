@@ -19,24 +19,11 @@ func PluginInstallation(ctx context.Context, configPath string, args []string, o
 	if !list && (len(args) != 2 || args[0] != "install" && args[0] != "uninstall" || !systemconfig.ValidStoredPluginID(args[1])) {
 		return errors.New("usage: plugin-installation list | install ID | uninstall ID")
 	}
-	release, err := backuprestore.HoldStartup(configPath)
+	db, closeDB, err := openPluginDatabase(configPath, list)
 	if err != nil {
 		return err
 	}
-	defer release()
-	dsn, err := sqliteFileURL(filepath.Join(filepath.Dir(configPath), "user.db"))
-	if err != nil {
-		return err
-	}
-	dsn.RawQuery = "mode=rw&_pragma=busy_timeout(5000)&_txlock=immediate"
-	if list {
-		dsn.RawQuery = "mode=ro&_pragma=busy_timeout(5000)"
-	}
-	db, err := sql.Open("sqlite", dsn.String())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+	defer closeDB()
 	if list {
 		var raw string
 		err := db.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY='UserInstalledPlugins' ORDER BY ID DESC LIMIT 1").Scan(&raw)
@@ -58,4 +45,26 @@ func PluginInstallation(ctx context.Context, configPath string, args []string, o
 		return err
 	}
 	return tx.Commit()
+}
+
+func openPluginDatabase(configPath string, readOnly bool) (*sql.DB, func(), error) {
+	release, err := backuprestore.HoldStartup(configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	dsn, err := sqliteFileURL(filepath.Join(filepath.Dir(configPath), "user.db"))
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	dsn.RawQuery = "mode=rw&_pragma=busy_timeout(5000)&_txlock=immediate"
+	if readOnly {
+		dsn.RawQuery = "mode=ro&_pragma=busy_timeout(5000)"
+	}
+	db, err := sql.Open("sqlite", dsn.String())
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return db, func() { db.Close(); release() }, nil
 }

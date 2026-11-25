@@ -20,6 +20,16 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "plugin-config" {
+		if err := database.PluginConfig(context.Background(), config.ApplicationPath(), os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			if errors.Is(err, database.ErrPluginConfigChanged) {
+				os.Exit(3)
+			}
+			slog.Error("plugin-config", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "plugin-installation" {
 		if err := database.PluginInstallation(context.Background(), config.ApplicationPath(), os.Args[2:], os.Stdout); err != nil {
 			slog.Error("plugin-installation", "error", err)

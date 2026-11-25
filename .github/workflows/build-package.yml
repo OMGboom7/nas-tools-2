@@ -36,7 +36,7 @@ jobs:
           go build -trimpath ./cmd/server
           go build -trimpath -ldflags="-s -w" -o bin/ ./cmd/nas-tools-db
           go test ./cmd/server ./internal/dbinit ./internal/diskusage
-          go test ./internal/database -run '^Test(SharedPluginInstallation|PluginInstallationRequires)'
+          go test ./internal/database -run '^Test(SharedPluginInstallation|PluginInstallationRequires|PluginConfigStorage)'
       - name: Install package dependencies
         shell: bash
         run: |

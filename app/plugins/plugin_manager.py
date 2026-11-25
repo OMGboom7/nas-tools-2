@@ -153,20 +153,22 @@ class PluginManager:
         except Exception as err:
             print(str(err), traceback.format_exc())
 
-    def reload_plugin(self, pid):
+    def reload_plugin(self, pid, require_running=False):
         """
         生效插件配置
         """
-        if not pid:
-            return
-        if not self._running_plugins.get(pid):
-            return
-        if hasattr(self._running_plugins[pid], "init_config"):
-            try:
-                self._running_plugins[pid].init_config(self.get_plugin_config(pid))
-                log.debug(f"生效插件配置：{pid}")
-            except Exception as err:
-                print(str(err))
+        plugin = self._running_plugins.get(pid)
+        if plugin is None:
+            return not require_running
+        if not hasattr(plugin, "init_config"):
+            return True
+        try:
+            plugin.init_config(self.get_plugin_config(pid))
+            log.debug(f"生效插件配置：{pid}")
+            return True
+        except Exception:
+            log.error(f"插件配置未能生效：{pid}")
+            return False
 
     def __stop_plugins(self):
         """
@@ -215,13 +217,15 @@ class PluginManager:
             return None
         return self._running_plugins[pid].get_state()
 
-    def save_plugin_config(self, pid, conf):
+    def save_plugin_config(self, pid, conf, auth_level=None, revision=None):
         """
         保存插件配置
         """
-        if not self._plugins.get(pid):
+        plugin = self._plugins.get(pid)
+        if plugin is None or (auth_level is not None and getattr(plugin, "auth_level", 0) > auth_level):
             return False
-        return self.systemconfig.set(self._config_key % pid, conf)
+        self.systemconfig.save_plugin_config(pid, conf, revision)
+        return True
 
     @staticmethod
     def __get_plugin_color(plugin):
@@ -237,12 +241,14 @@ class PluginManager:
             return ImageUtils.calculate_theme_color(icon_path)
         return ""
 
-    def get_plugins_conf(self, auth_level):
+    def get_plugins_conf(self, auth_level, selected=None):
         """
         获取所有插件配置
         """
         all_confs = {}
         for pid, plugin in self._running_plugins.items():
+            if selected is not None and pid != selected:
+                continue
             # 基本属性
             conf = {}
             # 权限
@@ -276,7 +282,12 @@ class PluginManager:
             # 配置项
             conf.update({"fields": plugin.get_fields() or {}})
             # 配置值
-            conf.update({"config": self.get_plugin_config(pid)})
+            if selected is None:
+                conf["config"] = self.get_plugin_config(pid)
+            else:
+                stored = self.systemconfig.read_plugin_config(pid)
+                conf["config"] = {} if stored["value"] is None or stored["value"] == "" else stored["value"]
+                conf["config_revision"] = stored["revision"]
             # 状态
             conf.update({"state": plugin.get_state()})
             # 汇总

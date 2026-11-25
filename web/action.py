@@ -17,6 +17,7 @@ import ast
 import copy
 
 import cn2an
+from flask import g
 from flask_login import logout_user, current_user
 from werkzeug.security import generate_password_hash
 
@@ -4923,8 +4924,21 @@ class WebAction:
         config = data.get("config")
         if not plugin_id or not isinstance(config, dict):
             return {"code": 1, "msg": "数据错误"}
-        PluginManager().save_plugin_config(pid=plugin_id, conf=config)
-        PluginManager().reload_plugin(plugin_id)
+        level = WebAction.plugin_user_level()
+        if level is None:
+            return {"code": 403, "msg": "用户未登录"}
+        manager = PluginManager()
+        try:
+            if not manager.save_plugin_config(plugin_id, config, level, data.get("revision")):
+                return {"code": 404, "msg": "未找到插件"}
+        except subprocess.CalledProcessError as err:
+            if err.returncode == 3:
+                return {"code": 409, "msg": "插件配置已变化，请刷新后重新保存"}
+            return {"code": 1, "msg": "插件配置未能保存"}
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            return {"code": 1, "msg": "插件配置未能保存"}
+        if not manager.reload_plugin(plugin_id, require_running=data.get("revision") is not None):
+            return {"code": 1, "msg": "插件配置已保存，重新加载失败"}
         return {"code": 0, "msg": "保存成功"}
 
     @staticmethod
@@ -5293,11 +5307,22 @@ class WebAction:
         return {"code": 0, "msg": "插件卸载功"}
 
     @staticmethod
+    def plugin_user_level():
+        username = getattr(g, "api_username", None)
+        user = ProUser().get_user(username) if username else current_user
+        if not user or not user.is_authenticated:
+            return None
+        return 2 if user.admin else 1
+
+    @staticmethod
     def get_plugin_apps():
         """
         获取插件列表
         """
-        plugins = PluginManager().get_plugin_apps(current_user.level)
+        level = WebAction.plugin_user_level()
+        if level is None:
+            return {"code": 403, "msg": "用户未登录"}
+        plugins = PluginManager().get_plugin_apps(level)
         return {"code": 0, "result": plugins, "statistic": {}}
 
     @staticmethod
@@ -5323,8 +5348,11 @@ class WebAction:
         return {"code": 0, "state": state}
 
     @staticmethod
-    def get_plugins_conf():
-        Plugins = PluginManager().get_plugins_conf(current_user.level)
+    def get_plugins_conf(data=None):
+        level = WebAction.plugin_user_level()
+        if level is None:
+            return {"code": 403, "msg": "用户未登录"}
+        Plugins = PluginManager().get_plugins_conf(level, (data or {}).get("id"))
         return {"code": 0, "result": Plugins}
 
     @staticmethod

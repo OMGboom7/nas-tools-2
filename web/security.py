@@ -12,7 +12,7 @@ from Crypto.Util.Padding import pad
 from cryptography.fernet import Fernet
 from base64 import b64encode
 import jwt
-from flask import request
+from flask import g, request
 
 from app.utils import TokenCache
 from config import Config
@@ -143,6 +143,7 @@ def login_required(func):
             return auth_failed()
         if not flag and username:
             TokenCache.set(token, generate_access_token(username))
+        g.api_username = username
         return func(*args, **kwargs)
 
     return wrapper

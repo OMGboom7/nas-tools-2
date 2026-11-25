@@ -66,11 +66,15 @@ func TestPluginConfigUpdateMergesServerSideValues(t *testing.T) {
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		switch request.URL.Path {
 		case "/api/v1/plugin/list":
-			return jsonResponse(request, legacyPluginConfig), nil
+			if err := request.ParseForm(); err != nil || request.PostForm.Get("id") != "CookieCloud" {
+				t.Fatal("unscoped config read", err)
+			}
+			body := strings.Replace(legacyPluginConfig, `"config":`, `"config_revision":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","config":`, 1)
+			return jsonResponse(request, `{"code":0,"success":true,"data":`+body+`}`), nil
 		case "/api/v1/plugin/config":
 			payload, _ := io.ReadAll(request.Body)
 			form, _ := url.ParseQuery(string(payload))
-			if form.Get("id") != "CookieCloud" {
+			if form.Get("id") != "CookieCloud" || form.Get("config_revision") != "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
 				t.Fatalf("unexpected id: %#v", form)
 			}
 			var merged map[string]any
