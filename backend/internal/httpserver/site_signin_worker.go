@@ -50,6 +50,7 @@ type siteSigninAPI struct {
 	closed     bool
 	cloudflare *cloudflareAPI
 	statistics *siteStatisticsAPI
+	douban     *doubanSyncAPI
 	wait       sync.WaitGroup
 }
 
@@ -513,6 +514,7 @@ func startSiteSigninWorker(ctx context.Context, api *siteSigninAPI) func() {
 				if e := api.tick(ctx, now); e != nil && !errors.Is(e, organization.ErrBusy) && !errors.Is(e, context.Canceled) {
 					slog.Warn("native site sign-in worker stopped this occurrence; original receipts retained")
 				}
+				api.pollPluginReceiver(ctx, now)
 			}
 		}
 	}()

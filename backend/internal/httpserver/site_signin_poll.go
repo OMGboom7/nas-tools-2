@@ -17,6 +17,18 @@ import (
 )
 
 func (api *siteSigninAPI) remoteCurrent(ctx context.Context, c sitesignin.Control) error {
+	if c.Scope.PluginDigest == sitesignin.DoubanReceiver {
+		// The transport journal holds the sign-in store transaction here.
+		// Check the owning plugin through its independent settings store.
+		if !api.douban.available() {
+			return sitesignin.ErrScope
+		}
+		current, _, err := api.douban.remoteScope(ctx)
+		if err != nil || current.Scope.ID != c.Scope.ID {
+			return sitesignin.ErrScope
+		}
+		return nil
+	}
 	if c.Scope.PluginDigest == "native-site-statistics" && api.statistics != nil {
 		return api.statistics.remoteCurrent(ctx, c)
 	}
@@ -35,7 +47,7 @@ func (api *siteSigninAPI) remoteCall(ctx context.Context, c sitesignin.Control, 
 	}
 	intent := api.store.RemoteIntent
 	guard := api.base(c.Scope, "", c.Scope.PluginDigest)
-	if c.Scope.PluginDigest == "native-site-statistics" {
+	if c.Scope.ExternalReceiver() {
 		intent = api.store.RemoteIntentExternal
 		guard = func(ctx context.Context) error { return api.remoteCurrent(ctx, c) }
 	}
@@ -181,4 +193,18 @@ func (api *siteSigninAPI) pollTelegram(ctx context.Context, c sitesignin.Control
 		}
 	}
 	return nil
+}
+
+// Keep an independently enabled plugin connected when sign-in is inactive.
+func (api *siteSigninAPI) pollPluginReceiver(ctx context.Context, now time.Time) {
+	control, _, err := api.remoteControl(ctx)
+	if err != nil || !control.Scope.ExternalReceiver() {
+		return
+	}
+	guard, err := api.acquire(ctx)
+	if err != nil {
+		return
+	}
+	defer guard.Close()
+	_ = api.pollTelegram(ctx, control, now)
 }

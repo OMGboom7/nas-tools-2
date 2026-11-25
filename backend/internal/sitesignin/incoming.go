@@ -57,7 +57,7 @@ func (s *Store) Incoming(ctx context.Context, scope Scope, source, key, user str
 			if e = bus.PublishSignal(ctx, tx, "site.signin", id, source, map[string]any{"command": "/pts", "origin": source}); e != nil {
 				return e
 			}
-			if e = bus.EmitInteractiveReply(ctx, tx, id, id, source, user, channelID); e != nil {
+			if e = bus.EmitInteractiveReply(ctx, tx, "site_signin_ack", id, id, source, user, channelID); e != nil {
 				return e
 			}
 		}

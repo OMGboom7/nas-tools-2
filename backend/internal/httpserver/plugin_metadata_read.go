@@ -244,7 +244,7 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 					return
 				}
 				detail := doubanDetail(claims.Username, raw, cfg)
-				running, known := service.doubanSync.summary(raw)
+				running, known := service.doubanSync.summary(request.Context(), raw)
 				result[id] = map[string]any{"name": detail.Name, "version": catalog[id].Version, "page": id, "state": running, "stateKnown": known, "native": true, "fields": indexerLegacyFields(detail), "config": detail.Values, "fingerprint": detail.Meta.Fingerprint}
 				continue
 			}

@@ -125,10 +125,14 @@ func (api *siteSigninAPI) wechatHTTP(w http.ResponseWriter, r *http.Request, c s
 	id := m.ID
 	if m.Type == "event" && m.Event == "click" {
 		parts := strings.Split(m.Key, "#")
-		if len(parts) > 2 && parts[2] == "_2_0" {
-			content = "/pts"
-		} else {
-			content = m.Key
+		content = m.Key
+		if len(parts) > 2 {
+			switch parts[2] {
+			case "_2_0":
+				content = "/pts"
+			case "_1_1":
+				content = "/db"
+			}
 		}
 		id = sitelogin.Hash([]any{m.From, m.Created, m.Agent, m.Event, m.Key})
 	} else if m.Type != "text" {

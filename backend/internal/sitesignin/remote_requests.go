@@ -7,6 +7,12 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 )
 
+const DoubanReceiver = "native-douban-sync"
+
+func (scope Scope) ExternalReceiver() bool {
+	return scope.PluginDigest == "native-site-statistics" || scope.PluginDigest == DoubanReceiver
+}
+
 func (s *Store) RemoteIntent(ctx context.Context, scope Scope, source, kind string, guard func(context.Context) error) (string, error) {
 	return s.remoteIntent(ctx, scope, source, kind, guard, false)
 }
@@ -30,7 +36,7 @@ func (s *Store) remoteIntent(ctx context.Context, scope Scope, source, kind stri
 		if e != nil || !c.Enabled || sitelogin.Hash(c.Scope) != sitelogin.Hash(scope) {
 			return "", ErrScope
 		}
-	} else if !sitelogin.Hex(scope.ID, 64) || scope.PluginDigest != "native-site-statistics" {
+	} else if !sitelogin.Hex(scope.ID, 64) || !scope.ExternalReceiver() {
 		return "", ErrScope
 	}
 	if _, e = tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS GO_SITE_SIGNIN_REMOTE_REQUESTS(ID TEXT PRIMARY KEY,SCOPE_ID TEXT NOT NULL,SOURCE TEXT NOT NULL,KIND TEXT NOT NULL,STATE TEXT NOT NULL,STATUS INTEGER NOT NULL,CREATED TEXT NOT NULL)`); e != nil {

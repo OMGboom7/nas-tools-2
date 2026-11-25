@@ -82,7 +82,7 @@ func scanChannel(row interface{ Scan(...any) error }) (notificationconfig.Channe
 	return c, err
 }
 func selected(c notificationconfig.Channel, kind string) bool {
-	if kind == "site_signin_ack" {
+	if InteractiveReplyKind(kind) {
 		return c.Enabled != 0 && c.Interactive != 0 && (c.Type == "telegram" || c.Type == "wechat" || c.Type == "slack" || c.Type == "synologychat")
 	}
 	if kind == "plugin_message" {

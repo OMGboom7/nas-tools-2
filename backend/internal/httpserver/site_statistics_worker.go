@@ -344,7 +344,6 @@ func startSiteStatisticsWorker(ctx context.Context, api *siteStatisticsAPI) func
 				return
 			case <-ticker.C:
 				api.tick(ctx, time.Now())
-				api.tickRemote(ctx, time.Now())
 			}
 		}
 	}()

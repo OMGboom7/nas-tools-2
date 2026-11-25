@@ -167,7 +167,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			if service.nativeDouban(item.ID) {
 				raw, err := service.system.ReadMany(ctx, doubanKeys)
 				if err == nil {
-					item.Running, item.StateKnown = service.doubanSync.summary(raw)
+					item.Running, item.StateKnown = service.doubanSync.summary(ctx, raw)
 				} else {
 					item.StateKnown = false
 				}

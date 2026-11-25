@@ -127,7 +127,7 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 				}
 			}
 		}
-		if err == nil && e.Kind == "site_signin_ack" {
+		if err == nil && bus.InteractiveReplyKind(e.Kind) {
 			var original struct {
 				User string `json:"user_id"`
 			}

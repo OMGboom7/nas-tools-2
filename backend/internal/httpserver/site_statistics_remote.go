@@ -59,18 +59,3 @@ func (api *siteStatisticsAPI) remoteLaunch(ctx context.Context, s siteSigninRemo
 	_, e = api.launch(ctx, sitestats.Job{ID: sitestats.Hash([]any{c.Actor, origin}), Origin: origin, Actor: c.Actor, Epoch: c.Epoch, Fingerprint: c.Fingerprint, Authority: c.Authority, ReadMessages: c.ReadMessages, SiteIDs: []string{}, Summary: true})
 	return e
 }
-
-// The receiver remains shared with /pts. An independent statistics grant may
-// maintain it when no valid sign-in receiver owns the channel.
-func (api *siteStatisticsAPI) tickRemote(ctx context.Context, now time.Time) {
-	c, _, e := api.signin.remoteControl(ctx)
-	if e != nil || c.Scope.PluginDigest != "native-site-statistics" {
-		return
-	}
-	guard, e := api.signin.acquire(ctx)
-	if e != nil {
-		return
-	}
-	defer guard.Close()
-	_ = api.signin.pollTelegram(ctx, c, now)
-}

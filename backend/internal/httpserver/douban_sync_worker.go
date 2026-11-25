@@ -67,8 +67,19 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 		return err
 	}
 	due := func(t time.Time) bool { return !t.IsZero() && !t.After(now) }
+	var command string
 	if !c.Running && !due(c.Once) && !due(c.Next) {
-		return nil
+		if c.RemoteSince.IsZero() {
+			return nil
+		}
+		command, err = api.pendingCommand(ctx, c)
+		if err != nil || command == "" {
+			return err
+		}
+		receiver, _, e := api.remoteScope(ctx)
+		if e != nil || receiver.Scope.ID != c.remoteID() {
+			return nil
+		}
 	}
 	if installed, err := indexerInstalled(raw["UserInstalledPlugins"], douban.SyncPlugin); err != nil || !installed {
 		return err
@@ -86,11 +97,23 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		err = store.UpdateMany(ctx, doubanKeys, func(actual map[string]string) (map[string]string, error) {
-			if !sameDoubanRun(raw, actual) {
-				return nil, douban.ErrSettings
+		err = store.Transaction(ctx, func(tx *sql.Tx) error {
+			if command != "" && c.Running {
+				result, e := tx.ExecContext(ctx, "UPDATE GO_DOUBAN_COMMANDS SET PENDING=0 WHERE ID=? AND SCOPE=? AND PENDING=1", command, c.remoteID())
+				if e != nil {
+					return e
+				}
+				n, e := result.RowsAffected()
+				if e != nil || n != 1 {
+					return douban.ErrSettings
+				}
 			}
-			return map[string]string{doubanControlKey: string(b)}, nil
+			return systemconfig.UpdateManyTx(ctx, tx, doubanKeys, func(actual map[string]string) (map[string]string, error) {
+				if !sameDoubanRun(raw, actual) {
+					return nil, douban.ErrSettings
+				}
+				return map[string]string{doubanControlKey: string(b)}, nil
+			})
 		})
 		if err == nil {
 			raw[doubanControlKey] = string(b)
@@ -110,7 +133,7 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 	}
 	if due(c.Once) {
 		c.Once = time.Time{}
-	} else {
+	} else if due(c.Next) {
 		c.Next = now.Add(cfg.Interval()).UTC()
 	}
 	c.Running = true
@@ -127,6 +150,12 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 		if err != nil || scope != c.Scope || !sameDoubanRun(raw, actual) {
 			return douban.ErrSettings
 		}
+		if command != "" {
+			receiver, _, err := api.remoteScope(ctx)
+			if err != nil || receiver.Scope.ID != c.remoteID() {
+				return douban.ErrSettings
+			}
+		}
 		return ctx.Err()
 	}
 	wait := func(delay time.Duration) error {
@@ -138,6 +167,9 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 	client := douban.Client{Transport: api.subscriptions.client.Transport}
 	loc, err := rssWorkerLocation()
 	if err != nil {
+		return err
+	}
+	if err := current(); err != nil {
 		return err
 	}
 	ids, err := client.Interests(ctx, cfg.InterestList, now.In(loc), func(context.Context) error { return wait(time.Duration(1+rand.IntN(5)) * time.Second) })
@@ -168,7 +200,7 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 			failed++
 			continue
 		}
-		ok, err := api.process(ctx, raw, c, cfg, subject, now.In(loc))
+		ok, err := api.process(ctx, raw, cfg, subject, now.In(loc), current)
 		if err != nil {
 			failed++
 		} else if ok {
@@ -216,7 +248,7 @@ func (api *doubanSyncAPI) historyState(ctx context.Context, id string) (string, 
 	return state, err
 }
 
-func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, c doubanControl, cfg douban.Settings, s douban.Subject, now time.Time) (bool, error) {
+func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, cfg douban.Settings, s douban.Subject, now time.Time, current func() error) (bool, error) {
 	target := "NEW"
 	input := subscriptionUpsertRequest{Type: "MOV", Name: s.Title, Year: s.Year}
 	if s.Kind == "tv" {
@@ -276,9 +308,8 @@ func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, c 
 			}
 		}
 	}
-	scope, err := api.scope(c.Actor, raw)
-	if err != nil || scope != c.Scope {
-		return false, douban.ErrSettings
+	if err := current(); err != nil {
+		return false, err
 	}
 	changed := false
 	err = api.plugins.system.Transaction(ctx, func(tx *sql.Tx) error {

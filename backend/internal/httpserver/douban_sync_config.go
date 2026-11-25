@@ -24,6 +24,8 @@ type doubanControl struct {
 	Actor, Scope, Last string
 	Next, Once         time.Time
 	Running            bool
+	RemoteSince        time.Time
+	RemoteChannels     string
 }
 
 func doubanState(raw string) (doubanControl, error) {
@@ -69,13 +71,19 @@ func (api *doubanSyncAPI) scope(actor string, raw map[string]string) (string, er
 	}
 	return sitelogin.Hash(scope), nil
 }
-func (api *doubanSyncAPI) summary(raw map[string]string) (bool, bool) {
+func (api *doubanSyncAPI) summary(ctx context.Context, raw map[string]string) (bool, bool) {
 	c, err := doubanState(raw[doubanControlKey])
 	if err != nil {
 		return false, false
 	}
-	if !c.Running && c.Once.IsZero() && c.Next.IsZero() {
+	if !c.Running && c.RemoteSince.IsZero() && c.Once.IsZero() && c.Next.IsZero() {
 		return false, true
+	}
+	if !c.Running && !c.RemoteSince.IsZero() && c.Once.IsZero() && c.Next.IsZero() {
+		_, digest, e := api.commandSources(ctx)
+		if e != nil || digest != c.RemoteChannels {
+			return false, e == nil
+		}
 	}
 	s, err := api.scope(c.Actor, raw)
 	return err == nil && s == c.Scope, err == nil
@@ -89,6 +97,7 @@ func doubanDetail(actor string, raw map[string]string, cfg douban.Settings) plug
 	options := []pluginConfigChoice{{"wish", "想看"}, {"do", "在看"}, {"collect", "看过"}}
 	fields := []pluginConfigField{
 		{Key: "enable", Title: "启用定时同步", Type: "switch"},
+		{Key: "go_remote", Title: "允许从已配置的交互渠道发送 /db 同步", Type: "switch", Tooltip: "沿用渠道的发送者权限。更换渠道后，请重新保存。"},
 		{Key: "onlyonce", Title: "保存后同步一次", Type: "switch"},
 		{Key: "users", Title: "豆瓣用户 ID", Type: "text", Placeholder: "多个用户用逗号隔开"},
 		{Key: "types", Title: "同步标记", Type: "multiselect", Options: options},
@@ -105,16 +114,16 @@ func doubanDetail(actor string, raw map[string]string, cfg douban.Settings) plug
 			fields[i].Options = []pluginConfigChoice{}
 		}
 	}
-	return pluginConfigDetail{ID: douban.SyncPlugin, Name: "豆瓣同步", Fields: fields, Values: map[string]any{"enable": cfg.Enabled, "onlyonce": cfg.Once, "users": strings.Join(cfg.Users, ","), "types": append([]string{}, cfg.Types...), "sync_type": mode, "days": strconv.Itoa(cfg.Days), "interval": strconv.Itoa(cfg.Hours), "rss_interval": strconv.Itoa(cfg.Seconds), "auto_search": cfg.Search, "auto_rss": cfg.Subscribe}, Meta: pluginConfigDetailMeta{HasPage: true, Fingerprint: sitelogin.Hash([]any{actor, raw})}}
+	return pluginConfigDetail{ID: douban.SyncPlugin, Name: "豆瓣同步", Fields: fields, Values: map[string]any{"go_remote": cfg.Remote, "enable": cfg.Enabled, "onlyonce": cfg.Once, "users": strings.Join(cfg.Users, ","), "types": append([]string{}, cfg.Types...), "sync_type": mode, "days": strconv.Itoa(cfg.Days), "interval": strconv.Itoa(cfg.Hours), "rss_interval": strconv.Itoa(cfg.Seconds), "auto_search": cfg.Search, "auto_rss": cfg.Subscribe}, Meta: pluginConfigDetailMeta{HasPage: true, Fingerprint: sitelogin.Hash([]any{actor, raw})}}
 }
-func (api *doubanSyncAPI) changes(actor string, raw map[string]string, in map[string]json.RawMessage, clear []string, now time.Time) (map[string]string, error) {
+func (api *doubanSyncAPI) changes(ctx context.Context, actor string, raw map[string]string, in map[string]json.RawMessage, clear []string, now time.Time) (map[string]string, error) {
 	v := map[string]json.RawMessage{}
 	if old := raw[doubanSettingsKey]; old != "" && (json.Unmarshal([]byte(old), &v) != nil || v == nil) {
 		return nil, douban.ErrSettings
 	}
 	for k, value := range in {
 		switch k {
-		case "enable", "onlyonce", "users", "types", "sync_type", "days", "interval", "rss_interval", "auto_search", "auto_rss", "cookie":
+		case "go_remote", "enable", "onlyonce", "users", "types", "sync_type", "days", "interval", "rss_interval", "auto_search", "auto_rss", "cookie":
 		default:
 			return nil, douban.ErrSettings
 		}
@@ -135,12 +144,20 @@ func (api *doubanSyncAPI) changes(actor string, raw map[string]string, in map[st
 		return nil, err
 	}
 	c := doubanControl{}
-	if cfg.Enabled || cfg.Once {
-		if !cfg.Valid() || cfg.Enabled && cfg.Interval() == 0 {
+	if cfg.Enabled || cfg.Once || cfg.Remote {
+		if !cfg.Valid() || (cfg.Enabled || cfg.Remote) && cfg.Interval() == 0 {
 			return nil, douban.ErrSettings
 		}
 		if cfg.Search && !cfg.Subscribe {
 			return nil, errDoubanDirectSearch
+		}
+		if cfg.Remote {
+			_, digest, e := api.commandSources(ctx)
+			if e != nil {
+				return nil, e
+			}
+			c.RemoteChannels = digest
+			c.RemoteSince = now.UTC()
 		}
 		if cfg.Enabled {
 			c.Next = now.Add(cfg.Interval()).UTC()
@@ -220,7 +237,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 			signinJSON(w, doubanDetail(claims.Username, raw, cfg))
 			return
 		case "status":
-			running, known := api.summary(raw)
+			running, known := api.summary(ctx, raw)
 			writeJSON(w, 200, map[string]any{"code": 0, "state": running, "stateKnown": known})
 			return
 		case "save", "legacy-save":
@@ -246,7 +263,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 				writeAPIError(w, 409, 409, "设置已变化，请刷新")
 				return
 			}
-			changes, err = api.changes(claims.Username, raw, in.Values, in.ClearConfig, time.Now())
+			changes, err = api.changes(ctx, claims.Username, raw, in.Values, in.ClearConfig, time.Now())
 			if errors.Is(err, errDoubanDirectSearch) {
 				writeAPIError(w, 501, 501, "仅搜索并直接下载的模式尚待迁移")
 				return

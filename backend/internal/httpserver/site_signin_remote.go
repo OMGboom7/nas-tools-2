@@ -130,20 +130,19 @@ func (api *siteSigninAPI) remoteSources(ctx context.Context) ([]siteSigninRemote
 }
 func (api *siteSigninAPI) remoteControl(ctx context.Context) (sitesignin.Control, []siteSigninRemoteSource, error) {
 	c, e := api.store.Control(ctx)
-	if e != nil || !c.Enabled || !c.Scope.Options.Remote {
-		if api.statistics != nil {
-			return api.statistics.remoteScope(ctx)
-		}
-		return c, nil, sitesignin.ErrScope
+	if e == nil && c.Enabled && c.Scope.Options.Remote && api.base(c.Scope, "", c.Scope.PluginDigest)(ctx) == nil {
+		sources, _, err := api.remoteSources(ctx)
+		return c, sources, err
 	}
-	if e = api.base(c.Scope, "", c.Scope.PluginDigest)(ctx); e != nil {
-		if api.statistics != nil {
-			return api.statistics.remoteScope(ctx)
+	if api.statistics != nil && api.statistics.store != nil {
+		if control, sources, err := api.statistics.remoteScope(ctx); err == nil {
+			return control, sources, nil
 		}
-		return c, nil, e
 	}
-	sources, _, e := api.remoteSources(ctx)
-	return c, sources, e
+	if api.douban.available() {
+		return api.douban.remoteScope(ctx)
+	}
+	return c, nil, sitesignin.ErrScope
 }
 func (api *siteSigninAPI) publishCommand(ctx context.Context, key, origin, source string) error {
 	c, sources, e := api.remoteControl(ctx)
@@ -199,6 +198,9 @@ func (api *siteSigninAPI) incoming(ctx context.Context, c sitesignin.Control, s 
 	if id == "" || len(id) > 1000 || !sitelogin.Text(user, 512) || len(username) > 1000 || len(body) > 32000 || at.IsZero() || at.Before(created.Truncate(time.Second)) || at.After(time.Now().Add(2*time.Minute)) || !s.allowed(user, body) {
 		return sitesignin.ErrScope
 	}
+	if body == "/db" && api.douban.available() {
+		return api.douban.queueCommand(ctx, s, id, user, username, at)
+	}
 	if body == "/sta" && api.statistics != nil {
 		err := api.statistics.remoteLaunch(ctx, s, id, user, at)
 		if errors.Is(err, sitestats.ErrState) {
@@ -206,12 +208,16 @@ func (api *siteSigninAPI) incoming(ctx context.Context, c sitesignin.Control, s 
 		}
 		return err
 	}
-	if c.Scope.PluginDigest == "native-site-statistics" {
+	if c.Scope.ExternalReceiver() {
 		return sitesignin.ErrScope
 	}
-	channel := map[string]string{"telegram": "Telegram", "wechat": "微信", "synologychat": "Synology Chat", "slack": "Slack"}[s.channel.Type]
-	data := map[string]any{"channel": channel, "user_id": user, "user_name": username, "message": body}
-	return api.store.Incoming(ctx, c.Scope, s.digest, id, user, s.channel.ID, json.RawMessage(raw), data, body == "/pts", api.base(c.Scope, "", c.Scope.PluginDigest))
+	return api.store.Incoming(ctx, c.Scope, s.digest, id, user, s.channel.ID, json.RawMessage(raw), remoteMessageData(s.channel.Type, user, username, body), body == "/pts", api.base(c.Scope, "", c.Scope.PluginDigest))
+}
+
+func remoteMessageData(channelType, user, username, body string) map[string]any {
+	channel := map[string]string{"telegram": "Telegram", "wechat": "微信", "synologychat": "Synology Chat", "slack": "Slack"}[channelType]
+	return map[string]any{"channel": channel, "user_id": user, "user_name": username, "message": body}
+
 }
 
 type signinTelegramUpdate struct {
@@ -279,7 +285,7 @@ func (api *siteSigninAPI) remoteHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c, sources, e := api.remoteControl(r.Context())
 	if e != nil {
-		writeAPIError(w, 409, 409, "消息签到尚未启用或原设置已变化")
+		writeAPIError(w, 409, 409, "消息命令尚未启用或原设置已变化")
 		return
 	}
 	typeName := map[string]string{"/telegram": "telegram", "/synology": "synologychat", "/slack": "slack", "/wechat": "wechat"}[r.URL.Path]

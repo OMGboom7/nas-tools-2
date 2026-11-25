@@ -14,8 +14,8 @@ var ErrSettings = errors.New("invalid Douban synchronization settings")
 
 type Settings struct {
 	InterestList
-	Enabled, Once, Search, Subscribe bool
-	Hours, Seconds                   int
+	Enabled, Once, Search, Subscribe, Remote bool
+	Hours, Seconds                           int
 }
 
 func ReadSettings(raw string) (Settings, error) {
@@ -27,7 +27,7 @@ func ReadSettings(raw string) (Settings, error) {
 	if json.Unmarshal([]byte(raw), &m) != nil || m == nil {
 		return out, ErrSettings
 	}
-	for key, dst := range map[string]*bool{"enable": &out.Enabled, "onlyonce": &out.Once, "auto_search": &out.Search, "auto_rss": &out.Subscribe} {
+	for key, dst := range map[string]*bool{"go_remote": &out.Remote, "enable": &out.Enabled, "onlyonce": &out.Once, "auto_search": &out.Search, "auto_rss": &out.Subscribe} {
 		if v := m[key]; v != nil && json.Unmarshal(v, dst) != nil {
 			return out, ErrSettings
 		}
