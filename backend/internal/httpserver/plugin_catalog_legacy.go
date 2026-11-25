@@ -168,6 +168,11 @@ func (s pluginService) pluginCommand(w http.ResponseWriter, r *http.Request, cmd
 	req.Body = http.NoBody
 	req.ContentLength = 0
 	if !s.dispatchPlugin(w, req, id, action) && !s.unavailablePlugin(w, req, id) {
+		if action == "install" || action == "uninstall" {
+			req.SetPathValue("id", id)
+			s.mutateUnmanaged(w, req, action)
+			return true
+		}
 		if _, ok := s.catalogReader(w, req); ok {
 			writeAPIError(w, 501, 501, "当前部署尚未接管此插件命令")
 		}

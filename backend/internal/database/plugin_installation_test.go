@@ -67,3 +67,54 @@ func TestPluginInstallationRequiresExistingDatabaseAndValidList(t *testing.T) {
 	}
 	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='UserInstalledPlugins'", invalid)
 }
+
+func TestScopedPluginLifecycleUsesCommittedMembershipAndOwnConfig(t *testing.T) {
+	db, _, cfg := initialFixture(t, "app: {}\n")
+	const settings = `{"large":900719925474099312345}`
+	if _, err := db.Exec(`INSERT INTO SYSTEM_DICT(TYPE,KEY,VALUE) VALUES('SystemConfig','plugin.扩展',?)`, settings); err != nil {
+		t.Fatal(err)
+	}
+	check := func(action, config string, args ...string) string {
+		t.Helper()
+		var out bytes.Buffer
+		if err := PluginInstallation(t.Context(), cfg, args, &out); err != nil {
+			t.Fatal(args, err)
+		}
+		var plan struct {
+			Action  string
+			Config  json.RawMessage
+			Receipt string
+		}
+		if json.Unmarshal(out.Bytes(), &plan) != nil || plan.Action != action || string(plan.Config) != config {
+			t.Fatal(args, out.String())
+		}
+		if (action == "keep") != (plan.Receipt == "") {
+			t.Fatal("unexpected receipt", action, plan.Receipt)
+		}
+		return plan.Receipt
+	}
+	check("keep", "null", "restore", "扩展")
+	first := check("start", settings, "apply", "install", "扩展", "idle")
+	second := check("start", settings, "restore", "扩展")
+	if err := PluginInstallation(t.Context(), cfg, []string{"ack", "扩展", first}, io.Discard); err == nil {
+		t.Fatal("stale acknowledgement cleared a newer start")
+	}
+	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='GoPluginLifecycle.扩展'", second)
+	if err := PluginInstallation(t.Context(), cfg, []string{"ack", "扩展", second}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	check("keep", "null", "apply", "install", "扩展", "running")
+	check("start", settings, "restore", "扩展")
+	check("stop", "null", "apply", "uninstall", "扩展", "running")
+	check("keep", "null", "apply", "uninstall", "扩展", "idle")
+	check("keep", "null", "apply", "install", "Jackett", "unavailable")
+	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='plugin.扩展'", settings)
+	if _, err := db.Exec(`UPDATE SYSTEM_DICT SET VALUE='{' WHERE KEY='plugin.扩展'`); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := PluginInstallation(t.Context(), cfg, []string{"apply", "install", "扩展", "idle"}, &out); err == nil || out.Len() != 0 {
+		t.Fatal("accepted unreadable configuration", err, out.String())
+	}
+	requireSchemaValue(t, db, "SELECT VALUE FROM SYSTEM_DICT WHERE KEY='UserInstalledPlugins'", `["Jackett"]`)
+}

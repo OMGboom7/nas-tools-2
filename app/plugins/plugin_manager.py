@@ -2,7 +2,7 @@ import hashlib
 import json
 import os.path
 import traceback
-from threading import Thread
+from threading import RLock, Thread
 
 import log
 from app.conf import SystemConfig
@@ -44,6 +44,8 @@ class PluginManager:
         if not os.path.exists(self.user_plugin_path):
             os.makedirs(self.user_plugin_path, exist_ok=True)
         self.system_plugin_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "modules")
+        self._locks = {}
+        self._retiring = {}
         self._external_modules = {}
         self._external_digests = {}
         if os.path.exists(self.user_plugin_path):
@@ -135,14 +137,16 @@ class PluginManager:
             if module_id == "MteamRssGen" and os.environ.get("NASTOOL_MTEAM_RSS_OWNER") == "go":
                 continue
             self._plugins[module_id] = plugin
-            # 未安装的跳过加载
-            if module_id not in user_plugins or self._go_indexer(module_id):
+            self._locks.setdefault(module_id, RLock())
+
+        for pid in self._plugins:
+            if pid not in user_plugins or self._go_indexer(pid):
                 continue
-            # 生成实例
-            self._running_plugins[module_id] = plugin()
-            # 初始化配置
-            self.reload_plugin(module_id)
-            log.info(f"加载插件：{plugin}")
+            try:
+                plan = json.loads(run_go_helper("plugin-installation", "restore", pid))
+                self._apply_plan(pid, plan)
+            except Exception:
+                log.error(f"插件未能加载：{pid}")
 
         # Keep the defining module of each discovered class for a later Go-only upgrade.
         sources = {}
@@ -165,39 +169,94 @@ class PluginManager:
         """
         运行插件
         """
-        if not self._running_plugins.get(pid):
-            return None
-        if not hasattr(self._running_plugins[pid], method):
-            return
         try:
-            return getattr(self._running_plugins[pid], method)(*args, **kwargs)
+            return self._call_instance(pid, method, *args, **kwargs)
         except Exception as err:
             print(str(err), traceback.format_exc())
 
+    def _call_instance(self, pid, method, *args, **kwargs):
+        lock = self._locks.get(pid)
+        if lock is None or pid not in self._running_plugins:
+            return None
+        with lock:
+            callback = getattr(self._running_plugins.get(pid), method, None)
+            if callback is not None:
+                return callback(*args, **kwargs)
+
     def reload_plugin(self, pid, require_running=False):
-        """
-        生效插件配置
-        """
-        plugin = self._running_plugins.get(pid)
-        if plugin is None:
+        lock = self._locks.get(pid)
+        if lock is None:
             return not require_running
-        if not hasattr(plugin, "init_config"):
-            return True
-        try:
-            plugin.init_config(self.get_plugin_config(pid))
-            log.debug(f"生效插件配置：{pid}")
-            return True
-        except Exception:
-            log.error(f"插件配置未能生效：{pid}")
-            return False
+        with lock:
+            plugin = self._running_plugins.get(pid)
+            if plugin is None:
+                return not require_running
+            try:
+                if hasattr(plugin, "init_config"):
+                    plugin.init_config(self.get_plugin_config(pid))
+                return True
+            except Exception:
+                log.error(f"插件配置未能生效：{pid}")
+                return False
+
+    def change_installation(self, pid, install, level):
+        plugin = self._plugins.get(pid)
+        required_level = getattr(plugin, "auth_level", 0) if plugin else 2
+        if level is None or required_level > level:
+            return {"code": 404, "msg": "未找到插件"}
+        operation = "install" if install else "uninstall"
+        if plugin is None:
+            # Keep installation records for unavailable classes and Go-owned plugins.
+            run_go_helper("plugin-installation", operation, pid)
+        else:
+            with self._locks[pid]:
+                if not self._active:
+                    return {"code": 1, "msg": "插件服务正在停止"}
+                try:
+                    self._finish_stop(pid)
+                except Exception:
+                    return {"code": 1, "msg": "插件未能停止，请重试"}
+                state = "running" if pid in self._running_plugins else "idle"
+                if self._go_indexer(pid):
+                    state = "unavailable"
+                plan = json.loads(run_go_helper("plugin-installation", "apply", operation, pid, state))
+                try:
+                    self._apply_plan(pid, plan)
+                except Exception:
+                    return {"code": 1, "msg": "安装状态已保存，插件未能启动或停止，请重试"}
+        return {"code": 0, "msg": "插件安装成功" if install else "插件卸载成功"}
+
+    def _apply_plan(self, pid, plan):
+        if plan["action"] == "stop":
+            self._retiring[pid] = self._running_plugins.pop(pid)
+            self._finish_stop(pid)
+        elif plan["action"] == "start":
+            instance = self._plugins[pid]()
+            try:
+                if hasattr(instance, "init_config"):
+                    instance.init_config(plan["config"] or {})
+            except Exception:
+                self._retiring[pid] = instance
+                self._finish_stop(pid)
+                raise
+            self._running_plugins[pid] = instance
+        if plan["receipt"]:
+            run_go_helper("plugin-installation", "ack", pid, plan["receipt"])
+
+    def _finish_stop(self, pid):
+        # Retain the instance until cleanup succeeds so retries cannot start a duplicate.
+        instance = self._retiring.get(pid)
+        if instance is not None:
+            if hasattr(instance, "stop_service"):
+                instance.stop_service()
+            del self._retiring[pid]
 
     def __stop_plugins(self):
-        """
-        停止所有插件
-        """
-        for plugin in self._running_plugins.values():
-            if hasattr(plugin, "stop_service"):
-                plugin.stop_service()
+        for pid, lock in list(self._locks.items()):
+            with lock:
+                if pid in self._running_plugins:
+                    self._retiring[pid] = self._running_plugins.pop(pid)
+                self._finish_stop(pid)
 
     def get_plugin_config(self, pid):
         """
@@ -212,31 +271,19 @@ class PluginManager:
         获取插件额外页面数据
         :return: 标题，页面内容，确定按钮响应函数
         """
-        if not self._running_plugins.get(pid):
-            return None, None, None
-        if not hasattr(self._running_plugins[pid], "get_page"):
-            return None, None, None
-        return self._running_plugins[pid].get_page()
+        return self._call_instance(pid, "get_page") or (None, None, None)
 
     def get_plugin_script(self, pid):
         """
         获取插件额外脚本
         """
-        if not self._running_plugins.get(pid):
-            return None
-        if not hasattr(self._running_plugins[pid], "get_script"):
-            return None
-        return self._running_plugins[pid].get_script()
+        return self._call_instance(pid, "get_script")
 
     def get_plugin_state(self, pid):
         """
         获取插件状态
         """
-        if not self._running_plugins.get(pid):
-            return None
-        if not hasattr(self._running_plugins[pid], "get_state"):
-            return None
-        return self._running_plugins[pid].get_state()
+        return self._call_instance(pid, "get_state")
 
     def save_plugin_config(self, pid, conf, auth_level=None, revision=None):
         """
@@ -262,9 +309,13 @@ class PluginManager:
             return ImageUtils.calculate_theme_color(icon_path)
         return ""
 
+    def _ordered_instances(self):
+        instances = self._running_plugins.copy()
+        return [(pid, instances[pid]) for pid in self._plugins if pid in instances]
+
     def get_plugins_conf(self, auth_level, selected=None):
         visible = [(pid, plugin, getattr(plugin, "auth_level", 0))
-                   for pid, plugin in self._running_plugins.items()
+                   for pid, plugin in self._ordered_instances()
                    if (selected is None or pid == selected) and getattr(plugin, "auth_level", 0) <= auth_level]
         external = {}
         if auth_level >= 2:
@@ -284,17 +335,20 @@ class PluginManager:
                 if pid not in revisions:
                     continue
                 entry.update(digest=external[pid]["digest"], revision=revisions[pid])
-            attributes = {"module_name": "name", "module_desc": "desc", "module_version": "version",
-                          "module_icon": "icon", "module_config_prefix": "prefix"}
-            detail = {key: getattr(plugin, attr) for attr, key in attributes.items() if hasattr(plugin, attr)}
-            if hasattr(plugin, "get_page"):
-                detail["page"], _, _ = plugin.get_page()
-            if hasattr(plugin, "get_script"):
-                detail["script"] = plugin.get_script()
-            detail.update(color=self.__get_plugin_color(plugin), fields=plugin.get_fields() or {},
-                          state=plugin.get_state())
-            entry["detail"] = detail
-            forms.append(entry)
+            with self._locks[pid]:
+                if self._running_plugins.get(pid) is not plugin:
+                    continue
+                attributes = {"module_name": "name", "module_desc": "desc", "module_version": "version",
+                              "module_icon": "icon", "module_config_prefix": "prefix"}
+                detail = {key: getattr(plugin, attr) for attr, key in attributes.items() if hasattr(plugin, attr)}
+                if hasattr(plugin, "get_page"):
+                    detail["page"], _, _ = plugin.get_page()
+                if hasattr(plugin, "get_script"):
+                    detail["script"] = plugin.get_script()
+                detail.update(color=self.__get_plugin_color(plugin), fields=plugin.get_fields() or {},
+                              state=plugin.get_state())
+                entry["detail"] = detail
+                forms.append(entry)
         payload = json.dumps({"selected": selected, "forms": forms}, allow_nan=False).encode()
         rows = json.loads(run_go_helper("plugin-editors", str(auth_level), payload=payload))
         return {row["id"]: row["detail"] for row in rows}
@@ -318,17 +372,20 @@ class PluginManager:
                 plugin = self._running_plugins.get(pid)
                 if plugin is None or declaration["level"] > auth_level:
                     continue
-                fields = plugin.get_fields()
-                page = plugin.get_page()[0] if hasattr(plugin, "get_page") else None
-                state = plugin.get_state()
-                running = state.lower() in ("true", "1") if isinstance(state, str) else bool(state)
-                if isinstance(fields, str):
-                    try:
-                        fields = json.loads(fields)
-                    except ValueError:
-                        fields = None
-                declaration["runtime"] = {"running": running, "configurable": isinstance(fields, (list, dict)) and bool(fields),
-                                          "hasPage": bool(page and str(page).strip())}
+                with self._locks[pid]:
+                    if self._running_plugins.get(pid) is not plugin:
+                        continue
+                    fields = plugin.get_fields()
+                    page = plugin.get_page()[0] if hasattr(plugin, "get_page") else None
+                    state = plugin.get_state()
+                    running = state.lower() in ("true", "1") if isinstance(state, str) else bool(state)
+                    if isinstance(fields, str):
+                        try:
+                            fields = json.loads(fields)
+                        except ValueError:
+                            fields = None
+                    declaration["runtime"] = {"running": running, "configurable": isinstance(fields, (list, dict)) and bool(fields),
+                                              "hasPage": bool(page and str(page).strip())}
         rows = run_go_helper("plugin-market", str(auth_level), payload=json.dumps(declarations).encode())
         return {row["id"]: row for row in json.loads(rows)}
 
@@ -343,7 +400,7 @@ class PluginManager:
         }]
         """
         ret_commands = []
-        for _, plugin in self._running_plugins.items():
+        for _, plugin in self._ordered_instances():
             if hasattr(plugin, "get_command"):
                 ret_commands.append(plugin.get_command())
         return ret_commands
@@ -359,8 +416,4 @@ class PluginManager:
             if method == "search":
                 return plugin_search(pid, *args, **kwargs)
             return None
-        if not self._running_plugins.get(pid):
-            return None
-        if not hasattr(self._running_plugins[pid], method):
-            return None
-        return getattr(self._running_plugins[pid], method)(*args, **kwargs)
+        return self._call_instance(pid, method, *args, **kwargs)

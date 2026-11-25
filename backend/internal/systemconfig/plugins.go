@@ -14,6 +14,10 @@ var PluginIDPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,79}$`)
 
 var ErrInstalledPluginState = errors.New("installed plugin state is invalid")
 
+const pluginLifecyclePrefix = "GoPluginLifecycle."
+
+func PluginLifecycleKey(id string) string { return pluginLifecyclePrefix + id }
+
 func DecodeInstalledPlugins(raw string) ([]string, error) {
 	installed := []string{}
 	if raw == "" {

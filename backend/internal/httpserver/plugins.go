@@ -68,6 +68,7 @@ type pluginSummary struct {
 	StateKnown         bool   `json:"stateKnown"`
 	Native             bool   `json:"native"`
 	ActionsAvailable   bool   `json:"actionsAvailable"`
+	scopedLifecycle    bool
 }
 
 type pluginsData struct {
@@ -117,6 +118,11 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 	if service.unavailablePluginRoute(response, request) {
 		return
 	}
+	service.mutateUnmanaged(response, request, action)
+}
+
+func (service pluginService) mutateUnmanaged(response http.ResponseWriter, request *http.Request, action string) {
+	install := action == "install"
 	token, ok := requireServiceToken(response, request)
 	if !ok {
 		return
@@ -136,11 +142,11 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 		writeAPIError(response, http.StatusNotFound, 404, "plugin not found")
 		return
 	}
-	if install && current.Installed {
+	if !current.scopedLifecycle && install && current.Installed {
 		writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": "plugin is already installed"})
 		return
 	}
-	if !install && !current.Installed {
+	if !current.scopedLifecycle && !install && !current.Installed {
 		writeAPIError(response, http.StatusConflict, 409, "plugin is not installed")
 		return
 	}
@@ -154,9 +160,12 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 	}
 	message := text(result["msg"])
 	if message == "" {
+		message = text(result["message"])
+	}
+	if message == "" {
 		message = "plugin operation completed"
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": message})
+	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": message, "msg": message})
 }
 
 // Bundled plugins use the same installation record as the market. External
@@ -205,18 +214,24 @@ func (service pluginService) pluginForMutation(ctx context.Context, response htt
 		if service.system != nil {
 			return service.localPluginForMutation(ctx, response, id)
 		}
-		return &pluginSummary{ID: id, Installed: truthy(entry["installed"])}, true
+		return &pluginSummary{ID: id, Installed: truthy(entry["installed"]), scopedLifecycle: legacyPayload(result)["scoped_lifecycle"] == true}, true
 	}
 	return nil, true
 }
 
 func (service pluginService) localPluginForMutation(ctx context.Context, response http.ResponseWriter, id string) (*pluginSummary, bool) {
-	ids, err := service.nativeMetadataInstalled(ctx)
+	key := systemconfig.PluginLifecycleKey(id)
+	state, err := service.system.ReadMany(ctx, []string{"UserInstalledPlugins", key})
 	if err != nil {
 		writeAPIError(response, 502, 502, "installed plugin state is unavailable")
 		return nil, false
 	}
-	return &pluginSummary{ID: id, Installed: slices.Contains(ids, id)}, true
+	ids, err := systemconfig.DecodeInstalledPlugins(state["UserInstalledPlugins"])
+	if err != nil {
+		writeAPIError(response, 502, 502, "installed plugin state is invalid")
+		return nil, false
+	}
+	return &pluginSummary{ID: id, Installed: slices.Contains(ids, id), scopedLifecycle: state[key] != ""}, true
 }
 
 func (service pluginService) legacyMarket(ctx context.Context, token string, withRuntime bool) (map[string]any, error) {
@@ -315,6 +330,10 @@ func handlePluginResult(response http.ResponseWriter, result map[string]any, err
 		return false
 	}
 	code := int(number(result["code"]))
+	if code == 404 {
+		writeAPIError(response, 404, 404, "未找到插件")
+		return false
+	}
 	if code == 409 {
 		writeAPIError(response, http.StatusConflict, 409, "插件状态或配置已变化，请刷新后重试")
 		return false

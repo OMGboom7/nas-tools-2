@@ -151,7 +151,7 @@ func validSnapshotKey(key string) bool {
 	if len(key) <= 160 {
 		return key != ""
 	}
-	for _, prefix := range []string{"plugin.", "GoExternalPluginFields."} {
+	for _, prefix := range []string{"plugin.", "GoExternalPluginFields.", pluginLifecyclePrefix} {
 		if id, ok := strings.CutPrefix(key, prefix); ok && ValidStoredPluginID(id) {
 			return true
 		}

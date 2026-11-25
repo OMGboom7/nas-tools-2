@@ -5282,29 +5282,22 @@ class WebAction:
         if not module_id:
             return {"code": -1, "msg": "参数错误"}
         try:
-            run_go_helper("plugin-installation", "install", module_id)
+            if not reload:
+                run_go_helper("plugin-installation", "install", module_id)
+                return {"code": 0, "msg": "插件安装成功"}
+            return PluginManager().change_installation(module_id, True, WebAction.plugin_user_level())
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):
             return {"code": -1, "msg": "插件安装记录未能保存"}
-        # 重新加载插件
-        if reload:
-            PluginManager().init_config()
-        return {"code": 0, "msg": "插件安装成功"}
 
     @staticmethod
     def uninstall_plugin(data):
-        """
-        卸载插件
-        """
         module_id = data.get("id")
         if not module_id:
             return {"code": -1, "msg": "参数错误"}
         try:
-            run_go_helper("plugin-installation", "uninstall", module_id)
+            return PluginManager().change_installation(module_id, False, WebAction.plugin_user_level())
         except (OSError, subprocess.SubprocessError, ValueError, TypeError):
             return {"code": -1, "msg": "插件卸载记录未能保存"}
-        # 重新加载插件
-        PluginManager().init_config()
-        return {"code": 0, "msg": "插件卸载功"}
 
     @staticmethod
     def plugin_user_level():
@@ -5324,7 +5317,7 @@ class WebAction:
             return {"code": 403, "msg": "用户未登录"}
         with_runtime = (data or {}).get("with_runtime") == "1"
         plugins = PluginManager().get_plugin_apps(level, with_runtime=with_runtime)
-        result = {"code": 0, "result": plugins, "statistic": {}}
+        result = {"code": 0, "result": plugins, "statistic": {}, "scoped_lifecycle": True}
         if with_runtime:
             result["runtime_included"] = True
         return result
