@@ -32,7 +32,7 @@ func (c *Client) Fetch(ctx context.Context, r Request) ([]byte, error) {
 	}
 	u, e := Resolve(c.Origin+"/", r.Path)
 	api := false
-	if e != nil && c.APIOrigin != "" {
+	if c.APIOrigin != "" && (e != nil || (r.JSON != nil && strings.HasPrefix(r.Path, c.APIOrigin+"/"))) {
 		u, e = Resolve(c.APIOrigin+"/", r.Path)
 		api = e == nil
 	}

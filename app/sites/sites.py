@@ -67,7 +67,9 @@ class Sites:
             if site_uses:
                 rss_enable = True if "D" in site_uses and site_rssurl else False
                 brush_enable = True if "S" in site_uses and site_rssurl and site_cookie else False
-                statistic_enable = True if "T" in site_uses and (site_rssurl or site_signurl) and site_cookie else False
+                address = site_signurl or site_rssurl
+                stats_credential = site_cookie or (address and MteamUtils.is_site(address) and site_api_key)
+                statistic_enable = bool("T" in site_uses and address and stats_credential)
                 uses.append("D") if rss_enable else None
                 uses.append("S") if brush_enable else None
                 uses.append("T") if statistic_enable else None

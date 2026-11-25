@@ -259,3 +259,69 @@ func TestSiteStatisticsRemoteGrantWorksWithoutSigninPlugin(t *testing.T) {
 		t.Fatal("grant itself dispatched refresh")
 	}
 }
+
+func TestMTeamStatisticsRefreshWithAPIKeyPersistsOnlyCompletePages(t *testing.T) {
+	f, api := newStatsFixture(t)
+	site := f.site
+	site.SignURL, site.Cookie, site.APIKey, site.Note = "https://kp.m-team.info/login", "", "fixture-key", `{"chrome":"Y","ua":"fixture-agent"}`
+	var err error
+	f.site, err = f.api.sites.Upsert(t.Context(), site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fail atomic.Bool
+	var empty atomic.Bool
+	f.api.transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/favicon.ico" {
+			if r.Host != "kp.m-team.info" || r.Header.Get("X-API-KEY") != "" || r.Header.Get("Cookie") != "" {
+				t.Error("unexpected icon credentials")
+			}
+			return jsonResponse(r, ""), nil
+		}
+		if r.Host != "api.m-team.info" || r.Method != "POST" || r.Header.Get("X-API-KEY") != "fixture-key" || r.Header.Get("Cookie") != "" || r.UserAgent() != "fixture-agent" {
+			t.Error("unexpected API request")
+		}
+		switch r.URL.Path {
+		case "/api/member/profile":
+			return jsonResponse(r, `{"data":{"username":"用户","id":42,"role":10,"memberCount":{"uploaded":"9007199254740993","downloaded":7,"bonus":"9.25"}}}`), nil
+		case "/api/member/getUserTorrentList":
+			if empty.Load() {
+				return jsonResponse(r, `{"data":{"total":0,"totalPages":0,"data":[]}}`), nil
+			}
+			var q struct{ PageNumber int }
+			if json.NewDecoder(r.Body).Decode(&q) != nil {
+				t.Error("missing page")
+			}
+			if q.PageNumber == 1 {
+				return jsonResponse(r, `{"data":{"total":2,"totalPages":2,"data":[{"torrent":{"size":31,"status":{"seeders":3}}}]}}`), nil
+			}
+			if q.PageNumber == 2 {
+				if fail.Load() {
+					return jsonResponse(r, `{"code":"FAILED","data":{"total":2,"totalPages":2,"data":[{"torrent":{"size":99,"status":{"seeders":8}}}]}}`), nil
+				}
+				return jsonResponse(r, `{"data":{"total":2,"totalPages":2,"data":[{"torrent":{"size":42,"status":{"seeders":7}}}]}}`), nil
+			}
+		}
+		t.Error("unexpected page or browser request")
+		return nil, io.EOF
+	})
+	for i, expected := range []string{"complete", "failed", "complete"} {
+		fail.Store(i == 1)
+		empty.Store(i == 2)
+		j := statsWait(t, api, statsRefresh(t, f, "mteam-"+strconv.Itoa(i), false).ID)
+		if j.State != expected {
+			t.Fatal(j)
+		}
+		origin := "https://kp.m-team.info"
+		s, err := api.store.Snapshot(t.Context(), origin)
+		seeds, se := api.store.Seeds(t.Context(), origin)
+		history, he := api.store.History(t.Context(), origin, 1)
+		size, count := int64(73), 2
+		if i == 2 {
+			size, count = 0, 0
+		}
+		if err != nil || se != nil || he != nil || len(history) != 1 || history[0].SeedingSize != size || s.Username != "用户" || s.Upload != 9007199254740993 || s.SeedingSize != size || len(seeds) != count || (count == 2 && seeds[1] != [2]int64{7, 42}) {
+			t.Fatal(s, seeds, history, err, se, he)
+		}
+	}
+}

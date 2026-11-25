@@ -14,13 +14,28 @@ import (
 // MTeamFeedOrigin accepts existing sign-in URLs while keeping the API key
 // bound to the same supported M-Team domains as the native search provider.
 func MTeamFeedOrigin(signURL string) (string, bool) {
-	u, err := url.Parse(signURL)
-	if err != nil || u.User != nil {
+	front, _, err := mteamSiteURLs(signURL)
+	if err != nil {
 		return "", false
 	}
-	origin := (&url.URL{Scheme: u.Scheme, Host: u.Host}).String()
-	_, _, err = mteamBase(origin)
-	return origin, err == nil
+	return front.String(), true
+}
+
+// MTeamAPIOrigin derives the credential destination from a saved tracker URL.
+func MTeamAPIOrigin(raw string) (string, bool) {
+	_, api, err := mteamSiteURLs(raw)
+	if err != nil {
+		return "", false
+	}
+	return api.String(), true
+}
+
+func mteamSiteURLs(raw string) (*url.URL, *url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil {
+		return nil, nil, ErrConfig
+	}
+	return mteamBase((&url.URL{Scheme: u.Scheme, Host: u.Host}).String())
 }
 
 type MTeamFeedItem struct {

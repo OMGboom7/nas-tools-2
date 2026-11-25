@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
@@ -272,17 +273,13 @@ func (api *siteStatisticsAPI) refresh(ctx context.Context, j sitestats.Job, site
 	if ua == "" {
 		ua = defaultSiteUserAgent
 	}
-	apiOrigin := ""
-	if i := strings.Index(strings.ToLower(u.Hostname()), "m-team"); i >= 0 {
-		apiURL := *u
-		host := "api." + u.Hostname()[i:]
-		if port := u.Port(); port != "" {
-			host += ":" + port
+	_, isMTeam := builtinindexer.MTeamAPIOrigin(defaultString(site.SignURL, site.RSSURL))
+	if !isMTeam {
+		if _, knownHost := builtinindexer.MTeamAPIOrigin("https://" + u.Hostname()); knownHost {
+			return sitestats.ErrOrigin
 		}
-		apiURL.Host = host
-		apiOrigin = apiURL.String()
 	}
-	client := &sitestats.Client{Origin: origin, APIOrigin: apiOrigin, Cookie: site.Cookie, APIKey: site.APIKey, UserAgent: ua, Transport: transport, Renderer: api.login.browser, Emulate: note["chrome"] == "Y" || truthy(note["chrome"]), ReadMessages: j.ReadMessages, Guard: func(ctx context.Context) error { return api.valid(ctx, j) }, Before: func(ctx context.Context, r sitestats.Request) error {
+	client := &sitestats.Client{Origin: origin, Cookie: site.Cookie, APIKey: site.APIKey, UserAgent: ua, Transport: transport, Renderer: api.login.browser, Emulate: note["chrome"] == "Y" || truthy(note["chrome"]), ReadMessages: j.ReadMessages, Guard: func(ctx context.Context) error { return api.valid(ctx, j) }, Before: func(ctx context.Context, r sitestats.Request) error {
 		if e := api.valid(ctx, j); e != nil {
 			return e
 		}
@@ -300,22 +297,24 @@ func (api *siteStatisticsAPI) refresh(ctx context.Context, j sitestats.Job, site
 			return nil
 		})
 	}}
-	home, e := client.Home(ctx)
-	if e != nil {
-		return e
-	}
-	if strings.Contains(strings.ToLower(u.Hostname()), "hhanclub") {
-		if id := siteClaimUserID(string(home)); id != "" {
-			home, e = client.Fetch(ctx, sitestats.Request{Path: "userdetails.php?id=" + id})
-			if e != nil {
-				return e
+	var v sitestats.Snapshot
+	if isMTeam {
+		v, e = sitestats.MTeamStatistics(ctx, client, site.Name)
+	} else {
+		home, err := client.Home(ctx)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(strings.ToLower(u.Hostname()), "hhanclub") {
+			if id := siteClaimUserID(string(home)); id != "" {
+				home, err = client.Fetch(ctx, sitestats.Request{Path: "userdetails.php?id=" + id})
+				if err != nil {
+					return err
+				}
 			}
 		}
+		v, e = sitestats.Parse(ctx, client, home, sitestats.Options{Site: site.Name, URL: origin, ReadMessages: j.ReadMessages})
 	}
-	if apiOrigin != "" {
-		home = append(home, []byte(" M-Team")...)
-	}
-	v, e := sitestats.Parse(ctx, client, home, sitestats.Options{Site: site.Name, URL: origin, ReadMessages: j.ReadMessages, MTeamAPI: apiOrigin})
 	if e != nil {
 		return e
 	}

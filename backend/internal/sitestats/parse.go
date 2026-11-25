@@ -15,7 +15,8 @@ import (
 func Parse(ctx context.Context, f Fetcher, home []byte, o Options) (Snapshot, error) {
 	page := string(home)
 	s := Snapshot{Site: o.Site, URL: o.URL, Schema: Identify(page), Seeds: [][2]int64{}, Messages: []Message{}}
-	if s.Schema == "Mteam" {
+	if o.MTeamAPI != "" || s.Schema == "Mteam" {
+		s.Schema = "Mteam"
 		return parseMTeam(ctx, f, s, o)
 	}
 	if len(nodes(page, `input[type="password"]`)) > 0 {

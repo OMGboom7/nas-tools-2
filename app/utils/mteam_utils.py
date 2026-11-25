@@ -2,7 +2,6 @@ import json
 import subprocess
 from urllib.parse import urlparse
 
-from app.utils import RequestUtils
 from config import Config, run_go_helper
 
 
@@ -24,13 +23,13 @@ class MteamUtils:
         return host in ("kp.m-team.info", "m-team.cc", "m-team.io") or host.endswith((".m-team.cc", ".m-team.io"))
 
     @staticmethod
-    def _inspect(command, url, key, ua, proxy):
+    def _inspect(command, url, key, ua, proxy, timeout=20):
         proxy_url = (Config().get_proxies() or {}).get("https") if proxy else None
         if proxy and not proxy_url:
             return {}
         query = {"url": url, "key": key, "ua": ua or Config().get_ua(), "proxy": proxy_url}
         try:
-            reply = run_go_helper(command, payload=json.dumps(query).encode(), timeout=20)
+            reply = run_go_helper(command, payload=json.dumps(query).encode(), timeout=timeout)
             return json.loads(reply)
         except (OSError, ValueError, subprocess.SubprocessError):
             return {}
@@ -69,13 +68,6 @@ class MteamUtils:
         return None
 
     @staticmethod
-    def buildRequestUtils(cookies=None, api_key=None, headers=None, proxies=False, content_type=None, accept_type=None, session=None, referer=None, timeout=30):
-        if api_key:
-            # use api key
-            return RequestUtils(headers=headers, api_key=api_key, timeout=timeout, referer=referer,
-                                content_type=content_type, session=session, accept_type=accept_type,
-                                proxies=Config().get_proxies() if proxies else None)
-        return RequestUtils(headers=headers, cookies=cookies, timeout=timeout, referer=referer,
-                            content_type=content_type, session=session, accept_type=accept_type,
-                            proxies=Config().get_proxies() if proxies else None)
-
+    def statistics(url, key, ua, proxy):
+        # Go limits each request and the number of pages in the complete snapshot.
+        return MteamUtils._inspect("mteam-statistics", url, key, ua, proxy, timeout=None)

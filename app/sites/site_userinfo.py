@@ -3,7 +3,6 @@ from datetime import datetime
 from multiprocessing.dummy import Pool as ThreadPool
 from threading import Lock
 import re
-import json
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -12,7 +11,8 @@ import log
 from app.helper import ChromeHelper, SubmoduleHelper, DbHelper
 from app.message import Message
 from app.sites.sites import Sites
-from app.utils import RequestUtils, ExceptionUtils, StringUtils
+from app.sites.siteuserinfo.mteam_project import MteamSiteUserInfo
+from app.utils import RequestUtils, ExceptionUtils, StringUtils, MteamUtils
 from app.utils.commons import singleton
 from config import Config
 
@@ -57,11 +57,17 @@ class SiteUserInfo(object):
         return None
 
     def build(self, url, site_id, site_name,
-              site_cookie=None, ua=None, emulate=None, proxy=False):
+              site_cookie=None, ua=None, emulate=None, proxy=False, api_key=None):
+        if MteamUtils.is_site(url):
+            if self.sites.check_ratelimit(site_id):
+                return None
+            info = MteamSiteUserInfo(site_name, StringUtils.get_base_url(url), None, None, ua=ua, proxy=proxy)
+            info.api_key = api_key
+            return info
         if not site_cookie:
             return None
         session = requests.Session()
-        log.debug(f"【Sites】站点 {site_name} url={url} site_cookie={site_cookie} ua={ua}")
+        log.debug(f"【Sites】站点 {site_name} url={url} ua={ua}")
 
         # 站点流控
         if self.sites.check_ratelimit(site_id):
@@ -192,7 +198,7 @@ class SiteUserInfo(object):
                                         site_cookie=site_cookie,
                                         ua=ua,
                                         emulate=chrome,
-                                        proxy=proxy)
+                                        proxy=proxy, api_key=site_info.get("api_key") or "")
             log.info(f"【Sites】[{site_name}] Site user info built: {'OK' if site_user_info else 'Failed'}")
             if site_user_info:
                 log.debug(f"【Sites】站点 {site_name} 开始以 {site_user_info.site_schema()} 模型解析")

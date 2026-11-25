@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
@@ -23,7 +24,10 @@ func nativeSiteRecord(item siteconfig.Site) (map[string]any, error) {
 	}
 	rss := strings.Contains(item.Include, "D") && item.RSSURL != ""
 	brush := strings.Contains(item.Include, "S") && item.RSSURL != "" && item.Cookie != ""
-	statistic := strings.Contains(item.Include, "T") && (item.SignURL != "" || item.RSSURL != "") && item.Cookie != ""
+	address := defaultString(item.SignURL, item.RSSURL)
+	_, mteam := builtinindexer.MTeamAPIOrigin(address)
+	authenticated := item.Cookie != "" || (mteam && strings.TrimSpace(item.APIKey) != "")
+	statistic := strings.Contains(item.Include, "T") && address != "" && authenticated
 	uses := make([]any, 0, 3)
 	for _, flag := range []struct {
 		code    string

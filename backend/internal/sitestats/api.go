@@ -2,6 +2,7 @@ package sitestats
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
@@ -73,6 +74,26 @@ func parseTNode(ctx context.Context, f Fetcher, s Snapshot, page string, o Optio
 	return s, ErrPage
 }
 
+// Older account and seeding responses may omit code. An explicit failure
+// cannot be used even when the provider also returns populated data.
+func mteamData(body []byte) (map[string]any, error) {
+	if !json.Valid(body) {
+		return nil, ErrResponse
+	}
+	v, err := decode(body)
+	if err != nil {
+		return nil, err
+	}
+	if code, exists := v["code"]; exists && str(code) != "0" {
+		return nil, ErrResponse
+	}
+	data := object(v["data"])
+	if data == nil {
+		return nil, ErrResponse
+	}
+	return data, nil
+}
+
 var mteamRoles = map[string]string{"1": "User", "2": "Power User", "3": "Elite User", "4": "Crazy User", "5": "Insane User", "6": "Veteran User", "7": "Extreme User", "8": "Ultimate User", "9": "Nexus Master", "10": "VIP", "17": "Offer memberStaff", "18": "bet memberStaff", "12": "巡查", "11": "職人", "13": "總版", "14": "總管", "15": "維護開發員", "16": "站長"}
 
 func parseMTeam(ctx context.Context, f Fetcher, s Snapshot, o Options) (Snapshot, error) {
@@ -84,13 +105,14 @@ func parseMTeam(ctx context.Context, f Fetcher, s Snapshot, o Options) (Snapshot
 	if e != nil {
 		return s, e
 	}
-	v, e := decode(b)
+	m, e := mteamData(b)
 	if e != nil {
 		return s, e
 	}
-	m := object(v["data"])
 	count := object(m["memberCount"])
-	if !validIntegers(count, "uploaded", "downloaded") || str(m["id"]) == "" || str(m["username"]) == "" {
+	upload, uploadOK := mteamTrafficBytes(count["uploaded"])
+	download, downloadOK := mteamTrafficBytes(count["downloaded"])
+	if !uploadOK || !downloadOK || str(m["id"]) == "" || strings.TrimSpace(str(m["username"])) == "" {
 		return s, ErrLogin
 	}
 	s.UserID = str(m["id"])
@@ -98,31 +120,37 @@ func parseMTeam(ctx context.Context, f Fetcher, s Snapshot, o Options) (Snapshot
 	s.Level = mteamRoles[str(m["role"])]
 	s.Joined = date(str(m["createdDate"]))
 	s.LastSeen = date(str(object(m["memberStatus"])["lastBrowse"]))
-	s.Upload = integer(count["uploaded"])
-	s.Download = integer(count["downloaded"])
+	s.Upload = upload
+	s.Download = download
 	s.Ratio = number(str(count["shareRate"]))
 	s.Bonus = number(str(count["bonus"]))
 	if s.Download > 0 && s.Ratio == 0 {
 		s.Ratio = float64(s.Upload) / float64(s.Download)
 	}
-	var total int64 = -1
+	var total, pages int64
 	for page := 1; page <= MaxPages; page++ {
 		b, e = f.Fetch(ctx, Request{Path: base + "/api/member/getUserTorrentList", JSON: map[string]any{"pageNumber": page, "pageSize": 200, "userid": s.UserID, "type": "SEEDING"}})
 		if e != nil {
 			return s, e
 		}
-		v, e = decode(b)
+		m, e = mteamData(b)
 		if e != nil {
 			return s, e
 		}
-		m = object(v["data"])
 		torrents, ok := m["data"].([]any)
 		if !ok || !validIntegers(m, "total", "totalPages") {
 			return s, ErrResponse
 		}
-		if total < 0 {
-			total = integer(m["total"])
-		} else if total != integer(m["total"]) {
+		if page == 1 {
+			total, pages = integer(m["total"]), integer(m["totalPages"])
+			if pages > MaxPages || total > MaxSeeds {
+				return s, ErrPage
+			}
+		}
+		if total != integer(m["total"]) || pages != integer(m["totalPages"]) || len(torrents) > 200 || (pages == 0 && total != 0) {
+			return s, ErrPage
+		}
+		if _, ok := m["pageNumber"]; ok && (!validIntegers(m, "pageNumber") || integer(m["pageNumber"]) != int64(page)) {
 			return s, ErrResponse
 		}
 		for _, raw := range torrents {
@@ -137,10 +165,13 @@ func parseMTeam(ctx context.Context, f Fetcher, s Snapshot, o Options) (Snapshot
 			}
 		}
 		if s.Seeding == total {
+			if pages > 0 && int64(page) != pages {
+				return s, ErrPage
+			}
 			s.SeedDetailsKnown = true
 			return s, nil
 		}
-		if len(torrents) == 0 || s.Seeding > total || int64(page) >= integer(m["totalPages"]) {
+		if len(torrents) == 0 || s.Seeding > total || int64(page) >= pages {
 			return s, ErrResponse
 		}
 	}

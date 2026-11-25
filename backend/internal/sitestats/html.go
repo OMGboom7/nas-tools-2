@@ -115,10 +115,12 @@ func integer(v any) int64 {
 	return i
 }
 
+var unsignedDigits = regexp.MustCompile(`^\d+$`)
+
 func validIntegers(m map[string]any, keys ...string) bool {
 	for _, k := range keys {
 		s := str(m[k])
-		if !regexp.MustCompile(`^\d+$`).MatchString(s) {
+		if !unsignedDigits.MatchString(s) {
 			return false
 		}
 		if _, e := strconv.ParseInt(s, 10, 64); e != nil {
@@ -143,7 +145,22 @@ func addSeed(s *Snapshot, peers, bytes int64) error {
 var sizePattern = regexp.MustCompile(`(?i)([\d,]+(?:\.\d+)?)\s*([KMGTPE]?)(?:i?B)?`)
 
 func size(s string) (int64, bool) {
-	m := sizePattern.FindStringSubmatch(strings.TrimSpace(s))
+	return sizeBytes(sizePattern.FindStringSubmatch(strings.TrimSpace(s)), false)
+}
+
+// M-Team historically also returned formatted account traffic. Accept the
+// complete value and round fractional bytes as the old scheduler did.
+var mteamTrafficPattern = regexp.MustCompile(`(?i)^(\d+(?:,\d{3})*(?:\.\d+)?)\s*([KMGTP]?)(?:i?B)?$`)
+
+func mteamTrafficBytes(v any) (int64, bool) {
+	raw := strings.TrimSpace(str(v))
+	if len(raw) > 64 {
+		return 0, false
+	}
+	return sizeBytes(mteamTrafficPattern.FindStringSubmatch(raw), true)
+}
+
+func sizeBytes(m []string, round bool) (int64, bool) {
 	if len(m) < 3 {
 		return 0, false
 	}
@@ -159,7 +176,14 @@ func size(s string) (int64, bool) {
 		return 0, false
 	}
 	r.Mul(r, new(big.Rat).SetInt(new(big.Int).Lsh(big.NewInt(1), uint(10*p))))
-	n := new(big.Int).Quo(r.Num(), r.Denom())
+	n, remainder := new(big.Int), new(big.Int)
+	n.QuoRem(r.Num(), r.Denom(), remainder)
+	if round {
+		cmp := remainder.Lsh(remainder, 1).Cmp(r.Denom())
+		if cmp > 0 || (cmp == 0 && n.Bit(0) == 1) {
+			n.Add(n, big.NewInt(1))
+		}
+	}
 	if !n.IsInt64() {
 		return 0, false
 	}
