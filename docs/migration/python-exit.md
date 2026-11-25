@@ -35,6 +35,8 @@ make python-exit-status
 
 ## 当前基线
 
+2026-11-25 首页媒体库容量统计已接入 Windows 卷查询。Windows x64 完整 Go 服务及容量测试程序、Linux x64 完整 Go 服务均已在本机交叉编译成功。macOS 已验证同卷多个路径去重、缺失路径和首页兼容接口。发行包流程会在 Windows 和 Linux 运行数据库与容量测试并编译完整 Go 服务。Windows 实机上的卷、网络共享和服务启动仍待验收。[容量实现](../../backend/internal/diskusage) · [发行包工作流](../../.github/workflows/build-package.yml)
+
 2026-11-25 默认 React 过渡镜像由 Go 接管磁盘空间释放插件的安装、配置、查重、结果和卸载。容器中的两个服务读取同一个执行者选择，旧插件管理器跳过该类的初始化和重载。Go 复用独立部署的任务记录和文件锁，过渡模式仅启动此项查重任务。实际 Go 进程通过旧客户端安装、React 配置接口提交“仅查重”，重启后从原任务读回一对重复文件，两份文件仍有独立的文件编号；模拟 Flask 收到 0 次请求。另用原插件发现方法验证了切回旧模式后仍加载该类。实际容器仍待启动验收。[容器部署说明](react-go.md) · [插件回归](../../backend/internal/httpserver/disk_space_test.go)
 
 2026-11-25 源码启动、单文件发行包和容器的旧 Web 服务现在都在加载应用之前调用同一套 Go 数据库初始化。源码安装先运行 `make db-build`，发行包从包内运行对应平台的程序。安装目录中额外提供的 SQL 仍沿用原执行记录。容器和发行包按整版更新，源码更新后须重新构建初始化程序。仓库移除了 Alembic 的 15 个版本脚本、运行入口、依赖和旧页面重置版本号的操作。[共享初始化入口](../../backend/internal/dbinit/init.go) · [发行包构建](../../.github/workflows/build-package.yml)

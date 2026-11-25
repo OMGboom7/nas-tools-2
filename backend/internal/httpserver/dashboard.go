@@ -11,10 +11,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/diskusage"
 	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
 )
 
@@ -302,7 +302,7 @@ func nativeLibrarySpace(store *config.Store) (map[string]any, error) {
 		return nil, err
 	}
 	media := objectValue(snapshot["media"])
-	seen := map[uint64]bool{}
+	seen := map[string]bool{}
 	var total, free float64
 	for _, key := range []string{"movie_path", "tv_path", "anime_path"} {
 		paths := slice(media[key])
@@ -314,28 +314,19 @@ func nativeLibrarySpace(store *config.Store) (map[string]any, error) {
 			if path == "" {
 				continue
 			}
-			info, err := os.Stat(path)
+			space, err := diskusage.Read(path)
 			if os.IsNotExist(err) {
 				continue
 			}
 			if err != nil {
 				return nil, err
 			}
-			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok {
-				return nil, fmt.Errorf("unsupported file system for %q", path)
-			}
-			device := uint64(stat.Dev)
-			if seen[device] {
+			if seen[space.Volume] {
 				continue
 			}
-			var volume syscall.Statfs_t
-			if err := syscall.Statfs(path, &volume); err != nil {
-				return nil, err
-			}
-			seen[device] = true
-			total += float64(volume.Blocks) * float64(volume.Bsize) / (1 << 30)
-			free += float64(volume.Bavail) * float64(volume.Bsize) / (1 << 30)
+			seen[space.Volume] = true
+			total += space.TotalBytes / (1 << 30)
+			free += space.AvailableBytes / (1 << 30)
 		}
 	}
 	if total == 0 {

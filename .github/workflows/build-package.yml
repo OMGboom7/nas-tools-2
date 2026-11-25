@@ -28,13 +28,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10.11'
-      - name: Build and test database initializer
+      - name: Build server and test platform storage
         working-directory: backend
         shell: bash
         run: |
           mkdir -p bin
+          go build -trimpath ./cmd/server
           go build -trimpath -ldflags="-s -w" -o bin/ ./cmd/nas-tools-db
-          go test ./internal/dbinit
+          go test ./internal/dbinit ./internal/diskusage
       - name: Install package dependencies
         shell: bash
         run: |
