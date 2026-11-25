@@ -26,7 +26,8 @@ RUN mkdir -p /out/licenses \
     && cp "$(go list -m -f '{{.Dir}}' github.com/gobwas/pool)/LICENSE" /out/licenses/gobwas-pool-LICENSE
 
 FROM alpine:3.24
-RUN apk add --no-cache ca-certificates tzdata ffmpeg rclone aria2 chromium \
+RUN apk add --no-cache ca-certificates tzdata ffmpeg whisper.cpp rclone aria2 chromium \
+    && test -x /usr/bin/whisper-cli \
     && test -x /usr/bin/chromium \
     && test -u /usr/lib/chromium/chrome-sandbox \
     && addgroup -S -g 911 nt \

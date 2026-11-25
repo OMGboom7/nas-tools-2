@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -138,6 +139,12 @@ func TestPluginCommandReadsUseNativeCatalogAndInstalledState(t *testing.T) {
 				row, found := out.Result[id]
 				if found != (token == admin) {
 					t.Fatal(cmd, id, found)
+				}
+				if found && route == "list" && id == autoSubID && organization.CopySupported {
+					if row["state"] != false || row["stateKnown"] != true || row["native"] != true || row["config"] == nil {
+						t.Fatal(row)
+					}
+					continue
 				}
 				if found && route == "list" && (row["state"] != nil || row["stateKnown"] != false || row["native"] != false || row["installed"] != true || row["actionsAvailable"] != false || row["config"] != nil) {
 					t.Fatal(row)

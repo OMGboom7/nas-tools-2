@@ -20,14 +20,17 @@ func startDiskSpace(ctx context.Context, api *diskSpaceAPI) func() {
 	if api == nil {
 		return func() {}
 	}
+	return startOneShotWorker(ctx, "磁盘空间释放", api.tick)
+}
+func startOneShotWorker(ctx context.Context, name string, tick func(context.Context, time.Time) error) func() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
-			if err := api.tick(ctx, time.Now()); err != nil && ctx.Err() == nil {
-				slog.Warn("磁盘空间释放任务暂未完成", "error", err)
+			if err := tick(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				slog.Warn(name+"任务暂未完成", "error", err)
 			}
 			select {
 			case <-ctx.Done():

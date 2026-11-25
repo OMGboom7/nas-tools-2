@@ -155,27 +155,8 @@ func (api *diskSpaceAPI) configure(_ context.Context, actor string, raw map[stri
 			return nil, err
 		}
 		s = diskRun{ID: id, Actor: actor, Status: "queued"}
-		seen := map[string]bool{}
-		for _, line := range strings.Split(c.Paths, "\n") {
-			path := strings.TrimSpace(line)
-			if path == "" {
-				continue
-			}
-			if !filepath.IsAbs(path) || filepath.Clean(path) == "/" {
-				return nil, organization.ErrPath
-			}
-			root, e := organization.FreezeDiskRoot(path)
-			if e != nil {
-				s.Unavailable = append(s.Unavailable, path)
-				continue
-			}
-			if !seen[root.Identity] {
-				s.Roots = append(s.Roots, root)
-				seen[root.Identity] = true
-			}
-		}
-		if len(s.Roots)+len(s.Unavailable) == 0 {
-			return nil, organization.ErrPath
+		if err := freezeOneShotRoots(&s, c.Paths); err != nil {
+			return nil, err
 		}
 		v["run_now"] = json.RawMessage("false")
 		b, err = json.Marshal(v)
@@ -367,4 +348,30 @@ func (api *diskSpaceAPI) tick(ctx context.Context, _ time.Time) error {
 		return err
 	}
 	return finish(last)
+}
+
+func freezeOneShotRoots(s *diskRun, paths string) error {
+	seen := map[string]bool{}
+	for _, line := range strings.Split(paths, "\n") {
+		path := strings.TrimSpace(line)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) || filepath.Clean(path) == "/" {
+			return organization.ErrPath
+		}
+		root, e := organization.FreezeDiskRoot(path)
+		if e != nil {
+			s.Unavailable = append(s.Unavailable, path)
+			continue
+		}
+		if !seen[root.Identity] {
+			s.Roots = append(s.Roots, root)
+			seen[root.Identity] = true
+		}
+	}
+	if len(s.Roots)+len(s.Unavailable) == 0 {
+		return organization.ErrPath
+	}
+	return nil
 }

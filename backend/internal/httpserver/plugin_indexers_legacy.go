@@ -49,6 +49,14 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.autoSub != nil && id == autoSubID {
+			if action {
+				writeAPIError(w, 400, 400, "字幕结果只支持查看")
+			} else {
+				s.autoSub.page(w, probe, s, true)
+			}
+			return
+		}
 		if s.disk != nil && id == diskID {
 			if action {
 				writeAPIError(w, 400, 400, "查重结果只支持查看")

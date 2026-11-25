@@ -27,7 +27,16 @@ type LibraryMedia struct {
 	InputPath string
 	Input     LibraryNode
 }
+
+// AutoSubtitleLibrary scans individual clips for sibling SRT files, including
+// tracks in a Blu-ray STREAM directory. Only this in-process constructor opts
+// in; serialized scraper jobs keep their existing whole-disc semantics.
+func AutoSubtitleLibrary(root DiskRoot) LibraryDefinition {
+	return LibraryDefinition{subtitleFiles: true, Root: LibraryRoot{ID: root.Identity, Identity: root.Identity, Path: root.Path, Kind: "movie"}, Selection: ".", Mode: "no_force"}
+}
+
 type LibraryDefinition struct {
+	subtitleFiles                                       bool
 	OpenSubtitle                                        *OpenSubtitleLibrary `json:"openSubtitle,omitempty"`
 	Remote                                              *remotestore.Binding `json:",omitempty"`
 	RemoteApproval                                      *RemoteApproval      `json:",omitempty"`

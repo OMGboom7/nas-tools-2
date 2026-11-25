@@ -29,9 +29,11 @@ func captureLibraryMedia(d LibraryDefinition, path string) (LibraryMedia, error)
 	m := LibraryMedia{Path: path}
 	// Whole-disc intake has its own frozen directory proof. Bulk library
 	// rewriting must not reinterpret its STREAM clips as standalone movies.
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if strings.EqualFold(part, "BDMV") || strings.EqualFold(part, "CERTIFICATE") {
-			return m, ErrMode
+	if !d.subtitleFiles {
+		for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+			if strings.EqualFold(part, "BDMV") || strings.EqualFold(part, "CERTIFICATE") {
+				return m, ErrMode
+			}
 		}
 	}
 	if FileKind(path) != "media" {
@@ -206,6 +208,19 @@ func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, re
 	if m.Disc != nil {
 		return libraryReadDiscNFO(ctx, d, m, relative)
 	}
+	return readLocalLibraryMetadata(ctx, d, m, relative, 2<<20)
+}
+func ReadAutoSubtitle(ctx context.Context, d LibraryDefinition, m LibraryMedia, name string) ([]byte, error) {
+	relative, err := LibraryTarget(d, m, "autosub", name)
+	if err != nil {
+		return nil, err
+	}
+	if err := VerifyLibraryMedia(ctx, d, m); err != nil {
+		return nil, err
+	}
+	return readLocalLibraryMetadata(ctx, d, m, relative, 16<<20)
+}
+func readLocalLibraryMetadata(ctx context.Context, d LibraryDefinition, m LibraryMedia, relative string, limit int64) ([]byte, error) {
 	r, err := anchoredRoot(d.Root.Path, d.Root.Identity)
 	if err != nil {
 		return nil, err
@@ -220,7 +235,7 @@ func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, re
 	if err != nil {
 		return nil, err
 	}
-	if k != unix.S_IFREG || before.Size > 2<<20 {
+	if k != unix.S_IFREG || before.Size > limit {
 		return nil, ErrPath
 	}
 	f, err := openRegular(p, n)
@@ -232,8 +247,8 @@ func LibraryReadNFO(ctx context.Context, d LibraryDefinition, m LibraryMedia, re
 	if err != nil || Identity(info) != before.Identity {
 		return nil, ErrState
 	}
-	b, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: f}, (2<<20)+1))
-	if err != nil || len(b) > 2<<20 {
+	b, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: f}, limit+1))
+	if err != nil || int64(len(b)) > limit {
 		return nil, ErrLimit
 	}
 	after, _, err := libraryNode(p, n)
@@ -248,7 +263,7 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 	}
 	result := LibraryScan{Files: []LibraryMedia{}}
 	base := filepath.Base(d.Root.Path)
-	if strings.EqualFold(base, "BDMV") || strings.EqualFold(base, "STREAM") && strings.EqualFold(filepath.Base(filepath.Dir(d.Root.Path)), "BDMV") {
+	if !d.subtitleFiles && (strings.EqualFold(base, "BDMV") || strings.EqualFold(base, "STREAM") && strings.EqualFold(filepath.Base(filepath.Dir(d.Root.Path)), "BDMV")) {
 		return result, ErrPath
 	}
 	if !LibraryMode(d.Mode) || !validRelative(d.Selection) || len(d.Excludes) > 128 {
@@ -284,15 +299,18 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 			return result, nil
 		}
 	}
-	ancestor, err := libraryDiscAncestor(ctx, d)
-	if err != nil {
-		return result, err
-	}
-	if ancestor != "" && ancestor != selection {
-		if !d.AllowDiscExpansion {
-			return result, ErrPath
+	var ancestor string
+	if !d.subtitleFiles {
+		ancestor, err = libraryDiscAncestor(ctx, d)
+		if err != nil {
+			return result, err
 		}
-		selection = ancestor
+		if ancestor != "" && ancestor != selection {
+			if !d.AllowDiscExpansion {
+				return result, ErrPath
+			}
+			selection = ancestor
+		}
 	}
 	var walk func(string, int) error
 	walk = func(relative string, depth int) error {
@@ -354,7 +372,7 @@ func ScanLibrary(ctx context.Context, d LibraryDefinition) (LibraryScan, error) 
 			directory = os.NewFile(uintptr(fd), relative)
 		}
 		defer directory.Close()
-		if libraryDiscCandidate(directory) {
+		if !d.subtitleFiles && libraryDiscCandidate(directory) {
 			if libraryDiscExcluded(d, relative) {
 				result.Skipped++
 				return nil

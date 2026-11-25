@@ -49,6 +49,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.autoSub != nil && request.PathValue("id") == autoSubID {
+		service.autoSub.page(response, request, service, false)
+		return
+	}
 	if service.disk != nil && request.PathValue("id") == diskID {
 		service.disk.page(response, request, service, false)
 		return

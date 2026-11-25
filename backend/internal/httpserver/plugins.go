@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	autoSub           *autoSubAPI
 	disk              *diskSpaceAPI
 	helper            *downloaderHelperAPI
 	iyuu              *iyuuAPI

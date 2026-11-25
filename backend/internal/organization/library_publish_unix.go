@@ -16,6 +16,24 @@ import (
 )
 
 func LibraryTarget(d LibraryDefinition, m LibraryMedia, scope, name string) (string, error) {
+	if d.subtitleFiles && scope != "autosub" {
+		return "", ErrPath
+	}
+	if scope == "autosub" {
+		if !d.subtitleFiles {
+			return "", ErrPath
+		}
+		if d.Remote != nil || d.Mode != "no_force" || m.Disc != nil || !validRelative(m.Path) || FileKind(m.Path) != "media" {
+			return "", ErrPath
+		}
+		stem := strings.TrimSuffix(filepath.Base(m.Path), filepath.Ext(m.Path))
+		code, ok := strings.CutPrefix(name, stem+".")
+		code, suffix := strings.CutSuffix(code, ".srt")
+		if !ok || !suffix || (len(code) != 2 && len(code) != 3) || strings.Trim(code, "abcdefghijklmnopqrstuvwxyz") != "" {
+			return "", ErrPath
+		}
+		return filepath.Join(filepath.Dir(m.Path), name), nil
+	}
 	kind := "电影"
 	if d.Root.Kind != "movie" {
 		kind = "电视剧"
@@ -539,4 +557,31 @@ func ObserveLibrarySidecar(ctx context.Context, d LibraryDefinition, p LibraryOu
 		return "uncertain", err
 	}
 	return "not_published", nil
+}
+
+// A canceled no-force publication can finish cleaning its private stage
+// before the worker records the outcome. Retry only if both names are absent
+// under the same parent and a fresh publish will still use no-replace.
+func AutoSubtitleStageGone(ctx context.Context, d LibraryDefinition, m LibraryMedia, proof LibraryOutputProof) bool {
+	target, e := LibraryTarget(d, m, "autosub", filepath.Base(proof.Target))
+	if e != nil || target != proof.Target || proof.Old.Identity != "" || proof.StageIdentity == "" || !strings.HasPrefix(proof.Stage, ".nastool-library-") || filepath.Base(proof.Stage) != proof.Stage || VerifyLibraryMedia(ctx, d, m) != nil {
+		return false
+	}
+	root, e := anchoredRoot(d.Root.Path, d.Root.Identity)
+	if e != nil {
+		return false
+	}
+	defer root.Close()
+	p, leaf, e := anchoredParent(root, target, false)
+	if e != nil {
+		return false
+	}
+	defer p.Close()
+	info, e := p.Stat()
+	if e != nil || Identity(info) != proof.ParentIdentity {
+		return false
+	}
+	_, _, output := libraryNode(p, leaf)
+	_, _, stage := libraryNode(p, proof.Stage)
+	return errors.Is(output, unix.ENOENT) && errors.Is(stage, unix.ENOENT)
 }

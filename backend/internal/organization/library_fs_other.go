@@ -17,6 +17,9 @@ func VerifyLibraryMedia(context.Context, LibraryDefinition, LibraryMedia) error 
 func ReadLibraryMedia(context.Context, LibraryDefinition, LibraryMedia, func(*os.File) ([]byte, error)) ([]byte, error) {
 	return nil, ErrMode
 }
+func ReadAutoSubtitle(context.Context, LibraryDefinition, LibraryMedia, string) ([]byte, error) {
+	return nil, ErrMode
+}
 func LibraryReadNFO(context.Context, LibraryDefinition, LibraryMedia, string) ([]byte, error) {
 	return nil, ErrMode
 }
@@ -34,4 +37,8 @@ func RestoreLibrarySidecar(context.Context, LibraryDefinition, LibraryOutputProo
 }
 func ObserveLibrarySidecar(context.Context, LibraryDefinition, LibraryOutputProof) (string, error) {
 	return "uncertain", ErrMode
+}
+
+func AutoSubtitleStageGone(context.Context, LibraryDefinition, LibraryMedia, LibraryOutputProof) bool {
+	return false
 }
