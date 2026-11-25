@@ -35,6 +35,7 @@ from app.media import Category, Media, Bangumi, DouBan, Scraper
 from app.media.meta import MetaInfo, MetaBase
 from app.mediaserver import MediaServer
 from app.message import Message, MessageCenter
+from app.message.client.telegram import TelegramReceiver
 from app.plugins import PluginManager, EventManager
 from app.rss import Rss
 from app.rsschecker import RssChecker
@@ -299,11 +300,14 @@ class WebAction:
             "data": result
         }
 
+    _telegram_receiver = TelegramReceiver()
+
     @staticmethod
     def stop_service():
         """
         关闭服务
         """
+        WebAction._telegram_receiver.stop()
         # 停止定时服务
         Scheduler().stop_service()
         # 停止监控
@@ -339,6 +343,7 @@ class WebAction:
         TorrentRemover()
         # 加载插件
         PluginManager()
+        WebAction._telegram_receiver.start()
 
     def restart_service(self):
         """

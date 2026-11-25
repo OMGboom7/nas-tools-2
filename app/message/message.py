@@ -50,31 +50,36 @@ class Message(object):
         # 全量客户端配置
         self._client_configs = {}
         for client_config in self.dbhelper.get_message_client() or []:
-            config = json.loads(client_config.CONFIG) if client_config.CONFIG else {}
-            config.update({
-                "interactive": client_config.INTERACTIVE
-            })
-            client_conf = {
-                "id": client_config.ID,
-                "name": client_config.NAME,
-                "type": client_config.TYPE,
-                "config": config,
-                "switchs": json.loads(client_config.SWITCHS) if client_config.SWITCHS else [],
-                "interactive": client_config.INTERACTIVE,
-                "enabled": client_config.ENABLED
-            }
+            client_conf = self.__channel_record(client_config)
             self._client_configs[str(client_config.ID)] = client_conf
-            if not client_config.ENABLED or not config:
+            if not client_config.ENABLED:
                 continue
-            client = {
-                "search_type": ModuleConf.MESSAGE_CONF.get('client').get(client_config.TYPE, {}).get('search_type'),
-                "max_length": ModuleConf.MESSAGE_CONF.get('client').get(client_config.TYPE, {}).get('max_length'),
-                "client": self.__build_class(ctype=client_config.TYPE, conf=config)
-            }
-            client.update(client_conf)
+            client = self.__configured_client(client_conf)
             self._active_clients.append(client)
             if client.get("interactive"):
                 self._active_interactive_clients[client.get("search_type")] = client
+
+    @staticmethod
+    def __channel_record(client_config):
+        config = json.loads(client_config.CONFIG) if client_config.CONFIG else {}
+        config.update({
+            "interactive": client_config.INTERACTIVE
+        })
+        return {
+            "id": client_config.ID,
+            "name": client_config.NAME,
+            "type": client_config.TYPE,
+            "config": config,
+            "switchs": json.loads(client_config.SWITCHS) if client_config.SWITCHS else [],
+            "interactive": client_config.INTERACTIVE,
+            "enabled": client_config.ENABLED
+        }
+
+    def __configured_client(self, record):
+        ctype = record["type"]
+        options = ModuleConf.MESSAGE_CONF.get("client", {}).get(ctype, {})
+        return dict(record, search_type=options.get("search_type"), max_length=options.get("max_length"),
+                    client=self.__build_class(ctype=ctype, conf=record["config"]))
 
     def __build_class(self, ctype, conf):
         for message_schema in self._message_schemas:
@@ -165,7 +170,7 @@ class Message(object):
             self.messagecenter.insert_system_message(title=title, content=text)
             return True
         # 发送消息
-        client = self._active_interactive_clients.get(channel)
+        client = self._interactive_client(channel)
         if client:
             state = self.__sendmsg(client=client,
                                    title=title,
@@ -209,7 +214,7 @@ class Message(object):
                 index += 1
             self.messagecenter.insert_system_message(title=title, content="\n".join(texts))
             return True
-        client = self._active_interactive_clients.get(channel)
+        client = self._interactive_client(channel)
         if client:
             state = self.__send_list_msg(client=client,
                                          title=title,
@@ -768,9 +773,18 @@ class Message(object):
         查询当前可以交互的渠道
         """
         if client_type:
-            return self._active_interactive_clients.get(client_type)
-        else:
-            return [client for client in self._active_interactive_clients.values()]
+            return self._interactive_client(client_type)
+        return list(self._active_interactive_clients.values())
+
+    def _interactive_client(self, client_type):
+        if client_type == SearchType.TG:
+            # The paired Go settings page can change the active bot while this process runs.
+            rows = [row for row in self.dbhelper.get_message_client() or []
+                    if row.TYPE == "telegram" and row.ENABLED and row.INTERACTIVE]
+            if len(rows) == 1:
+                return self.__configured_client(self.__channel_record(rows[0]))
+            return None
+        return self._active_interactive_clients.get(client_type)
 
     @staticmethod
     def get_search_types():

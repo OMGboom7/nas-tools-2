@@ -15,22 +15,37 @@ func (api *siteSigninAPI) telegramCall(ctx context.Context, c sitesignin.Control
 	if e != nil {
 		return nil, 0, e
 	}
+	req, transport, e := telegramReceiveRequest(ctx, cfg, text(s.config["token"]), method, values, api.login.transport)
+	if e != nil {
+		return nil, 0, e
+	}
+	return api.remoteCall(ctx, c, s, "telegram-"+method, req, transport)
+}
+
+func telegramBase(cfg map[string]any) (*url.URL, error) {
 	base := "https://api.telegram.org"
 	if custom := text(objectValue(cfg["laboratory"])["telegram_domain"]); custom != "" {
 		base = strings.TrimRight(custom, "/")
 	}
-	transport := api.login.transport
-	u, e := url.Parse(base)
-	if e != nil || u == nil || !validHTTPURL(base) {
-		return nil, 0, sitesignin.ErrScope
+	u, err := url.Parse(base)
+	if err != nil || !validHTTPURL(base) || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return nil, sitesignin.ErrScope
+	}
+	return u, nil
+}
+
+func telegramReceiveRequest(ctx context.Context, cfg map[string]any, token, method string, values url.Values, transport http.RoundTripper) (*http.Request, http.RoundTripper, error) {
+	u, e := telegramBase(cfg)
+	if e != nil {
+		return nil, nil, e
 	}
 	if text(objectValue(objectValue(cfg["app"])["proxies"])[u.Scheme]) != "" {
 		transport, e = siteProxyTransport(transport, objectValue(objectValue(cfg["app"])["proxies"]), u.Scheme)
 		if e != nil {
-			return nil, 0, e
+			return nil, nil, e
 		}
 	}
-	address := base + "/bot" + text(s.config["token"]) + "/" + method
+	address := u.String() + "/bot" + token + "/" + method
 	verb, body := "GET", ""
 	if strings.HasPrefix(method, "get") {
 		if len(values) > 0 {
@@ -41,12 +56,12 @@ func (api *siteSigninAPI) telegramCall(ctx context.Context, c sitesignin.Control
 	}
 	request, e := http.NewRequestWithContext(ctx, verb, address, strings.NewReader(body))
 	if e != nil {
-		return nil, 0, e
+		return nil, nil, e
 	}
 	if verb == "POST" {
 		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	return api.remoteCall(ctx, c, s, "telegram-"+method, request, transport)
+	return request, transport, nil
 }
 
 func (api *siteSigninAPI) syncTelegramMode(ctx context.Context, c sitesignin.Control, s siteSigninRemoteSource, state *sitesignin.RemoteState) (bool, error) {
@@ -85,13 +100,7 @@ func (api *siteSigninAPI) syncTelegramMode(ctx context.Context, c sitesignin.Con
 		}
 		return save(true)
 	}
-	method := "deleteWebhook"
-	values := url.Values{}
-	if s.mode == "webhook" {
-		method = "setWebhook"
-		values.Set("url", wanted)
-		values.Set("allowed_updates", `["message"]`)
-	}
+	method, values := telegramModeRequest(wanted)
 	attempted, e := api.store.RemoteAttempted(ctx, c.Scope.ID, s.digest, "telegram-"+method)
 	if e != nil {
 		return false, e
@@ -127,4 +136,11 @@ func (api *siteSigninAPI) syncTelegramMode(ctx context.Context, c sitesignin.Con
 		state.Reason = "原 Telegram 回调地址已设置，原有消息继续保留"
 	}
 	return save(true)
+}
+
+func telegramModeRequest(callback string) (string, url.Values) {
+	if callback == "" {
+		return "deleteWebhook", nil
+	}
+	return "setWebhook", url.Values{"url": {callback}, "allowed_updates": {`["message"]`}}
 }

@@ -17,10 +17,12 @@ import (
 )
 
 type telegramDispatch struct {
-	Action string `json:"action"`
-	UserID int64  `json:"user_id,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Text   string `json:"text,omitempty"`
+	Action      string `json:"action"`
+	Channel     int64  `json:"channel,omitempty"`
+	TokenDigest string `json:"token_digest,omitempty"`
+	UserID      int64  `json:"user_id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Text        string `json:"text,omitempty"`
 }
 
 func decodeTelegramUpdate(raw []byte) (signinTelegramUpdate, bool) {
@@ -74,13 +76,21 @@ func TelegramIncomingCommand(ctx context.Context, path, channelID, peer string, 
 	if err != nil {
 		return err
 	}
+	result, err := admitTelegram(ctx, store, ch, u)
+	if err != nil {
+		return err
+	}
+	return encoder.Encode(result)
+}
+
+func admitTelegram(ctx context.Context, store *notificationconfig.Store, ch notificationconfig.Channel, u signinTelegramUpdate) (telegramDispatch, error) {
 	var channel map[string]any
 	if ch.Type != "telegram" || ch.Interactive == 0 || ch.Enabled == 0 || json.Unmarshal([]byte(ch.Config), &channel) != nil {
-		return errors.New("unavailable Telegram receiver")
+		return telegramDispatch{}, errors.New("unavailable Telegram receiver")
 	}
 	token := text(channel["token"])
 	if !validTelegramToken(token) {
-		return errors.New("invalid Telegram receiver")
+		return telegramDispatch{}, errors.New("invalid Telegram receiver")
 	}
 	user, _ := u.Message.From.ID.Int64()
 	result := telegramDispatch{Action: "dispatch", UserID: user, Name: u.Message.From.Name, Text: u.Message.Text}
@@ -90,6 +100,21 @@ func TelegramIncomingCommand(ctx context.Context, path, channelID, peer string, 
 			result.Text = "只有管理员才有权限执行此命令"
 		}
 	}
+	updateID, _ := u.ID.Int64()
+	claimed, err := store.ClaimTelegramUpdate(ctx, ch, telegramBotID(token), updateID)
+	if err != nil {
+		return telegramDispatch{}, err
+	}
+	if !claimed {
+		return telegramDispatch{Action: "ignore"}, nil
+	}
+	digest := sha256.Sum256([]byte(token))
+	result.Channel = ch.ID
+	result.TokenDigest = hex.EncodeToString(digest[:])
+	return result, nil
+}
+
+func telegramBotID(token string) string {
 	// Bot IDs survive token rotation. Nonstandard tokens on compatible
 	// gateways use a digest and never enter the handoff table in cleartext.
 	bot, _, hasID := strings.Cut(token, ":")
@@ -97,13 +122,5 @@ func TelegramIncomingCommand(ctx context.Context, path, channelID, peer string, 
 		digest := sha256.Sum256([]byte(token))
 		bot = hex.EncodeToString(digest[:])
 	}
-	updateID, _ := u.ID.Int64()
-	claimed, err := store.ClaimTelegramUpdate(ctx, ch, bot, updateID)
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		result = telegramDispatch{Action: "ignore"}
-	}
-	return encoder.Encode(result)
+	return bot
 }

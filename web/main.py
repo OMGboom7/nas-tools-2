@@ -38,6 +38,7 @@ from app.indexer import Indexer
 from app.media.meta import MetaInfo
 from app.mediaserver import MediaServer
 from app.message import Message
+from app.message.client.telegram import dispatch_telegram
 from app.plugins import EventManager
 from app.rsschecker import RssChecker
 from app.sites import Sites, SiteUserInfo
@@ -1399,13 +1400,7 @@ def telegram():
         return '消息格式无效', 400
     if result["action"] == "forbidden":
         return '不允许的IP地址请求'
-    if result["action"] == "deny":
-        Message().send_channel_msg(channel=SearchType.TG, title=result["text"], user_id=result["user_id"])
-        return result["text"]
-    if result["action"] == "dispatch":
-        WebAction().handle_message_job(msg=result["text"], in_from=SearchType.TG,
-                                       user_id=result["user_id"], user_name=result.get("name"))
-    return 'Ok'
+    return dispatch_telegram(result)
 
 
 # Synology Chat消息响应

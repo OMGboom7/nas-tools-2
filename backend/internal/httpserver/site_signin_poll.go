@@ -9,9 +9,11 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 	"github.com/0xforee/nas-tools/backend/internal/sitesignin"
 )
@@ -108,9 +110,20 @@ func (api *siteSigninAPI) pollTelegram(ctx context.Context, c sitesignin.Control
 		return e
 	}
 	api.ensureSlack(ctx, c, sources, now)
+	var release func()
 	for _, source := range sources {
 		if source.channel.Type != "telegram" {
 			continue
+		}
+		if release == nil {
+			release, e = holdTelegramReceiver(ctx, filepath.Join(api.cache.Directory, "user.db"))
+			if errors.Is(e, organization.ErrBusy) {
+				return nil
+			}
+			if e != nil {
+				return e
+			}
+			defer release()
 		}
 		state, e := api.store.Remote(ctx, source.digest)
 		if e != nil {
@@ -137,6 +150,11 @@ func (api *siteSigninAPI) pollTelegram(ctx context.Context, c sitesignin.Control
 		}
 		if source.mode == "webhook" {
 			continue
+		}
+		bot := telegramBotID(text(source.config["token"]))
+		state.Offset, e = api.channels.TelegramOffset(ctx, bot, state.Offset)
+		if e != nil {
+			return e
 		}
 		raw, status, e := api.telegramCall(ctx, c, source, "getUpdates", url.Values{"offset": {strconv.FormatInt(state.Offset, 10)}, "limit": {"100"}, "timeout": {"0"}, "allowed_updates": {`["message"]`}})
 		state.Scope = c.Scope.ID
@@ -184,6 +202,9 @@ func (api *siteSigninAPI) pollTelegram(ctx context.Context, c sitesignin.Control
 			}
 			if id >= state.Offset {
 				state.Offset = id + 1
+				if e = api.channels.SaveTelegramOffset(ctx, bot, state.Offset); e != nil {
+					return e
+				}
 			}
 		}
 		state.State = "polling"

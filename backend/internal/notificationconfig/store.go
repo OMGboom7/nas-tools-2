@@ -41,6 +41,10 @@ func Open(path string) (*Store, error) {
 		"PRAGMA busy_timeout = 5000",
 		centerSchema,
 		telegramHandoffSchema,
+		telegramNativeInputSchema,
+		telegramCursorSchema,
+		telegramModeSchema,
+		telegramCallbackSchema,
 		"CREATE TABLE IF NOT EXISTS MESSAGE_CLIENT (ID INTEGER PRIMARY KEY AUTOINCREMENT, NAME TEXT, TYPE TEXT, CONFIG TEXT, SWITCHS TEXT, INTERACTIVE INTEGER, ENABLED INTEGER, NOTE TEXT)",
 	} {
 		if _, err := database.Exec(statement); err != nil {

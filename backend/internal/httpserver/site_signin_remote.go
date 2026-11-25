@@ -77,31 +77,8 @@ func (api *siteSigninAPI) remoteSources(ctx context.Context) ([]siteSigninRemote
 		s := siteSigninRemoteSource{channel: c, config: conf, digest: sitelogin.Hash(c), mode: "webhook", receiver: "本机已配置回调"}
 		switch c.Type {
 		case "telegram":
-			if !validTelegramToken(text(conf["token"])) {
-				return nil, "", sitesignin.ErrScope
-			}
-			base := "https://api.telegram.org"
-			if custom := text(objectValue(cfg["laboratory"])["telegram_domain"]); custom != "" {
-				base = strings.TrimRight(custom, "/")
-			}
-			if browserruntime.Origin(base) == "" {
-				return nil, "", sitesignin.ErrScope
-			}
-			if !truthy(conf["webhook"]) {
-				s.mode = "poll"
-				s.receiver = base + "/bot[原机器人]/getUpdates"
-			} else {
-				domain := strings.TrimRight(text(objectValue(cfg["app"])["domain"]), "/")
-				if domain != "" && !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
-					domain = "http://" + domain
-				}
-				u, e := url.Parse(domain)
-				key := text(objectValue(cfg["security"])["api_key"])
-				if e != nil || browserruntime.Origin(domain) == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || key == "" {
-					return nil, "", sitesignin.ErrScope
-				}
-				s.callback = domain + "/telegram?" + url.Values{"apikey": {key}}.Encode()
-				s.receiver = domain + "/telegram（原 API key 与 IP 范围）"
+			if e := s.configureTelegram(cfg); e != nil {
+				return nil, "", e
 			}
 		case "slack":
 			s.mode = "socket"
@@ -128,6 +105,33 @@ func (api *siteSigninAPI) remoteSources(ctx context.Context) ([]siteSigninRemote
 	}
 	return out, sitelogin.Hash(snapshots), nil
 }
+func (s *siteSigninRemoteSource) configureTelegram(cfg map[string]any) error {
+	if !validTelegramToken(text(s.config["token"])) {
+		return sitesignin.ErrScope
+	}
+	base, err := telegramBase(cfg)
+	if err != nil {
+		return err
+	}
+	if !truthy(s.config["webhook"]) {
+		s.mode = "poll"
+		s.receiver = base.String() + "/bot[原机器人]/getUpdates"
+	} else {
+		domain := strings.TrimRight(text(objectValue(cfg["app"])["domain"]), "/")
+		if domain != "" && !strings.HasPrefix(domain, "http://") && !strings.HasPrefix(domain, "https://") {
+			domain = "http://" + domain
+		}
+		u, e := url.Parse(domain)
+		key := text(objectValue(cfg["security"])["api_key"])
+		if e != nil || browserruntime.Origin(domain) == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || key == "" {
+			return sitesignin.ErrScope
+		}
+		s.callback = domain + "/telegram?" + url.Values{"apikey": {key}}.Encode()
+		s.receiver = domain + "/telegram（原 API key 与 IP 范围）"
+	}
+	return nil
+}
+
 func (api *siteSigninAPI) remoteControl(ctx context.Context) (sitesignin.Control, []siteSigninRemoteSource, error) {
 	c, e := api.store.Control(ctx)
 	if e == nil && c.Enabled && c.Scope.Options.Remote && api.base(c.Scope, "", c.Scope.PluginDigest)(ctx) == nil {
@@ -193,6 +197,19 @@ func (api *siteSigninAPI) incoming(ctx context.Context, c sitesignin.Control, s 
 	}
 	if id == "" || len(id) > 1000 || !sitelogin.Text(user, 512) || len(username) > 1000 || len(body) > 32000 || at.IsZero() || at.Before(created.Truncate(time.Second)) || at.After(time.Now().Add(2*time.Minute)) || !s.allowed(user, body) {
 		return sitesignin.ErrScope
+	}
+	if s.channel.Type == "telegram" && (!c.Scope.ExternalReceiver() || body == "/sta" || body == "/db") {
+		update, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return sitesignin.ErrScope
+		}
+		owned, err := api.channels.OwnNativeTelegram(ctx, s.channel, telegramBotID(text(s.config["token"])), update, s.digest)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return nil
+		}
 	}
 	if body == "/db" && api.douban.available() {
 		return api.douban.queueCommand(ctx, s, id, user, username, at)

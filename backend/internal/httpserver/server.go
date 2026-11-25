@@ -693,7 +693,12 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("/api/v1/site-signin", nativeSiteSignin.manage)
 	mux.HandleFunc("/api/v1/site-signin/", nativeSiteSignin.manage)
 	for _, path := range []string{"/telegram", "/synology", "/slack", "/wechat"} {
-		mux.HandleFunc(path, nativeSiteSignin.remoteHTTP)
+		if path == "/telegram" && !cfg.DisableLegacy && nativeNotifications != nil && nativeConfig != nil {
+			receiver := telegramReceiver{store: nativeNotifications, settings: nativeConfig}
+			mux.HandleFunc(path, receiver.webhook)
+		} else {
+			mux.HandleFunc(path, nativeSiteSignin.remoteHTTP)
+		}
 	}
 	mux.HandleFunc("GET /api/v1/site-login", nativeSiteLogin.status)
 	mux.HandleFunc("POST /api/v1/site-login/review", nativeSiteLogin.serveReview)

@@ -19,6 +19,10 @@ import (
 
 var errStatsScheduleChanged = errors.New("statistics schedule changed")
 
+func holdStandaloneStatsClock(ctx context.Context, dbPath string) (func(), error) {
+	return holdVolumeReceiver(ctx, dbPath, statsTimerGuard, ".nastool-stats-timer.lock")
+}
+
 const statsTimerGuard = "site-statistics-timer-owner"
 
 func statsTimerCron(cfg map[string]any) string {

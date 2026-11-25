@@ -9,7 +9,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/winlock"
 )
 
-func holdStandaloneStatsClock(ctx context.Context, dbPath string) (func(), error) {
+func holdVolumeReceiver(ctx context.Context, dbPath, key, windowsFile string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -17,7 +17,7 @@ func holdStandaloneStatsClock(ctx context.Context, dbPath string) (func(), error
 	if err != nil {
 		return nil, err
 	}
-	release, err := winlock.Hold(filepath.Join(filepath.Dir(path), ".nastool-stats-timer.lock"), true)
+	release, err := winlock.Hold(filepath.Join(filepath.Dir(path), windowsFile), true)
 	if errors.Is(err, winlock.ErrBusy) {
 		return nil, organization.ErrBusy
 	}
