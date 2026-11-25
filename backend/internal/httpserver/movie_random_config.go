@@ -105,7 +105,7 @@ func movieRandomValues(raw string) (map[string]json.RawMessage, error) {
 	}
 	return values, nil
 }
-func movieRandomDetail(actor string, raw map[string]string) (pluginConfigDetail, error) {
+func movieRandomDetail(_ context.Context, actor string, raw map[string]string) (pluginConfigDetail, error) {
 	values, err := movieRandomValues(raw[movieRandomSettingsKey])
 	if err != nil {
 		return pluginConfigDetail{}, err

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/douban"
+	"github.com/0xforee/nas-tools/backend/internal/iyuu"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 )
 
@@ -17,12 +18,15 @@ import (
 type feedPluginDefinition struct {
 	id, name, control string
 	keys              []string
-	detail            func(string, map[string]string) (pluginConfigDetail, error)
+	detail            func(context.Context, string, map[string]string) (pluginConfigDetail, error)
 	summary           func(context.Context, map[string]string) (bool, bool)
 	changes           func(context.Context, string, map[string]string, map[string]json.RawMessage, []string, time.Time) (map[string]string, error)
 }
 
 func (service pluginService) feedPlugin(id string) feedPluginDefinition {
+	if id == iyuu.Plugin {
+		return service.iyuu.plugin()
+	}
 	if id == mteamFeedID {
 		return service.mteamFeed.plugin()
 	}
@@ -33,13 +37,16 @@ func (service pluginService) feedPlugin(id string) feedPluginDefinition {
 	if id == douban.RankPlugin {
 		return feedPluginDefinition{id, "豆瓣榜单订阅", rankControlKey, rankKeys, rankDetail, api.rankSummary, api.rankChanges}
 	}
-	return feedPluginDefinition{douban.SyncPlugin, "豆瓣同步", doubanControlKey, doubanKeys, func(actor string, raw map[string]string) (pluginConfigDetail, error) {
+	return feedPluginDefinition{douban.SyncPlugin, "豆瓣同步", doubanControlKey, doubanKeys, func(_ context.Context, actor string, raw map[string]string) (pluginConfigDetail, error) {
 		cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
 		return doubanDetail(actor, raw, cfg), err
 	}, api.summary, api.changes}
 }
 
 func (s pluginService) nativeFeedPlugin(id string) bool {
+	if id == iyuu.Plugin {
+		return s.iyuu != nil
+	}
 	if id == mteamFeedID {
 		return s.mteamFeed != nil
 	}
@@ -95,7 +102,7 @@ func (service pluginService) serveFeedPlugin(w http.ResponseWriter, r *http.Requ
 		}
 		switch action {
 		case "get":
-			detail, err := p.detail(claims.Username, raw)
+			detail, err := p.detail(ctx, claims.Username, raw)
 			if err != nil {
 				writeAPIError(w, 409, 409, "原订阅插件设置无效")
 				return

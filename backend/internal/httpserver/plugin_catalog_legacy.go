@@ -33,7 +33,7 @@ func (service pluginService) serveNativeLegacyPluginApps(response http.ResponseW
 	writeJSON(response, 200, map[string]any{"code": 0, "result": result, "statistic": map[string]any{}})
 }
 
-func legacyCommandRoutes(reads map[string]http.HandlerFunc, next http.HandlerFunc) http.HandlerFunc {
+func legacyCommandRoutes(reads map[string]http.HandlerFunc, iyuu *iyuuAPI, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			next(w, r)
@@ -41,7 +41,8 @@ func legacyCommandRoutes(reads map[string]http.HandlerFunc, next http.HandlerFun
 		}
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<10))
 		var envelope struct {
-			Cmd string `json:"cmd"`
+			Cmd  string          `json:"cmd"`
+			Data json.RawMessage `json:"data"`
 		}
 		if err != nil || json.Unmarshal(raw, &envelope) != nil {
 			writeAPIError(w, 400, 400, "原操作格式无效")
@@ -49,6 +50,9 @@ func legacyCommandRoutes(reads map[string]http.HandlerFunc, next http.HandlerFun
 		}
 		if strings.EqualFold(strings.TrimSpace(envelope.Cmd), "restory_backup") {
 			writeAPIError(w, 410, 410, "旧文件名恢复入口已迁移，请在服务页上传 ZIP 并按提示离线恢复")
+			return
+		}
+		if iyuu != nil && envelope.Cmd == "run_plugin_method" && iyuu.legacyBind(w, r, envelope.Data) {
 			return
 		}
 		if read := reads[envelope.Cmd]; read != nil {

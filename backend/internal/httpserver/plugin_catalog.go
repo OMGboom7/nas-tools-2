@@ -93,6 +93,11 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		item.Native = service.ownsPlugin(item.ID)
 		item.StateKnown = !item.Installed || item.Native && readState
 		item.ActionsAvailable = item.Native || service.legacyURL != ""
+		if item.ID == "IYUUAutoSeed" && service.iyuu != nil {
+			item.ActionsAvailable = administrator
+			item.HasPage = administrator
+			item.Description = "从 IYUU 绑定合作站点并匹配已完成的种子。自动提交与做种待迁移。"
+		}
 		if service.nativeArchiveRunner(item.ID) {
 			item.ActionsAvailable = administrator
 		}

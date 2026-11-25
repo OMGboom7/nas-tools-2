@@ -49,6 +49,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.iyuu != nil && request.PathValue("id") == "IYUUAutoSeed" {
+		service.iyuu.partnerPage(response, request, false)
+		return
+	}
 	if service.nativeArchivePage(strings.TrimSpace(request.PathValue("id"))) {
 		service.serveArchivePage(response, request, false)
 		return

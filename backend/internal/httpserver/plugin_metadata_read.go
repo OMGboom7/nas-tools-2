@@ -227,6 +227,10 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				continue
 			}
 			if service.nativeFeedPlugin(id) {
+				if id == "IYUUAutoSeed" && !administrator {
+					result[id] = map[string]any{"name": catalog[id].Name, "native": true, "state": false}
+					continue
+				}
 				p := service.feedPlugin(id)
 				raw, err := service.system.ReadMany(request.Context(), p.keys)
 				if err != nil {
@@ -238,7 +242,7 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 					writeAPIError(response, 401, 401, "请重新登录")
 					return
 				}
-				detail, err := p.detail(claims.Username, raw)
+				detail, err := p.detail(request.Context(), claims.Username, raw)
 				if err != nil {
 					subscriptionHistoryError(response, err)
 					return

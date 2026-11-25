@@ -1787,3 +1787,32 @@ export async function submitPausedTransfer(token: string, id: string, signal: Ab
   }
   return record;
 }
+
+export type IyuuPartner = { sid: string; site: string; name: string };
+export type IyuuReceipt = { id: string; site: string; state: string };
+export type IyuuOverview = {
+  fingerprint: string; requestId: string; matchFingerprint: string;
+  latest: IyuuReceipt; downloaders: string[];
+};
+export type IyuuMatches = {
+  scanned: number;
+  items: { downloader: string; downloaderId: string; source: string; name: string; site: string; siteId: string; torrentId: string; hash: string }[];
+};
+
+async function iyuuRequest<T>(token: string, action: string, input?: object): Promise<T> {
+  const response = await fetch(`/api/v1/plugins/IYUUAutoSeed/${action}`, {
+    method: input ? "POST" : "GET",
+    headers: { Authorization: token, ...(input && { "Content-Type": "application/json" }) },
+    body: input && JSON.stringify(input),
+    cache: "no-store",
+  });
+  const result = await readResponse<T>(response);
+  if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "IYUU 请求失败", result.code);
+  return result.data;
+}
+export const getIyuuOverview = (token: string) => iyuuRequest<IyuuOverview>(token, "overview");
+export const getIyuuPartners = (token: string) => iyuuRequest<{ fingerprint: string; items: IyuuPartner[] }>(token, "partners");
+export const bindIyuuSite = (token: string, input: { fingerprint: string; requestId: string; sid: string; site: string; uid: string; passkey: string }) =>
+  iyuuRequest<IyuuReceipt>(token, "bind", input);
+export const matchIyuuTorrents = (token: string, fingerprint: string) =>
+  iyuuRequest<IyuuMatches>(token, "matches", { fingerprint });

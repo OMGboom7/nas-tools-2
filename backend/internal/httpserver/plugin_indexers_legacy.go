@@ -49,6 +49,14 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.iyuu != nil && id == "IYUUAutoSeed" {
+			if action {
+				writeAPIError(w, 400, 400, "不支持的 IYUU 扩展页操作")
+			} else {
+				s.iyuu.partnerPage(w, probe, true)
+			}
+			return
+		}
 		if s.nativeArchivePage(id) {
 			if !action {
 				s.serveArchivePage(w, probe, true)

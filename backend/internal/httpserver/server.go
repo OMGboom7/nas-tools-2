@@ -739,6 +739,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("DELETE /api/v1/notifications/{id}", notifications.delete)
 	plugins := pluginService{archiveConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
+		if nativeDownloaders != nil && nativeSiteLogin != nil {
+			plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport}
+			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/overview", plugins.iyuu.overview)
+			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/partners", plugins.iyuu.partners)
+			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/bind", plugins.iyuu.bind)
+			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/matches", plugins.iyuu.matches)
+		}
 		plugins.mteamFeed = &mteamFeedService{system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, limits: siteLimits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}
 	}
 	plugins.cookieCloud = cloudCookies
@@ -878,7 +885,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		mux.Handle("POST /api/v1/plugin/page", plugins.nativePluginPageRoute(legacyFallback, false))
 		mux.Handle("POST /api/v1/plugin/page/action", plugins.nativePluginPageRoute(legacyFallback, true))
 	}
-	mux.HandleFunc("/do", legacyCommandRoutes(pluginReads, nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
+	mux.HandleFunc("/do", legacyCommandRoutes(pluginReads, plugins.iyuu, nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
 	mux.HandleFunc("GET /api/v1/plugins", plugins.serveList)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/install", plugins.install)
 	mux.HandleFunc("GET /api/v1/plugins/{id}/page", plugins.servePage)

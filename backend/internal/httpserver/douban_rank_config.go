@@ -16,7 +16,7 @@ const rankControlKey = "GoDoubanRank"
 
 var rankKeys = []string{"UserInstalledPlugins", rankSettingsKey, rankControlKey, "DefaultRssSettingMOV", "DefaultRssSettingTV"}
 
-func rankDetail(actor string, raw map[string]string) (pluginConfigDetail, error) {
+func rankDetail(_ context.Context, actor string, raw map[string]string) (pluginConfigDetail, error) {
 	cfg, err := douban.ReadRankSettings(raw[rankSettingsKey])
 	if err != nil {
 		return pluginConfigDetail{}, err

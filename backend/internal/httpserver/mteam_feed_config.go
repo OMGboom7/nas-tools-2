@@ -85,7 +85,7 @@ func readMTeamFeed(raw string) (mteamFeedSettings, error) {
 func (feed *mteamFeedService) plugin() feedPluginDefinition {
 	return feedPluginDefinition{id: mteamFeedID, name: "馒头大包监控", keys: mteamFeedKeys, summary: feed.summary, detail: feed.detail, changes: feed.changes}
 }
-func (feed *mteamFeedService) detail(actor string, raw map[string]string) (pluginConfigDetail, error) {
+func (feed *mteamFeedService) detail(_ context.Context, actor string, raw map[string]string) (pluginConfigDetail, error) {
 	s, err := readMTeamFeed(raw[mteamFeedKey])
 	if err != nil {
 		return pluginConfigDetail{}, err

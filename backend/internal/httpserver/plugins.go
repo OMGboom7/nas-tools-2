@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	iyuu              *iyuuAPI
 	mteamFeed         *mteamFeedService
 	doubanSync        *doubanSyncAPI
 	archiveMedia      *mediaSyncAPI
