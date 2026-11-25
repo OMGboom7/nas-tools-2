@@ -507,7 +507,7 @@ func (api *movieLikeAPI) pluginPage(w http.ResponseWriter, r *http.Request) {
 		page.Tables[0].Rows = append(page.Tables[0].Rows, []string{p.ID, p.Event.Name, p.State, p.Phase})
 		page.Tables[0].RowActions = append(page.Tables[0].RowActions, nil)
 	}
-	writeNativeRecordPage(w, page, false)
+	writeNativeRecordPage(w, page)
 }
 func (api *movieLikeAPI) reservePlugin(next http.Handler) http.Handler {
 	const base = "/api/v1/plugins/MovieLike"

@@ -71,7 +71,7 @@ func archivePageError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s pluginService) serveArchivePage(w http.ResponseWriter, r *http.Request, legacy bool) {
+func (s pluginService) serveArchivePage(w http.ResponseWriter, r *http.Request) {
 	dir, ok := s.archiveDirectory(w, r)
 	if !ok {
 		return
@@ -106,7 +106,7 @@ func (s pluginService) serveArchivePage(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	data.Tables = []pluginPageTable{table}
-	writeNativeRecordPage(w, data, legacy)
+	writeNativeRecordPage(w, data)
 }
 
 func (s pluginService) removeArchiveRecord(w http.ResponseWriter, r *http.Request, name, confirm, proof string) {

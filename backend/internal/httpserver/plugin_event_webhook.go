@@ -372,7 +372,7 @@ func (api *eventWebhookAPI) pluginPage(w http.ResponseWriter, r *http.Request) {
 		data.Tables[0].Rows = append(data.Tables[0].Rows, []string{p.ID, p.Type, p.Reference, p.State, p.Reason})
 		data.Tables[0].RowActions = append(data.Tables[0].RowActions, nil)
 	}
-	writeNativeRecordPage(w, data, false)
+	writeNativeRecordPage(w, data)
 }
 func (api *eventWebhookAPI) tick(ctx context.Context) error {
 	if api == nil || api.organizer == nil || !api.organizer.pureGo || api.queue == nil {

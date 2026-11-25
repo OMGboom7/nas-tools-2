@@ -228,7 +228,7 @@ func (api *iyuuAPI) bindSite(ctx context.Context, s iyuuScope, in iyuuBinding) (
 
 // The original partner directory was visible to signed-in users in mixed
 // deployments. Binding and receipt access have their own administrator check.
-func (service pluginService) iyuuPartnerPage(w http.ResponseWriter, r *http.Request, legacy bool) {
+func (service pluginService) iyuuPartnerPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	if service.iyuu.transfer.login.pureGo {
 		scope, ok := service.iyuu.requestScope(w, r, false)
@@ -236,7 +236,7 @@ func (service pluginService) iyuuPartnerPage(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if partners, ok := service.iyuu.checkedPartners(w, r, scope); ok {
-			writeIyuuPartnerPage(w, partners, legacy)
+			writeIyuuPartnerPage(w, partners)
 		}
 		return
 	}
@@ -286,15 +286,15 @@ func (service pluginService) iyuuPartnerPage(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, 409, 409, "IYUU 设置已变化，请刷新")
 		return
 	}
-	writeIyuuPartnerPage(w, partners, legacy)
+	writeIyuuPartnerPage(w, partners)
 }
 
-func writeIyuuPartnerPage(w http.ResponseWriter, partners []iyuu.Partner, legacy bool) {
+func writeIyuuPartnerPage(w http.ResponseWriter, partners []iyuu.Partner) {
 	table := pluginPageTable{Columns: []string{"合作站点", "站点代码", "编号"}, Rows: [][]string{}, RowActions: []*pluginPageRowAction{}}
 	for _, v := range partners {
 		table.Rows = append(table.Rows, []string{v.Nickname, v.Site, v.ID.String()})
 	}
-	writeNativeRecordPage(w, pluginPageData{Title: "IYUU 站点绑定", Sections: []string{}, Tables: []pluginPageTable{table}, ReadOnly: true, ActionsOmitted: true}, legacy)
+	writeNativeRecordPage(w, pluginPageData{Title: "IYUU 站点绑定", Sections: []string{}, Tables: []pluginPageTable{table}, ReadOnly: true, ActionsOmitted: true})
 }
 
 func (api *iyuuAPI) legacyBind(w http.ResponseWriter, r *http.Request, body json.RawMessage) bool {

@@ -118,7 +118,7 @@ func (s pluginService) serveSyncTimerPlugin(w http.ResponseWriter, r *http.Reque
 		for _, run := range runs {
 			rows = append(rows, []string{run.ID, run.Slot, run.State, strconv.Itoa(run.Candidates)})
 		}
-		writeNativeRecordPage(w, pluginPageData{Title: "定时目录同步记录", Sections: []string{"在整理页的自动同步区域核对范围、启用定时并查看文件任务。"}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "周期", "状态", "候选范围"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}}, false)
+		writeNativeRecordPage(w, pluginPageData{Title: "定时目录同步记录", Sections: []string{"在整理页的自动同步区域核对范围、启用定时并查看文件任务。"}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "周期", "状态", "候选范围"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}})
 	case "save", "legacy-save":
 		var in struct {
 			Fingerprint string                     `json:"fingerprint"`

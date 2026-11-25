@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/mediaarchive"
+	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
 )
 
-var pluginPageURLPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 var pluginPageRecordIDPattern = regexp.MustCompile(`^[0-9]{1,30}$`)
 
 var pluginPageDeleteConfirmation = map[string]string{
@@ -50,21 +50,21 @@ type pluginPageActionRequest struct {
 	Confirmation string `json:"confirmation"`
 }
 
-func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, id string, legacy bool) bool {
+func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, id string) bool {
 	r.SetPathValue("id", id)
 	switch {
 	case s.autoSub != nil && id == autoSubID:
-		s.autoSub.page(w, r, s, legacy)
+		s.autoSub.page(w, r, s)
 	case s.disk != nil && id == diskID:
-		s.disk.page(w, r, s, legacy)
+		s.disk.page(w, r, s)
 	case s.system != nil && id == helperID:
-		s.helperPage(w, r, legacy)
+		s.helperPage(w, r)
 	case s.iyuu != nil && id == "IYUUAutoSeed":
-		s.iyuuPartnerPage(w, r, legacy)
+		s.iyuuPartnerPage(w, r)
 	case s.nativeArchivePage(id):
-		s.serveArchivePage(w, r, legacy)
+		s.serveArchivePage(w, r)
 	case s.nativeSubscriptionHistory(id):
-		s.subscriptionHistoryPage(w, r, id, legacy)
+		s.subscriptionHistoryPage(w, r, id)
 	case s.nativeTorrentRemover(id):
 		s.serveTorrentRemoverPlugin(w, r, "page")
 	case s.nativeTorrentMark(id):
@@ -102,7 +102,7 @@ func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, i
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
-	service.pluginPage(response, request, strings.TrimSpace(request.PathValue("id")), false)
+	service.pluginPage(response, request, strings.TrimSpace(request.PathValue("id")))
 }
 
 func (s pluginService) legacyPage(w http.ResponseWriter, r *http.Request) {
@@ -111,11 +111,11 @@ func (s pluginService) legacyPage(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 400, 400, "插件扩展页请求无效")
 		return
 	}
-	s.pluginPage(w, r, strings.TrimSpace(r.PostForm.Get("id")), true)
+	s.pluginPage(pluginFormPageWriter{w}, r, strings.TrimSpace(r.PostForm.Get("id")))
 }
 
-func (service pluginService) pluginPage(response http.ResponseWriter, request *http.Request, id string, legacy bool) {
-	if service.serveNativePage(response, request, id, legacy) || service.unavailablePlugin(response, request, id) {
+func (service pluginService) pluginPage(response http.ResponseWriter, request *http.Request, id string) {
+	if service.serveNativePage(response, request, id) || service.unavailablePlugin(response, request, id) {
 		return
 	}
 	token, ok := requireServiceToken(response, request)
@@ -184,7 +184,7 @@ func (service pluginService) pluginPage(response http.ResponseWriter, request *h
 		writeAPIError(response, http.StatusBadGateway, 502, "plugin page is invalid")
 		return
 	}
-	writeNativeRecordPage(response, data, legacy)
+	writeNativeRecordPage(response, data)
 }
 
 func normalizePluginPage(raw map[string]any) pluginPageData {
@@ -334,32 +334,22 @@ func validPluginPageRecordID(pluginID, recordID string) bool {
 }
 
 func cleanPluginPageText(value any, limit int) string {
-	cleaned := cleanPluginText(value, limit*4)
-	cleaned = pluginPageURLPattern.ReplaceAllStringFunc(cleaned, func(raw string) string {
-		parsed, err := url.Parse(raw)
-		if err != nil {
-			return ""
-		}
-		return parsed.Hostname()
-	})
-	runes := []rune(strings.TrimSpace(cleaned))
-	if len(runes) > limit {
-		return string(runes[:limit])
-	}
-	return string(runes)
+	return pluginpage.CleanText(text(value), limit)
 }
 
 // The legacy form endpoint uses snake-case action keys; the React client
 // consumes the typed page directly. Both expose the same rows and cursor.
-func writeNativeRecordPage(w http.ResponseWriter, data pluginPageData, legacy bool) {
-	if command, ok := w.(pluginCommandPageWriter); ok {
-		command.writePage(data)
+func writeNativeRecordPage(w http.ResponseWriter, data pluginPageData) {
+	if output, ok := w.(interface{ writePage(pluginPageData) }); ok {
+		output.writePage(data)
 		return
 	}
-	if !legacy {
-		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
-		return
-	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
+}
+
+type pluginFormPageWriter struct{ http.ResponseWriter }
+
+func (w pluginFormPageWriter) writePage(data pluginPageData) {
 	tables := make([]any, 0, len(data.Tables))
 	for _, table := range data.Tables {
 		actions := make([]any, len(table.RowActions))

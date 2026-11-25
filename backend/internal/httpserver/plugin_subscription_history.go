@@ -48,7 +48,7 @@ func historyCell(value any) string {
 	}
 }
 
-func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *http.Request, id string, legacy bool) {
+func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *http.Request, id string) {
 	if !service.historyReader(w, r) {
 		return
 	}
@@ -116,7 +116,7 @@ func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *h
 	if more {
 		data.NextCursor = strconv.FormatInt(records[len(records)-1].RowID, 10)
 	}
-	writeNativeRecordPage(w, data, legacy)
+	writeNativeRecordPage(w, data)
 }
 
 func (service pluginService) removeSubscriptionHistory(w http.ResponseWriter, r *http.Request, id, key string) {

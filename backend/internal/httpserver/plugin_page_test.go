@@ -90,7 +90,7 @@ func TestPluginRecordActionsRequireLocalStorageAndNeverForward(t *testing.T) {
 	}
 }
 
-func TestExternalPageInMixedDeploymentIsReadOnlyForBothClients(t *testing.T) {
+func TestExternalPageInMixedDeploymentIsReadOnlyForAllClients(t *testing.T) {
 	var calls int
 	h, token, _ := nativeServicesFixture(t, "", nil, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != "POST" || r.URL.Path != "/api/v1/plugin/page" || r.FormValue("id") != "ExternalPage" {
@@ -102,7 +102,11 @@ func TestExternalPageInMixedDeploymentIsReadOnlyForBothClients(t *testing.T) {
 	form := url.Values{"id": {"ExternalPage"}}
 	modern := nativeJSONRequest(h, "GET", "/api/v1/plugins/ExternalPage/page", token, "")
 	original := performFormRequest(h, "/api/v1/plugin/page", token, form)
-	for _, w := range []*httptest.ResponseRecorder{modern, original} {
+	command := nativeJSONRequest(h, "POST", "/do", token, `{"cmd":"get_plugin_page","data":{"id":"ExternalPage"}}`)
+	if command.Header().Get("Cache-Control") != "private, no-store" || !strings.Contains(command.Body.String(), `"func":null`) {
+		t.Fatal(command.Body.String())
+	}
+	for _, w := range []*httptest.ResponseRecorder{modern, original, command} {
 		body := w.Body.String()
 		if w.Code != 200 || !strings.Contains(body, "展示") || strings.Contains(body, "untrusted-markup") || strings.Contains(body, "123") {
 			t.Fatal(w.Code, body)
@@ -116,8 +120,8 @@ func TestExternalPageInMixedDeploymentIsReadOnlyForBothClients(t *testing.T) {
 	if w := performFormRequest(h, "/api/v1/plugin/page/action", token, form); w.Code != 400 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if calls != 2 {
-		t.Fatal("expected just two upstream reads", calls)
+	if calls != 3 {
+		t.Fatal("expected one read per client", calls)
 	}
 }
 

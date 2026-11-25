@@ -251,7 +251,7 @@ func (a *autoSubAPI) tick(ctx context.Context, _ time.Time) error {
 	return update(map[string]string{autoSubControl: string(b)})
 }
 
-func (api *autoSubAPI) page(w http.ResponseWriter, r *http.Request, service pluginService, legacy bool) {
+func (api *autoSubAPI) page(w http.ResponseWriter, r *http.Request, service pluginService) {
 	if !service.historyReader(w, r) {
 		return
 	}
@@ -325,5 +325,5 @@ func (api *autoSubAPI) page(w http.ResponseWriter, r *http.Request, service plug
 	if len(data.Sections) == 0 {
 		data.Sections = append(data.Sections, "暂无字幕任务。")
 	}
-	writeNativeRecordPage(w, data, legacy)
+	writeNativeRecordPage(w, data)
 }

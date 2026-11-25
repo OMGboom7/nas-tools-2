@@ -522,7 +522,7 @@ func (api *speedLimiterAPI) pluginPage(w http.ResponseWriter, r *http.Request) {
 		page.Tables[0].Rows = append(page.Tables[0].Rows, []string{j.ID, j.Source, j.Reference, j.State, strconv.Itoa(len(j.Operations))})
 		page.Tables[0].RowActions = append(page.Tables[0].RowActions, nil)
 	}
-	writeNativeRecordPage(w, page, false)
+	writeNativeRecordPage(w, page)
 }
 func (api *speedLimiterAPI) reservePlugin(next http.Handler) http.Handler {
 	const base = "/api/v1/plugins/SpeedLimiter"

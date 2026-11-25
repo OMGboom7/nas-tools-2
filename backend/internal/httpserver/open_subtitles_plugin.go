@@ -400,7 +400,7 @@ func (api *openSubtitleAPI) page(w http.ResponseWriter, r *http.Request) {
 		table.RowActions = append(table.RowActions, nil)
 	}
 	data := pluginPageData{Title: "OpenSubtitles 原字幕回执", ReadOnly: true, Sections: []string{"这是独立的原字幕消费者；只有新增／保留文件的持久凭据才报告完成。请求数包括登录、检索和下载授权，不表示新增字幕数。", "应答不明、处理中断及进程重启均不重发。可在整理页按完整原编号查回较早回执，尚未开始项可单独注明原因后停止。", "不会自动迁移 .org 账户到 .com，不破解验证页面；REST 下载授权可能已消耗配额。"}, Tables: []pluginPageTable{table}}
-	writeNativeRecordPage(w, data, false)
+	writeNativeRecordPage(w, data)
 }
 func (api *openSubtitleAPI) reservePlugin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

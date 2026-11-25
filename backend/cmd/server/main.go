@@ -15,9 +15,17 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/dbinit"
 	"github.com/0xforee/nas-tools/backend/internal/httpserver"
+	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "plugin-page" {
+		if err := pluginpage.Convert(os.Stdin, os.Stdout); err != nil {
+			slog.Error("plugin-page", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 {
 		if (os.Args[1] == "init-db" || os.Args[1] == "init-data") && len(os.Args) == 2 {
 			path := config.ApplicationPath()

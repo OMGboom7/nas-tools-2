@@ -1,10 +1,11 @@
 import json
+import os
+from pathlib import Path
 import re
-from urllib.parse import urlsplit
+import subprocess
 
 from flask import Blueprint, request
 from flask_restx import Api, reqparse, Resource
-from lxml import html as lxml_html
 
 from app.brushtask import BrushTask
 from app.conf import ModuleConf
@@ -19,105 +20,42 @@ from web.backend.pro_user import ProUser
 from web.security import require_auth, login_required, generate_access_token
 
 
-def _safe_plugin_page_text(value, limit=500):
-    """将插件页面文本压缩为无控制字符、无敏感 URL 路径的纯文本。"""
-    text = re.sub(r'\s+', ' ', str(value or '')).strip().replace('\x00', '')
-
-    def safe_url(match):
-        try:
-            parsed = urlsplit(match.group(0))
-            return parsed.hostname or ''
-        except ValueError:
-            return ''
-
-    text = re.sub(r'https?://[^\s<>"\']+', safe_url, text, flags=re.IGNORECASE)
-    return text[:limit]
-
-
 _PLUGIN_PAGE_DELETE_ACTIONS = {
     'DoubanSync': {
-        'row_prefix': 'douban_history_', 'method': 'delete_sync_history',
+        'method': 'delete_sync_history',
         'parameter': 'douban_id', 'pattern': r'[0-9]{1,30}'
     },
     'DoubanRank': {
-        'row_prefix': 'movie_rank_history_', 'method': 'delete_rank_history',
+        'method': 'delete_rank_history',
         'parameter': 'tmdb_id', 'pattern': r'[0-9]{1,30}'
     },
     'MovieRandom': {
-        'row_prefix': 'movie_random_history_', 'method': 'delete_random_history',
+        'method': 'delete_random_history',
         'parameter': 'tmdb_id', 'pattern': r'[0-9]{1,30}'
     },
     'MediaLibraryArchive': {
-        'data_attribute': 'data-name', 'method': 'remove_archive_file_for_api',
+        'method': 'remove_archive_file_for_api',
         'parameter': 'file_name', 'pattern': r'归档_[0-9]{14}\.md', 'requires_confirmation': True
     }
 }
 
 
-def _plugin_page_row_action(plugin_id, row):
-    spec = _PLUGIN_PAGE_DELETE_ACTIONS.get(plugin_id)
-    if not spec:
-        return None
-    prefix = spec.get('row_prefix')
-    if prefix:
-        row_id = str(row.get('id') or '')
-        record_id = row_id[len(prefix):] if row_id.startswith(prefix) else ''
-    else:
-        action_nodes = row.xpath('.//*[@%s]' % spec.get('data_attribute'))
-        record_id = str(action_nodes[0].get(spec.get('data_attribute')) or '') if action_nodes else ''
-    if not re.fullmatch(spec.get('pattern'), record_id):
-        return None
-    return {'type': 'delete', 'record_id': record_id}
+def _render_plugin_page(plugin_id, title, content, action_func):
+    # run.py selects the matching helper for source, single-file and container installs.
+    helper = os.environ.get("NASTOOL_DB_BINARY")
+    if not helper:
+        binary = "nas-tools-db.exe" if os.name == "nt" else "nas-tools-db"
+        helper = Path(__file__).resolve().parents[1] / "backend" / "bin" / binary
+    if not Path(helper).is_absolute():
+        raise ValueError("invalid plugin page helper path")
+    payload = json.dumps({"id": plugin_id, "title": str(title), "html": str(content),
+                          "hasAction": bool(action_func)}, ensure_ascii=False).encode("utf-8")
+    if len(payload) > 8 << 20:
+        raise ValueError("plugin page is too large")
+    result = subprocess.run([helper, "plugin-page"], input=payload, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, check=True, timeout=15)
+    return json.loads(result.stdout)
 
-
-def _structured_plugin_page(content, action_func=None, plugin_id=None):
-    """从旧插件 HTML 中仅提取标题文本、段落和表格，不返回标记或事件。"""
-    if not content:
-        return {'sections': [], 'tables': [], 'actions_omitted': bool(action_func)}
-    try:
-        root = lxml_html.fragment_fromstring(str(content), create_parent='div')
-    except (TypeError, ValueError):
-        return {'sections': [], 'tables': [], 'actions_omitted': bool(action_func)}
-
-    actions_omitted = bool(action_func) or bool(root.xpath(
-        './/*[@onclick or @onchange or @onsubmit or starts-with(translate(@href, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "javascript:")]'
-    ))
-    for unsafe in root.xpath('.//script|.//style|.//iframe|.//object|.//embed|.//form|.//button|.//input|.//textarea|.//select'):
-        unsafe.drop_tree()
-
-    tables = []
-    for table in root.xpath('.//table')[:10]:
-        header_nodes = table.xpath('./thead/tr[1]/*[self::th or self::td]')
-        headers = [_safe_plugin_page_text(' '.join(node.itertext()), 120) for node in header_nodes]
-        keep = [index for index, header in enumerate(headers)
-                if header and header not in ('操作', '动作')]
-        if not keep:
-            continue
-        rows = []
-        row_actions = []
-        row_nodes = table.xpath('./tbody/tr') or table.xpath('./tr[position()>1]')
-        for row in row_nodes[:200]:
-            cells = row.xpath('./th|./td')
-            values = [_safe_plugin_page_text(' '.join(cells[index].itertext())) if index < len(cells) else ''
-                      for index in keep]
-            if any(values):
-                rows.append(values)
-                row_actions.append(_plugin_page_row_action(plugin_id, row))
-        table_data = {'columns': [headers[index] for index in keep], 'rows': rows}
-        if any(row_actions):
-            table_data['row_actions'] = row_actions
-        tables.append(table_data)
-
-    sections = []
-    for element in root.xpath('.//*[self::h1 or self::h2 or self::h3 or self::h4 or self::h5 or self::h6 or self::p or self::li]'):
-        if element.xpath('ancestor::table'):
-            continue
-        value = _safe_plugin_page_text(' '.join(element.itertext()))
-        if value and (not sections or sections[-1] != value):
-            sections.append(value)
-        if len(sections) >= 80:
-            break
-    return {'sections': sections, 'tables': tables, 'actions_omitted': actions_omitted}
 
 apiv1_bp = Blueprint("apiv1",
                      __name__,
@@ -2615,8 +2553,10 @@ class PluginPage(ClientResource):
         title, content, action_func = PluginManager().get_plugin_page(plugin_id)
         if not title or not content:
             return {'code': 404, 'success': False, 'message': '插件扩展页暂无内容'}
-        data = _structured_plugin_page(content, action_func, plugin_id)
-        data['title'] = _safe_plugin_page_text(title, 120)
+        try:
+            data = _render_plugin_page(plugin_id, title, content, action_func)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return {'code': 502, 'success': False, 'message': '无法读取插件扩展页'}, 502
         return {'code': 0, 'success': True, 'data': data}
 
 

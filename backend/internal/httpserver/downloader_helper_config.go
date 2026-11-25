@@ -279,7 +279,7 @@ func (api *downloaderHelperAPI) summary(ctx context.Context, raw map[string]stri
 	s, err := api.selection(ctx, st.Actor, v)
 	return err == nil && s.proof == st.Scope, err == nil
 }
-func (service pluginService) helperPage(w http.ResponseWriter, r *http.Request, legacy bool) {
+func (service pluginService) helperPage(w http.ResponseWriter, r *http.Request) {
 	administrator, ok := service.catalogReader(w, r)
 	if !ok {
 		return
@@ -319,7 +319,7 @@ func (service pluginService) helperPage(w http.ResponseWriter, r *http.Request, 
 		data.Tables = append(data.Tables, table)
 	}
 	if !showRuns {
-		writeNativeRecordPage(w, data, legacy)
+		writeNativeRecordPage(w, data)
 		return
 	}
 	st, err := helperState(settings[helperControlKey])
@@ -368,7 +368,7 @@ func (service pluginService) helperPage(w http.ResponseWriter, r *http.Request, 
 	if len(table.Rows) > 0 {
 		data.Tables = append(data.Tables, table)
 	}
-	writeNativeRecordPage(w, data, legacy)
+	writeNativeRecordPage(w, data)
 }
 func (api *downloaderHelperAPI) importSettings(ctx context.Context, raw map[string]string, now time.Time) error {
 	cfg, err := api.transfer.login.config.Snapshot()

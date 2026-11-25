@@ -168,7 +168,7 @@ func (api *diskSpaceAPI) configure(_ context.Context, actor string, raw map[stri
 	st, err := json.Marshal(s)
 	return map[string]string{diskControlKey: string(st), diskConfigKey: string(b)}, err
 }
-func (api *diskSpaceAPI) page(w http.ResponseWriter, r *http.Request, service pluginService, legacy bool) {
+func (api *diskSpaceAPI) page(w http.ResponseWriter, r *http.Request, service pluginService) {
 	if !service.historyReader(w, r) {
 		return
 	}
@@ -250,7 +250,7 @@ func (api *diskSpaceAPI) page(w http.ResponseWriter, r *http.Request, service pl
 	if len(data.Sections) == 0 {
 		data.Sections = append(data.Sections, "暂无查重任务。")
 	}
-	writeNativeRecordPage(w, data, legacy)
+	writeNativeRecordPage(w, data)
 }
 
 func diskTables(ctx context.Context, tx *sql.Tx) error {

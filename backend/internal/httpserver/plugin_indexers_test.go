@@ -162,7 +162,7 @@ func TestNativeIndexerPluginLifecycleConfigurationWorkerAndPages(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	w = performFormRequest(f.h, "/api/v1/plugin/page", f.token, url.Values{"id": {"Prowlarr"}})
-	if w.Code != 200 {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"actions_omitted"`) || !strings.Contains(w.Body.String(), `"row_actions"`) || strings.Contains(w.Body.String(), `"actionsOmitted"`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if err := f.manager.tick(t.Context(), now.Add(2*time.Second)); err != nil || f.calls != 3 {

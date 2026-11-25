@@ -227,7 +227,7 @@ func (s pluginService) subtitlePage(w http.ResponseWriter, r *http.Request) {
 		t.RowActions = append(t.RowActions, nil)
 	}
 	data.Tables = append(data.Tables, t)
-	writeNativeRecordPage(w, data, false)
+	writeNativeRecordPage(w, data)
 }
 
 func (api *subtitleAPI) tick(ctx context.Context) error {

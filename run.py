@@ -33,6 +33,7 @@ else:
     db_binary = Path(__file__).resolve().parent / "backend" / "bin" / helper_name
 if not db_binary.is_absolute() or not db_binary.is_file():
     sys.exit(f"找不到数据库初始化程序 {db_binary}。源码安装请先运行 make db-build，发行包请重新安装。")
+os.environ["NASTOOL_DB_BINARY"] = str(db_binary)
 subprocess.run([str(db_binary), "init-db"], check=True)
 
 if sys.argv[1:] == ["--init-db"]:

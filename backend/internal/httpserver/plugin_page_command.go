@@ -47,11 +47,15 @@ func (s pluginService) commandPage(w http.ResponseWriter, r *http.Request, raw j
 		writeAPIError(w, 503, 503, "插件目录不可用")
 		return
 	}
+	w.Header().Set("Cache-Control", "private, no-store")
 	entry, known := catalog[input.ID]
-	if !known || entry.AuthLevel > 1 && !admin {
-		if !known && s.unavailablePlugin(w, r, input.ID) {
-			return
-		}
+	if !known {
+		// External plugins still executed by the transitional service supply
+		// the same permission-filtered, read-only page used by React.
+		s.pluginPage(pluginCommandPageWriter{w, input.ID}, r, input.ID)
+		return
+	}
+	if entry.AuthLevel > 1 && !admin {
 		writeAPIError(w, 404, 404, "未找到插件")
 		return
 	}
@@ -60,7 +64,6 @@ func (s pluginService) commandPage(w http.ResponseWriter, r *http.Request, raw j
 		writeAPIError(w, 503, 503, "无法读取已安装插件")
 		return
 	}
-	w.Header().Set("Cache-Control", "private, no-store")
 	if slices.Contains(installed, input.ID) {
 		q := r.URL.Query()
 		if input.After != "" {
@@ -68,7 +71,7 @@ func (s pluginService) commandPage(w http.ResponseWriter, r *http.Request, raw j
 		}
 		req := r.Clone(r.Context())
 		req.URL.RawQuery = q.Encode()
-		if s.serveNativePage(pluginCommandPageWriter{w, input.ID}, req, input.ID, false) {
+		if s.serveNativePage(pluginCommandPageWriter{w, input.ID}, req, input.ID) {
 			return
 		}
 		if entry.HasPage && !s.ownsPlugin(input.ID) {

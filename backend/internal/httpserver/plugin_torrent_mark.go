@@ -102,7 +102,7 @@ func (s pluginService) serveTorrentMarkPlugin(w http.ResponseWriter, r *http.Req
 			run := st.Runs[i]
 			rows = append(rows, []string{run.ID, run.Kind, run.State, strconv.Itoa(run.Changed), strconv.Itoa(run.Skipped), strconv.Itoa(run.Unknown)})
 		}
-		writeNativeRecordPage(w, pluginPageData{Title: "种子标记记录", Sections: []string{"请在插件页的种子标记区域核对下载器、执行或停止。结果未知的标签写入仅可只读核对。"}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "触发", "状态", "已标记", "跳过", "未知"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}}, false)
+		writeNativeRecordPage(w, pluginPageData{Title: "种子标记记录", Sections: []string{"请在插件页的种子标记区域核对下载器、执行或停止。结果未知的标签写入仅可只读核对。"}, ReadOnly: true, Tables: []pluginPageTable{{Columns: []string{"编号", "触发", "状态", "已标记", "跳过", "未知"}, Rows: rows, RowActions: make([]*pluginPageRowAction, len(rows))}}})
 	case "save", "legacy-save", "install", "uninstall":
 		next := raw
 		if action == "save" || action == "legacy-save" {

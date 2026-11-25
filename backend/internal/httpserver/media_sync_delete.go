@@ -431,7 +431,7 @@ func (api *mediaSyncDeleteAPI) pluginPage(w http.ResponseWriter, r *http.Request
 		page.Tables[0].Rows = append(page.Tables[0].Rows, []string{p.ID, p.Event.Name, p.State, strconv.Itoa(p.Count), p.Parent})
 		page.Tables[0].RowActions = append(page.Tables[0].RowActions, nil)
 	}
-	writeNativeRecordPage(w, page, false)
+	writeNativeRecordPage(w, page)
 }
 func (api *mediaSyncDeleteAPI) reservePlugin(next http.Handler) http.Handler {
 	const base = "/api/v1/plugins/MediaSyncDel"
