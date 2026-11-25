@@ -35,11 +35,19 @@ make python-exit-status
 
 ## 当前基线
 
+2026-11-25 AutoSub 的 faster-whisper 模式已改用本机 CTranslate2 C++ 程序。Go 使用 FFmpeg 提取选中音轨，原生程序按 16 kHz、30 秒窗口、CPU INT8 和五路束搜索识别，自动检测多语言模型的音轨语言，通过词对齐恢复时间。英文按原逻辑合并为句，其他语言按段输出。语音留在本机。Go 从服务进程的 PATH 查找 `nastool-ct2-whisper`，也可用 `NASTOOL_CT2_WHISPER` 指向已安装的原生程序。候选镜像使用固定的 CTranslate2 4.6.3 源码和 Ruy 构建；宿主机也可从同一 [CMake 目标](../../backend/native/ct2-whisper/CMakeLists.txt) 编译。React 沿用原模型名称、模型目录及单次运行开关。[识别与字幕写回](../../backend/internal/autosub/ct2.go)和[原生识别程序](../../backend/native/ct2-whisper/main.cc)
+
+可读取 Systran 和 guillaumekln 两种旧模型缓存、Hugging Face 默认缓存和本机解压目录。缓存缺失时，Go 从十个原模型选项对应的固定版本下载所需文件，按 Git blob 或 LFS 摘要校验，单文件完成后发布。传输中断后可从已写入位置继续；服务端忽略范围请求时重新接收。原目录和缓存中的其他文件保留。whisper.cpp 同时支持旧版的时间偏移、处理时长、识别提示和额外输出选项，临时识别产物写入本次任务的私有目录。[模型版本](../../backend/internal/autosub/ct2_models.json)和[缓存回归](../../backend/internal/autosub/ct2_test.go)
+
+隔离 Chrome 使用两套带相对链接的旧模型缓存分别启动 Go 任务。tiny.en 将公开的 JFK 音频识别为英文；多语言 tiny 自动识别 39.692 秒的合成西班牙语录音，跨过第 30 秒并生成 13 段字幕，最后一段结束于 39.66 秒。两次重启后可查原任务。十种模型的文件清单均已固定，本次实际运行了其中两种。候选镜像已增加原生识别程序的构建步骤，仍待 Docker 可用后执行镜像验收。
+
+在 macOS ARM64 上从固定的 CTranslate2 与 Ruy 源码编译后，使用该程序重新验证了英文和西班牙文两份音频。英文用例从空缓存开始，模型响应使用本机保存的原始权重；下载进程中止后的续传另以独立进程验证。本批通过 1012 项 HTTP 测试、其余 Go 包的测试或编译、Go 静态检查、Linux amd64 服务端静态构建、361 项前端测试和前端生产构建。候选镜像的 Compose 配置已校验，Alpine 镜像构建与启动仍待实测。
+
 2026-11-25 自动字幕 AutoSub 已接入 Go 和 React 的插件配置、单次执行、逐文件结果和通知。可沿用旧目录和最小字节数，读取已有同语种 SRT，提取内嵌文本字幕，或用 whisper.cpp 识别选中的音轨。开启中文翻译后沿用原 OpenAI 设置，按时间轴写入双语字幕。翻译应答按文件和文本保存，重启遇到应答未知的请求会显示待核对。文件写入采用同目录的临时文件和禁止覆盖的原子操作。[字幕处理](../../backend/internal/autosub/process.go)和[后台任务](../../backend/internal/httpserver/auto_sub_worker.go)
 
 隔离 Chrome 已从 React 配置并运行一次任务。实际 FFmpeg 提取西班牙语内嵌字幕，实际 whisper.cpp 1.5.4 和已核验的 tiny.en 模型将公开的 JFK 音频生成为两段英文字幕，重启后可查看原任务。临时媒体和模拟翻译应答验证了中文双语时间轴、英语三字母外挂字幕、保留已有中文、未知应答防重和已发布字幕的恢复。另一次 Chrome 验收在本机模拟服务收到字幕后强制终止 Go。重启后仍只有一次翻译请求，原文字幕保留，页面显示应答待核对。候选镜像配置已加入 whisper.cpp，模型由部署者挂载；该镜像尚待实际构建和运行。[回归用例](../../backend/internal/httpserver/auto_sub_test.go)
 
-AutoSub 的 faster-whisper 模式仍需接入能读取原 CTranslate2 权重的原生执行器。现阶段保存原设置，媒体需要该引擎识别时逐文件显示原因。自动字幕按单个文件处理蓝光 STREAM 片段，原媒体库刮削继续按整盘处理；临时 MPEG-TS 片段与原整盘刮削回归均通过。Go 共通过 1012 项 HTTP 测试，其余 Go 包测试或编译通过，Go 静态检查、Linux amd64 静态编译、361 项前端测试和生产构建均通过。自定义识别参数目前仅支持选定的数值和开关；真实翻译服务和 NAS 挂载仍待验收。
+上一批仅保留了 faster-whisper 的原设置；原生执行器的后续进展见上文。自动字幕按单个文件处理蓝光 STREAM 片段，原媒体库刮削继续按整盘处理；临时 MPEG-TS 片段与原整盘刮削回归均通过。Go 共通过 1012 项 HTTP 测试，其余 Go 包测试或编译通过，Go 静态检查、Linux amd64 静态编译、361 项前端测试和生产构建均通过。自定义识别参数目前仅支持选定的数值和开关；真实翻译服务和 NAS 挂载仍待验收。
 
 2026-11-25 磁盘空间释放已接入纯 Go 服务和 React 插件页。支持按目录、文件后缀和最小文件大小执行一次，保留仅查重及快速模式。读取原 `plugins/DiskSpaceSaver/sha1.json` 或旧 `result_path`，首次使用旧条目时重新计算哈希。后续条目记录文件身份、大小、修改时间、状态变化时间和哈希模式。旧自定义缓存文件保留，更新写入插件目录。React 可查看每个候选文件和处理结果并翻页。[配置和结果页面](../../backend/internal/httpserver/disk_space.go)
 

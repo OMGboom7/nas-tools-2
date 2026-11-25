@@ -15,6 +15,7 @@ type Options struct {
 	Translate, ExtractOnly bool
 	Engine                 string
 	Whisper                Whisper
+	Faster                 FasterWhisper
 }
 
 type Publication struct {
@@ -84,6 +85,15 @@ func Process(ctx context.Context, d organization.LibraryDefinition, m organizati
 		if opt.ExtractOnly {
 			skip = "无可提取字幕，已跳过"
 			return nil, nil
+		}
+		if opt.Engine == "faster-whisper" {
+			b, l, e := opt.Faster.Recognize(ctx, f, audio)
+			if errors.Is(e, errNoSpeech) {
+				skip = "音轨中未检测到语音，已跳过"
+				return nil, nil
+			}
+			lang = l
+			return b, e
 		}
 		if opt.Engine != "" && opt.Engine != "whisper.cpp" {
 			return nil, errors.New("当前识别引擎尚未接入原生运行时")

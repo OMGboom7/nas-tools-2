@@ -32,8 +32,8 @@ type autoSubAPI struct {
 }
 type autoSubSettings struct {
 	autosub.Options
-	Paths, Minimum, FasterModel, FasterPath string
-	Once, Notify                            bool
+	Paths, Minimum string
+	Once, Notify   bool
 }
 
 func (c *autoSubSettings) fields() map[string]any {
@@ -41,13 +41,13 @@ func (c *autoSubSettings) fields() map[string]any {
 		"path_list": &c.Paths, "file_size": &c.Minimum,
 		"whisper_main": &c.Whisper.Binary, "whisper_model": &c.Whisper.Model,
 		"additional_args": &c.Whisper.Args, "asr_engine": &c.Engine,
-		"faster_whisper_model": &c.FasterModel, "faster_whisper_model_path": &c.FasterPath,
+		"faster_whisper_model": &c.Faster.Model, "faster_whisper_model_path": &c.Faster.Directory,
 		"translate_only": &c.ExtractOnly, "translate_zh": &c.Translate,
 		"run_now": &c.Once, "send_notify": &c.Notify,
 	}
 }
 func autoSubValues(v map[string]json.RawMessage) (autoSubSettings, error) {
-	c := autoSubSettings{Options: autosub.Options{Engine: "whisper.cpp", Whisper: autosub.Whisper{Args: "-t 4 -p 1"}}, FasterModel: "base"}
+	c := autoSubSettings{Options: autosub.Options{Engine: "whisper.cpp", Whisper: autosub.Whisper{Args: "-t 4 -p 1"}, Faster: autosub.FasterWhisper{Model: "base"}}}
 	fields := c.fields()
 	if b := v["file_size"]; len(b) > 0 && b[0] != '"' && string(b) != "null" {
 		var n int64
@@ -61,17 +61,21 @@ func autoSubValues(v map[string]json.RawMessage) (autoSubSettings, error) {
 	return c, err
 }
 func autoSubFields() []pluginConfigField {
+	models := []pluginConfigChoice{}
+	for _, name := range autosub.FasterModels() {
+		models = append(models, pluginConfigChoice{name, name})
+	}
 	fs := []pluginConfigField{
 		{Key: "path_list", Title: "媒体目录", Type: "textarea", Tooltip: "每行一个绝对目录。生成的字幕保存到媒体文件旁。"},
 		{Key: "file_size", Title: "最小文件大小（字节）", Type: "text", Tooltip: "沿用旧任务实际按字节筛选的数值。"},
 		{Key: "translate_zh", Title: "翻译为中文", Type: "switch", Tooltip: "将字幕文本发送到已配置的 OpenAI 翻译服务，生成中外文双语 SRT。"},
 		{Key: "translate_only", Title: "仅使用已有字幕", Type: "switch", Tooltip: "读取外挂字幕或提取内嵌文本字幕，跳过语音识别。"},
-		{Key: "asr_engine", Title: "语音识别引擎", Type: "select", Options: []pluginConfigChoice{{"whisper.cpp", "whisper.cpp"}, {"faster-whisper", "faster-whisper（原生识别待接入）"}}},
+		{Key: "asr_engine", Title: "语音识别引擎", Type: "select", Options: []pluginConfigChoice{{"whisper.cpp", "whisper.cpp"}, {"faster-whisper", "faster-whisper（CTranslate2）"}}},
 		{Key: "whisper_main", Title: "whisper.cpp 程序路径", Type: "text", Tooltip: "使用服务端 whisper-cli 或 NASTOOL_WHISPER_CLI 指定的程序。"},
 		{Key: "whisper_model", Title: "whisper.cpp 模型文件", Type: "text"},
 		{Key: "additional_args", Title: "whisper.cpp 识别参数", Type: "text"},
-		{Key: "faster_whisper_model", Title: "faster-whisper 模型名称", Type: "text"},
-		{Key: "faster_whisper_model_path", Title: "faster-whisper 模型目录", Type: "text"},
+		{Key: "faster_whisper_model", Title: "faster-whisper 模型名称", Type: "select", Options: models},
+		{Key: "faster_whisper_model_path", Title: "faster-whisper 模型目录", Type: "text", Tooltip: "支持原缓存和解压后的 CTranslate2 模型。首次缺少模型时从 Hugging Face 下载并校验。语音在本机识别。"},
 		{Key: "send_notify", Title: "发送处理通知", Type: "switch"},
 		{Key: "run_now", Title: "保存后运行一次", Type: "switch"},
 	}

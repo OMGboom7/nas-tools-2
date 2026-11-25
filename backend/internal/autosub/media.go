@@ -173,16 +173,25 @@ func (w Whisper) arguments() ([]string, error) {
 	for i := 0; i < len(args); i++ {
 		key := args[i]
 		switch key {
-		case "-ng", "--no-gpu", "-fa", "--flash-attn", "-sow", "--split-on-word", "-nf", "--no-fallback", "-ntp", "--no-timestamps-printed":
+		case "-tr", "--translate", "-di", "--diarize", "-tdrz", "--tinydiarize",
+			"-ps", "--print-special", "-pc", "--print-colors", "-pp", "--print-progress", "-nt", "--no-timestamps", "-ls", "--log-score",
+			"-debug", "--debug-mode", "-otxt", "--output-txt", "-ovtt", "--output-vtt", "-osrt", "--output-srt", "-olrc", "--output-lrc", "-ocsv", "--output-csv", "-oj", "--output-json", "-ojf", "--output-json-full",
+			"-ng", "--no-gpu", "-fa", "--flash-attn", "-sow", "--split-on-word", "-nf", "--no-fallback", "-ntp", "--no-timestamps-printed":
 			argv = append(argv, key)
-		case "-t", "--threads", "-p", "--processors", "-bs", "--beam-size", "-bo", "--best-of", "-ml", "--max-len", "-mc", "--max-context", "-wt", "--word-thold", "-et", "--entropy-thold", "-lpt", "--logprob-thold", "-nth", "--no-speech-thold", "-tp", "--temperature", "-tpi", "--temperature-inc":
+		case "-ot", "--offset-t", "-on", "--offset-n", "-d", "--duration", "-t", "--threads", "-p", "--processors", "-bs", "--beam-size", "-bo", "--best-of", "-ml", "--max-len", "-mc", "--max-context", "-wt", "--word-thold", "-et", "--entropy-thold", "-lpt", "--logprob-thold", "-nth", "--no-speech-thold", "-tp", "--temperature", "-tpi", "--temperature-inc":
 			i++
 			if i == len(args) || !numericArg.MatchString(args[i]) {
 				return nil, ErrEngine
 			}
 			argv = append(argv, key, args[i])
+		case "--prompt", "-oved", "--ov-e-device":
+			i++
+			if i == len(args) || strings.HasPrefix(args[i], "-") || strings.ContainsAny(args[i], "\x00\r\n") {
+				return nil, ErrEngine
+			}
+			argv = append(argv, key, args[i])
 		default:
-			return nil, ErrEngine
+			return nil, fmt.Errorf("%w：请核对额外识别参数", ErrEngine)
 		}
 	}
 	return argv, nil
@@ -220,7 +229,9 @@ func (w Whisper) Recognize(ctx context.Context, media *os.File, audio Stream) ([
 	if cmd.Run() != nil {
 		return nil, "", ErrEngine
 	}
-	if bytes.Contains(log.Bytes(), []byte("model is not multilingual, ignoring language and translation options")) {
+	if slices.Contains(args[1:], "-tr") || slices.Contains(args[1:], "--translate") {
+		lang = "en"
+	} else if bytes.Contains(log.Bytes(), []byte("model is not multilingual, ignoring language and translation options")) {
 		lang = "en"
 	} else if lang == "auto" {
 		m := detected.FindSubmatch(log.Bytes())
