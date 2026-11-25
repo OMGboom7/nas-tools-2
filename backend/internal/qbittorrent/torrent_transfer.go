@@ -116,6 +116,7 @@ func (p TransferProtocol) WireID(m torrentmeta.TransferMetadata) (string, error)
 }
 
 type transferInfo struct {
+	Tracker   string   `json:"tracker"`
 	Hash      string   `json:"hash"`
 	Name      string   `json:"name"`
 	State     string   `json:"state"`
@@ -173,6 +174,7 @@ func (c *Client) TransferTask(ctx context.Context, id string) (torrenttransfer.T
 		return s, ErrResponse
 	}
 	s.WireID, s.Name, s.State, s.AddedAt, s.Directory, s.AutoManaged = id, row.Name, row.State, *row.Added, *row.Directory, *row.Auto
+	s.HasTracker = row.Tracker != ""
 	if row.Tags != nil {
 		s.RawQbTags = *row.Tags
 		for _, tag := range strings.Split(*row.Tags, ",") {
@@ -329,7 +331,7 @@ func (c *Client) transferAction(ctx context.Context, expected torrenttransfer.Ta
 	if err != nil {
 		return err
 	}
-	if !expected.SameInstance(current) || !current.Paused || current.Checking || current.Error || start && !current.FullComplete(m) {
+	if !expected.SameInstance(current) || !current.Paused || current.Checking || current.Error || start && (!current.HasTracker || !current.FullComplete(m)) {
 		return ErrResponse
 	}
 	if start && m.Private {

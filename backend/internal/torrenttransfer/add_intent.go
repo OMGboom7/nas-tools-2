@@ -34,6 +34,11 @@ func (i AddIntent) Validate() error {
 	return nil
 }
 
+func contentDigest(content []byte) string {
+	digest := sha256.Sum256(content)
+	return hex.EncodeToString(digest[:])
+}
+
 // Send owns the interval between protocol preflight and the actual add RPC.
 // A previous intent is never replayed, even if its response was acknowledged.
 // The controller can look up the first receipt using this same action key.
@@ -41,8 +46,7 @@ func (i AddIntent) Send(ctx context.Context, address, id, dir string, content []
 	if err := i.Validate(); err != nil {
 		return AddReceipt{}, err
 	}
-	digest := sha256.Sum256(content)
-	if send == nil || Hash(address) != i.Receiver || id != i.WireID || dir != i.Directory || hex.EncodeToString(digest[:]) != i.ContentDigest {
+	if send == nil || Hash(address) != i.Receiver || id != i.WireID || dir != i.Directory || contentDigest(content) != i.ContentDigest {
 		return AddReceipt{}, ErrState
 	}
 	if err := i.Revalidate(ctx); err != nil {

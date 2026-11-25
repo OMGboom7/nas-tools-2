@@ -159,8 +159,8 @@ func (c *Client) TransferTask(ctx context.Context, id string) (torrenttransfer.T
 	if !torrenttransfer.Hex(id, 40) {
 		return s, ErrConfiguration
 	}
-	legacy := []string{"hashString", "name", "downloadDir", "addedDate", "status", "percentDone", "metadataPercentComplete", "leftUntilDone", "error", "labels", "files", "fileStats", "torrentFile"}
-	modernFields := []string{"hash_string", "name", "download_dir", "added_date", "status", "percent_done", "metadata_percent_complete", "left_until_done", "error", "labels", "files", "file_stats", "torrent_file"}
+	legacy := []string{"hashString", "name", "downloadDir", "addedDate", "status", "percentDone", "metadataPercentComplete", "leftUntilDone", "error", "labels", "files", "fileStats", "torrentFile", "trackers"}
+	modernFields := []string{"hash_string", "name", "download_dir", "added_date", "status", "percent_done", "metadata_percent_complete", "left_until_done", "error", "labels", "files", "file_stats", "torrent_file", "trackers"}
 	args, modern, err := c.transferRPC(ctx, "torrent-get", "torrent_get", map[string]any{"ids": []string{id}, "fields": legacy}, map[string]any{"ids": []string{id}, "fields": modernFields})
 	if err != nil {
 		return s, err
@@ -181,11 +181,20 @@ func (c *Client) TransferTask(ctx context.Context, id string) (torrenttransfer.T
 	var progress, metadata float64
 	var left int64
 	var files, stats []map[string]json.RawMessage
+	var trackers []struct {
+		Announce string `json:"announce"`
+	}
 	var metainfoPath string
-	outputs := []any{&s.WireID, &s.Name, &s.Directory, &s.AddedAt, &status, &progress, &metadata, &left, &code, &s.Labels, &files, &stats, &metainfoPath}
+	outputs := []any{&s.WireID, &s.Name, &s.Directory, &s.AddedAt, &status, &progress, &metadata, &left, &code, &s.Labels, &files, &stats, &metainfoPath, &trackers}
 	for i, key := range fields {
 		if !transferField(row, key, outputs[i]) {
 			return s, ErrResponse
+		}
+	}
+	for _, tracker := range trackers {
+		if tracker.Announce != "" {
+			s.HasTracker = true
+			break
 		}
 	}
 	if metainfoPath != "" {
@@ -232,7 +241,7 @@ func (c *Client) transferAction(ctx context.Context, expected torrenttransfer.Ta
 	if err != nil {
 		return err
 	}
-	if !expected.SameInstance(current) || !current.Paused || current.Checking || current.Error || start && !current.FullComplete(m) {
+	if !expected.SameInstance(current) || !current.Paused || current.Checking || current.Error || start && (!current.HasTracker || !current.FullComplete(m)) {
 		return ErrResponse
 	}
 	if start && m.Private {

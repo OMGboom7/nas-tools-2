@@ -43,6 +43,7 @@ type Task struct {
 	Paused        bool                `json:"paused"`
 	Checking      bool                `json:"checking"`
 	Complete      bool                `json:"complete"`
+	HasTracker    bool                `json:"hasTracker"`
 	SourceSeeding bool                `json:"sourceSeeding"`
 	Error         bool                `json:"error"`
 	AutoManaged   bool                `json:"autoManaged"`
