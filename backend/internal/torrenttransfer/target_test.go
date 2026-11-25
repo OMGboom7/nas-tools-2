@@ -12,14 +12,18 @@ import (
 )
 
 type targetFixture struct {
-	task           Task
-	checks, starts int
+	task             Task
+	checks, starts   int
+	checkImmediately bool
 }
 
 func (*targetFixture) Address() string                                      { return "http://target.fixture" }
 func (c *targetFixture) TransferTask(context.Context, string) (Task, error) { return c.task, nil }
 func (c *targetFixture) RecheckTransfer(context.Context, Task, torrentmeta.TransferMetadata) error {
 	c.checks++
+	if c.checkImmediately {
+		c.task.State, c.task.Checking, c.task.Paused, c.task.Complete = "checking", true, false, false
+	}
 	return nil
 }
 func (c *targetFixture) StartTransfer(context.Context, Task, torrentmeta.TransferMetadata) error {
@@ -28,6 +32,11 @@ func (c *targetFixture) StartTransfer(context.Context, Task, torrentmeta.Transfe
 }
 
 func TestTargetRequiresOriginalGrantAndObservedCheckBeforeStart(t *testing.T) {
+	t.Run("checking on next poll", func(t *testing.T) { exerciseObservedCheck(t, false) })
+	t.Run("checking only at dispatch", func(t *testing.T) { exerciseObservedCheck(t, true) })
+}
+
+func exerciseObservedCheck(t *testing.T, immediate bool) {
 	ctx := t.Context()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "user.db"))
 	if err != nil {
@@ -72,10 +81,15 @@ func TestTargetRequiresOriginalGrantAndObservedCheckBeforeStart(t *testing.T) {
 			t.Fatalf("stage %q, want %q: %v", got, want, err)
 		}
 	}
-	step(true, "acknowledged")
-	step(true, "bound")
-	c.task.State, c.task.Checking, c.task.Paused, c.task.Complete = "checking", true, false, false
-	step(true, "checking")
+	c.checkImmediately = immediate
+	if immediate {
+		step(true, "checking")
+	} else {
+		step(true, "acknowledged")
+		step(true, "bound")
+		c.task.State, c.task.Checking, c.task.Paused, c.task.Complete = "checking", true, false, false
+		step(true, "checking")
+	}
 	c.task.State, c.task.Checking, c.task.Paused, c.task.Complete = "stopped", false, true, true
 	c.task.Done = nil
 	step(true, "checking")

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ApiError, addMagnetDownload, addSiteTorrentLink, addTorrentDownload, controlDownload, getDownloads, getSites, type AuthSession, type DownloadsData, type DownloadTask, type SiteSummary } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { ManualDownloadReceipts } from "../components/ManualDownloadReceipts";
@@ -175,10 +175,12 @@ export function DownloadsPage({ session, currentPath, onNavigate, onLogout, onSe
         <ManualDownloadReceipts token={session.token} onSessionExpired={onSessionExpired} />
         {String(session.user.userid) === "0" && <TorrentTransferReceipts key={"transfer-receipts-" + session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         <TransmissionProfiles token={session.token} onSessionExpired={onSessionExpired} />
-        {String(session.user.userid) === "0" && <QbProfiles key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
-        {String(session.user.userid) === "0" && <PTAdmission key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
-        {String(session.user.userid) === "0" && <SeedingPolicies key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
-        {String(session.user.userid) === "0" && <PTVerification key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
+        {String(session.user.userid) === "0" && <Fragment key={session.token}>
+          <QbProfiles token={session.token} onSessionExpired={onSessionExpired} />
+          <PTAdmission token={session.token} onSessionExpired={onSessionExpired} />
+          <SeedingPolicies token={session.token} onSessionExpired={onSessionExpired} />
+          <PTVerification token={session.token} onSessionExpired={onSessionExpired} />
+        </Fragment>}
         <form className="download-magnet-form" onSubmit={(event) => void handleMagnetSubmit(event)}>
           <label htmlFor="download-magnet">添加磁力链接</label>
           <div><input id="download-magnet" type="text" value={magnet} onChange={(event) => setMagnet(event.target.value)} placeholder="magnet:?xt=urn:btih:…" maxLength={4096} required />

@@ -141,7 +141,22 @@ func (i AddIntent) advanceTarget(ctx context.Context, c TargetClient, m torrentm
 		if stage != "bound" || !task.Paused {
 			return stage, nil
 		}
-		return i.targetAction(ctx, key, proof, nil, func() error { return c.RecheckTransfer(ctx, task, m) })
+		state, err := i.targetAction(ctx, key, proof, nil, func() error { return c.RecheckTransfer(ctx, task, m) })
+		if err != nil || state != "acknowledged" {
+			return state, err
+		}
+		// Short checks can finish before the next scheduler tick or page refresh.
+		// Only record checking when this same target is observed in that state.
+		task, err = c.TransferTask(ctx, i.WireID)
+		if err != nil {
+			return state, err
+		}
+		if !frozen.SameInstance(task) || !task.Matches(m) || task.Error {
+			return state, ErrState
+		}
+		if !task.Checking {
+			return state, nil
+		}
 	}
 	next := stage
 	switch stage {
