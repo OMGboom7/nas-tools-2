@@ -178,11 +178,7 @@ func (s siteSigninRemoteSource) allowed(user, body string) bool {
 	}
 	switch s.channel.Type {
 	case "telegram":
-		admins := signinStringList(text(s.config["admin_ids"]), ",")
-		if strings.HasPrefix(body, "/") {
-			return admins[user]
-		}
-		return admins[user] || signinStringList(text(s.config["user_ids"]), ",")[user]
+		return telegramSenderAllowed(s.config, user, body)
 	case "wechat":
 		if strings.HasPrefix(body, "/") && text(s.config["adminUser"]) != "" {
 			return signinStringList(text(s.config["adminUser"]), ";")[user]
@@ -235,10 +231,8 @@ type signinTelegramUpdate struct {
 }
 
 func (api *siteSigninAPI) telegramUpdate(ctx context.Context, c sitesignin.Control, s siteSigninRemoteSource, raw []byte) error {
-	var u signinTelegramUpdate
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.UseNumber()
-	if d.Decode(&u) != nil || u.Message.From.Bot || u.ID.String() == "" || u.Message.Text == "" {
+	u, ok := decodeTelegramUpdate(raw)
+	if !ok {
 		return sitesignin.ErrScope
 	}
 	return api.incoming(ctx, c, s, u.ID.String(), u.Message.From.ID.String(), u.Message.From.Name, u.Message.Text, time.Unix(u.Message.Date, 0), raw)
@@ -258,7 +252,10 @@ func signinIPAllowed(raw any, ip netip.Addr) bool {
 	if !ip.IsValid() {
 		return false
 	}
-	values := objectValue(raw)
+	values, ok := raw.(map[string]any)
+	if !ok && raw != nil && raw != "" {
+		return false
+	}
 	key := "ipv4"
 	if ip.Is6() {
 		key = "ipv6"

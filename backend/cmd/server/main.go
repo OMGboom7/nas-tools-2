@@ -30,6 +30,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 4 && os.Args[1] == "telegram-incoming" {
+		if err := httpserver.TelegramIncomingCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Args[3], os.Stdin, os.Stdout); err != nil {
+			slog.Error("Telegram callback unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "send-telegram" {
 		if err := httpserver.SendTelegramCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin); err != nil {
 			slog.Error("Telegram notification failed")

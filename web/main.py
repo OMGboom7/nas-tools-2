@@ -5,6 +5,7 @@ import hashlib
 import mimetypes
 import os.path
 import re
+import subprocess
 import time
 import traceback
 import urllib
@@ -45,7 +46,7 @@ from app.sync import Sync
 from app.torrentremover import TorrentRemover
 from app.utils import DomUtils, SystemUtils, ExceptionUtils, StringUtils
 from app.utils.types import *
-from config import PT_TRANSFER_INTERVAL, Config, TMDB_API_DOMAINS
+from config import PT_TRANSFER_INTERVAL, Config, TMDB_API_DOMAINS, run_go_helper
 from web.action import WebAction
 from web.apiv1 import apiv1_bp
 from web.backend.WXBizMsgCrypt3 import WXBizMsgCrypt
@@ -1378,63 +1379,32 @@ def emby_webhook():
 @App.route('/telegram', methods=['POST'])
 @require_auth(force=False)
 def telegram():
-    """
-    {
-        'update_id': ,
-        'message': {
-            'message_id': ,
-            'from': {
-                'id': ,
-                'is_bot': False,
-                'first_name': '',
-                'username': '',
-                'language_code': 'zh-hans'
-            },
-            'chat': {
-                'id': ,
-                'first_name': '',
-                'username': '',
-                'type': 'private'
-            },
-            'date': ,
-            'text': ''
-        }
-    }
-    """
-    # 当前在用的交互渠道
-    interactive_client = Message().get_interactive_client(SearchType.TG)
-    if not interactive_client:
+    channel = Message().get_interactive_client(SearchType.TG)
+    if not channel:
         return 'NAStool未启用Telegram交互'
-    msg_json = request.get_json()
-    if not SecurityHelper().check_telegram_ip(request.remote_addr):
-        log.error("收到来自 %s 的非法Telegram消息：%s" % (request.remote_addr, msg_json))
+    # Preserve the caller address used by the configured Flask proxy handling.
+    if not request.is_json:
+        return '需要 JSON 消息', 415
+    if request.content_length is not None and request.content_length > 256 * 1024:
+        return '消息过大', 413
+    raw = request.stream.read(256 * 1024 + 1)
+    if len(raw) > 256 * 1024:
+        return '消息过大', 413
+    try:
+        result = json.loads(run_go_helper("telegram-incoming", str(channel["id"]),
+                                         request.remote_addr or "", payload=raw))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 'Telegram 接收服务暂不可用', 503
+    if result["action"] == "invalid":
+        return '消息格式无效', 400
+    if result["action"] == "forbidden":
         return '不允许的IP地址请求'
-    if msg_json:
-        message = msg_json.get("message", {})
-        text = message.get("text")
-        user_id = message.get("from", {}).get("id")
-        # 获取用户名
-        user_name = message.get("from", {}).get("username")
-        if text:
-            log.info(f"收到Telegram消息：userid={user_id}, username={user_name}, text={text}")
-            # 检查权限
-            if text.startswith("/"):
-                if str(user_id) not in interactive_client.get("client").get_admin():
-                    Message().send_channel_msg(channel=SearchType.TG,
-                                               title="只有管理员才有权限执行此命令",
-                                               user_id=user_id)
-                    return '只有管理员才有权限执行此命令'
-            else:
-                if not str(user_id) in interactive_client.get("client").get_users():
-                    Message().send_channel_msg(channel=SearchType.TG,
-                                               title="你不在用户白名单中，无法使用此机器人",
-                                               user_id=user_id)
-                    return '你不在用户白名单中，无法使用此机器人'
-            # 处理消息
-            WebAction().handle_message_job(msg=text,
-                                           in_from=SearchType.TG,
-                                           user_id=user_id,
-                                           user_name=user_name)
+    if result["action"] == "deny":
+        Message().send_channel_msg(channel=SearchType.TG, title=result["text"], user_id=result["user_id"])
+        return result["text"]
+    if result["action"] == "dispatch":
+        WebAction().handle_message_job(msg=result["text"], in_from=SearchType.TG,
+                                       user_id=result["user_id"], user_name=result.get("name"))
     return 'Ok'
 
 

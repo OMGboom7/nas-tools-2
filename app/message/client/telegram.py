@@ -23,8 +23,6 @@ class Telegram(_IMessageClient):
     _telegram_thread_id = None
     _webhook = None
     _webhook_url = None
-    _telegram_user_ids = []
-    _telegram_admin_ids = []
     _domain = None
     _message_proxy_event = None
     _client_config = {}
@@ -47,13 +45,6 @@ class Telegram(_IMessageClient):
             self._telegram_chat_id = self._client_config.get('chat_id')
             self._telegram_thread_id = self._client_config.get('thread_id')
             self._webhook = self._client_config.get('webhook')
-            telegram_admin_ids = self._client_config.get('admin_ids')
-            if telegram_admin_ids:
-                self._telegram_admin_ids = telegram_admin_ids.split(",")
-            self._telegram_user_ids = self._telegram_admin_ids
-            telegram_user_ids = self._client_config.get('user_ids')
-            if telegram_user_ids:
-                self._telegram_user_ids.extend(telegram_user_ids.split(","))
             if self._telegram_token and self._telegram_chat_id:
                 if self._webhook:
                     if self._domain:
@@ -74,18 +65,6 @@ class Telegram(_IMessageClient):
     @classmethod
     def match(cls, ctype):
         return True if ctype == cls.schema else False
-
-    def get_admin(self):
-        """
-        获取允许使用远程命令的user_id列表
-        """
-        return self._telegram_admin_ids
-
-    def get_users(self):
-        """
-        获取允许使用telegram机器人的user_id列表
-        """
-        return self._telegram_user_ids
 
     def _send(self, kind, user_id, thread_id, **fields):
         fields.update(token=self._telegram_token, chat_id=str(user_id or self._telegram_chat_id),
