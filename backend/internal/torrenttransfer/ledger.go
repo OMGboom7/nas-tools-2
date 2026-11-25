@@ -46,6 +46,12 @@ func NewLedger(ctx context.Context, db *sql.DB) (*Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS GO_TORRENT_TRANSFER_ADD_REPLIES (
+		receiver TEXT NOT NULL, wire_id TEXT NOT NULL, receipt TEXT NOT NULL, duplicate INTEGER NOT NULL,
+		created_known INTEGER NOT NULL, PRIMARY KEY(receiver,wire_id))`)
+	if err != nil {
+		return nil, err
+	}
 	return &Ledger{db}, nil
 }
 
@@ -111,6 +117,10 @@ func (l *Ledger) Claim(ctx context.Context, k ActionKey, receipt, proof string) 
 // completion of a file check, ownership of an added task, or permission for
 // any subsequent action.
 func (l *Ledger) Finish(ctx context.Context, k ActionKey, receipt, proof, state string) error {
+	return l.finish(ctx, k, receipt, proof, state, nil)
+}
+
+func (l *Ledger) finish(ctx context.Context, k ActionKey, receipt, proof, state string, reply *AddReceipt) error {
 	if !k.valid() || !Hex(receipt, 64) || !Hex(proof, 64) || state != "acknowledged" && state != "unknown" {
 		return ErrState
 	}
@@ -133,5 +143,34 @@ func (l *Ledger) Finish(ctx context.Context, k ActionKey, receipt, proof, state 
 	if row.State != state || row.Receipt != receipt || row.Proof != proof {
 		return ErrState
 	}
+	if reply != nil {
+		if k.Action != "add" || state != "acknowledged" || reply.WireID != k.WireID {
+			return ErrState
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO GO_TORRENT_TRANSFER_ADD_REPLIES(receiver,wire_id,receipt,duplicate,created_known) VALUES(?,?,?,?,?) ON CONFLICT(receiver,wire_id) DO NOTHING`, k.Receiver, k.WireID, receipt, reply.Duplicate, reply.CreatedKnown)
+		if err != nil {
+			return err
+		}
+		stored, err := readAddReply(ctx, tx, k, receipt)
+		if err != nil {
+			return err
+		}
+		if stored != *reply {
+			return ErrState
+		}
+	}
 	return tx.Commit()
+}
+
+func readAddReply(ctx context.Context, q actionReader, k ActionKey, receipt string) (AddReceipt, error) {
+	var reply AddReceipt
+	err := q.QueryRowContext(ctx, `SELECT wire_id,duplicate,created_known FROM GO_TORRENT_TRANSFER_ADD_REPLIES WHERE receiver=? AND wire_id=? AND receipt=?`, k.Receiver, k.WireID, receipt).Scan(&reply.WireID, &reply.Duplicate, &reply.CreatedKnown)
+	return reply, err
+}
+
+func (l *Ledger) AddReply(ctx context.Context, k ActionKey, receipt string) (AddReceipt, error) {
+	if !k.valid() || k.Action != "add" || !Hex(receipt, 64) {
+		return AddReceipt{}, ErrState
+	}
+	return readAddReply(ctx, l.db, k, receipt)
 }

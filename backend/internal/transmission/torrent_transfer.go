@@ -88,6 +88,17 @@ func transferField(row map[string]json.RawMessage, key string, out any) bool {
 // Transmission's supported RPC identity is SHA1. Hybrid torrents retain that
 // original v1 identity; pure v2 is not sent to a SHA1-only target.
 func (c *Client) AddTransferPaused(ctx context.Context, content []byte, directory string) (torrenttransfer.AddReceipt, error) {
+	return c.addTransferPaused(ctx, content, directory, nil)
+}
+
+func (c *Client) AddReviewedTransfer(ctx context.Context, content []byte, directory string, intent torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
+	if err := intent.Validate(); err != nil {
+		return torrenttransfer.AddReceipt{}, err
+	}
+	return c.addTransferPaused(ctx, content, directory, &intent)
+}
+
+func (c *Client) addTransferPaused(ctx context.Context, content []byte, directory string, intent *torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
 	r := torrenttransfer.AddReceipt{}
 	m, err := torrentmeta.PrepareTransfer(content, nil)
 	if err != nil {
@@ -106,6 +117,17 @@ func (c *Client) AddTransferPaused(ctx context.Context, content []byte, director
 	encoded := base64.StdEncoding.EncodeToString(m.Content)
 	old := map[string]any{"metainfo": encoded, "download-dir": directory, "paused": true, "labels": []string{"已整理", "转移做种"}}
 	new := map[string]any{"metainfo": encoded, "download_dir": directory, "paused": true, "labels": []string{"已整理", "转移做种"}}
+	send := func() (torrenttransfer.AddReceipt, error) {
+		return c.sendTransferAdd(ctx, m.V1Hash, old, new)
+	}
+	if intent != nil {
+		return intent.Send(ctx, c.Address(), m.V1Hash, directory, m.Content, send)
+	}
+	return send()
+}
+
+func (c *Client) sendTransferAdd(ctx context.Context, expectedHash string, old, new map[string]any) (torrenttransfer.AddReceipt, error) {
+	r := torrenttransfer.AddReceipt{}
 	row, modern, err := c.transferRPC(ctx, "torrent-add", "torrent_add", old, new)
 	if err != nil {
 		return r, err
@@ -124,7 +146,7 @@ func (c *Client) AddTransferPaused(ctx context.Context, content []byte, director
 		raw = dupRaw
 	}
 	var task map[string]json.RawMessage
-	if json.Unmarshal(raw, &task) != nil || !transferField(task, hashKey, &r.WireID) || !strings.EqualFold(r.WireID, m.V1Hash) {
+	if json.Unmarshal(raw, &task) != nil || !transferField(task, hashKey, &r.WireID) || !strings.EqualFold(r.WireID, expectedHash) {
 		return torrenttransfer.AddReceipt{}, ErrResponse
 	}
 	r.WireID = strings.ToLower(r.WireID)

@@ -255,6 +255,17 @@ func (c *Client) TransferTask(ctx context.Context, id string) (torrenttransfer.T
 }
 
 func (c *Client) AddTransferPaused(ctx context.Context, content []byte, directory string) (torrenttransfer.AddReceipt, error) {
+	return c.addTransferPaused(ctx, content, directory, nil)
+}
+
+func (c *Client) AddReviewedTransfer(ctx context.Context, content []byte, directory string, intent torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
+	if err := intent.Validate(); err != nil {
+		return torrenttransfer.AddReceipt{}, err
+	}
+	return c.addTransferPaused(ctx, content, directory, &intent)
+}
+
+func (c *Client) addTransferPaused(ctx context.Context, content []byte, directory string, intent *torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
 	r := torrenttransfer.AddReceipt{}
 	m, err := torrentmeta.PrepareTransfer(content, nil)
 	if err != nil {
@@ -303,8 +314,11 @@ func (c *Client) AddTransferPaused(ctx context.Context, content []byte, director
 		form.Set("seedingTimeLimit", "-1")
 		form.Set("inactiveSeedingTimeLimit", "-1")
 	}
-	err = c.addTorrentForm(ctx, m.Content, form)
-	return r, err
+	send := func() (torrenttransfer.AddReceipt, error) { return r, c.addTorrentForm(ctx, m.Content, form) }
+	if intent != nil {
+		return intent.Send(ctx, c.Address(), r.WireID, directory, m.Content, send)
+	}
+	return send()
 }
 
 func (c *Client) transferAction(ctx context.Context, expected torrenttransfer.Task, m torrentmeta.TransferMetadata, start bool) error {
