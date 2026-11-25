@@ -20,8 +20,7 @@ sudo sysctl -p
 > 启动报错数据库no such column
 
 解决办法：
-* React + Go 生产版和纯 Go 版会在启动时检查表结构。先查看启动日志中的数据库名和冲突字段。原有版本号会保留，升级前数据库备份位于同目录的 `user.db.pre-go.bak`。
-* 仍使用旧 Python 启动方式的部署沿用原修复方法，可使用 [SQLite 浏览器](https://github.com/sqlitebrowser/sqlitebrowser) 打开配置目录中的 user.db，删除 alembic_version 表后重启。
+* 所有安装方式在启动时检查表结构。先查看启动日志中的数据库名和冲突字段。原有版本号会保留，升级前数据库备份位于同目录的 `user.db.pre-go.bak`。
 
 ### 3. Nginx-Proxy-Manager无法申请/更新Let's Encrypt证书
 > 问题描述

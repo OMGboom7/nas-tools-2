@@ -44,12 +44,14 @@ docker pull 0xforee/nas-tools:latest
 ```
 教程见 [这里](docker/readme.md) 。
 
-如无法连接Github，注意不要开启自动更新开关(NASTOOL_AUTO_UPDATE=false)，将NASTOOL_CN_UPDATE设置为true可使用国内源加速安装依赖。
+更新时拉取新镜像，使用原配置卷重新创建容器。
 
 ### 2、本地运行
-python3.10版本，需要预安装cython，如发现缺少依赖包需额外安装：
+兼容启动器需要 Python 3.10、Go 1.24 或更新版本和 Make。从本项目源码目录构建与当前版本匹配的数据库初始化程序：
 ```
-git clone -b master https://github.com/0xforee/nas-tools --recurse-submodule 
+git submodule update --init --recursive
+make db-build
+python3 -m pip install cython
 python3 -m pip install -r requirements.txt
 export NASTOOL_CONFIG="/xxx/config/config.yaml"
 nohup python3 run.py & 

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -9,11 +10,6 @@ warnings.filterwarnings('ignore')
 # 运行环境判断
 is_executable = getattr(sys, 'frozen', False)
 is_windows_exe = is_executable and (os.name == "nt")
-if is_windows_exe:
-    # 托盘相关库
-    import threading
-    from package.trayicon import TrayIcon, NullWriter
-
 if is_executable:
     # 可执行文件初始化环境变量
     config_path = os.path.join(os.path.dirname(sys.executable), "config").replace("\\", "/")
@@ -25,16 +21,33 @@ if is_executable:
     except Exception as err:
         print(str(err))
 
-go_initializes_db = os.environ.get("NASTOOL_GO_INIT_DATA") == "1"
-if go_initializes_db:
-    # Run before loading configuration singletons, database clients or web plugins.
-    subprocess.run(["/usr/local/bin/nas-tools-go", "init-db"], check=True)
+# Resolve the binary from the same installation before importing database clients.
+if not os.environ.get("NASTOOL_CONFIG"):
+    sys.exit("请设置 NASTOOL_CONFIG 为应用配置文件路径")
+helper_name = "nas-tools-db.exe" if os.name == "nt" else "nas-tools-db"
+if is_executable:
+    db_binary = Path(sys._MEIPASS) / helper_name
+elif os.environ.get("NASTOOL_DB_BINARY"):
+    db_binary = Path(os.environ["NASTOOL_DB_BINARY"])
+else:
+    db_binary = Path(__file__).resolve().parent / "backend" / "bin" / helper_name
+if not db_binary.is_absolute() or not db_binary.is_file():
+    sys.exit(f"找不到数据库初始化程序 {db_binary}。源码安装请先运行 make db-build，发行包请重新安装。")
+subprocess.run([str(db_binary), "init-db"], check=True)
+
+if sys.argv[1:] == ["--init-db"]:
+    sys.exit(0)
+
+if is_windows_exe:
+    # 托盘相关库
+    import threading
+    from package.trayicon import TrayIcon, NullWriter
 
 from config import Config
 import log
 from web.action import WebAction
 from web.main import App
-from app.db import init_db, update_db, init_data
+from app.db import init_data
 from app.helper import init_chrome
 from initializer import update_config, check_config,  start_config_monitor, stop_config_monitor
 from version import APP_VERSION
@@ -102,10 +115,6 @@ signal.signal(signal.SIGTERM, sigal_handler)
 def init_system():
     # 配置
     log.console('NAStool 当前版本号：%s' % APP_VERSION)
-    # 数据库初始化
-    if not go_initializes_db:
-        init_db()
-        update_db()
     # 数据初始化
     init_data()
     # 升级配置文件

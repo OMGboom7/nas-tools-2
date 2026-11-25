@@ -9,8 +9,6 @@
 **/node_modules
 /frontend/dist
 /backend/bin
-/scripts/env.py
-/scripts/versions
 /.nastool-dev
 **/*.pre-go-key.bak
 /build

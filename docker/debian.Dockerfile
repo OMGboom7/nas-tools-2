@@ -1,10 +1,18 @@
+FROM golang:1.24-alpine AS db-builder
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+COPY backend/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/nas-tools-db ./cmd/nas-tools-db
+
 FROM python:3.10.11-slim-bullseye
 COPY --from=shinsenter/s6-overlay / /
+COPY package_list_debian.txt requirements.txt /tmp/nas-tools-build/
 RUN set -xe && \
     export DEBIAN_FRONTEND="noninteractive" && \
     apt-get update -y && \
     apt-get install -y wget bash && \
-    apt-get install -y $(echo $(wget --no-check-certificate -qO- https://raw.githubusercontent.com/0xforee/nas-tools/master/package_list_debian.txt)) && \
+    apt-get install -y $(cat /tmp/nas-tools-build/package_list_debian.txt) && \
     ln -sf /command/with-contenv /usr/bin/with-contenv && \
     # zone time
     ln -sf /usr/share/zoneinfo/${TZ} /etc/localtime && \
@@ -29,7 +37,7 @@ RUN set -xe && \
     # Pip requirements
     pip install --upgrade pip setuptools wheel && \
     pip install cython && \
-    pip install -r https://raw.githubusercontent.com/0xforee/nas-tools/master/requirements.txt && \
+    pip install -r /tmp/nas-tools-build/requirements.txt && \
     # Clear
     apt-get remove -y build-essential && \
     apt-get autoremove -y && \
@@ -47,12 +55,9 @@ ENV S6_SERVICES_GRACETIME=30000 \
     TERM="xterm" \
     PATH=${PATH}:/usr/lib/chromium:/command \
     TZ="Asia/Shanghai" \
+    NASTOOL_DB_BINARY="/usr/local/bin/nas-tools-db" \
     NASTOOL_CONFIG="/config/config.yaml" \
-    NASTOOL_AUTO_UPDATE=false \
-    NASTOOL_CN_UPDATE=true \
     NASTOOL_VERSION=master \
-    REPO_URL="https://github.com/0xforee/nas-tools.git" \
-    PYPI_MIRROR="https://pypi.tuna.tsinghua.edu.cn/simple" \
     PUID=0 \
     PGID=0 \
     UMASK=000 \
@@ -67,11 +72,10 @@ RUN set -xe \
     && echo "${WORKDIR}/" > /usr/local/lib/python${python_ver%.*}/site-packages/nas-tools.pth \
     && echo 'fs.inotify.max_user_watches=5242880' >> /etc/sysctl.conf \
     && echo 'fs.inotify.max_user_instances=5242880' >> /etc/sysctl.conf \
-    && echo "nt ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
-    && git config --global pull.ff only \
-    && git clone -b master ${REPO_URL} ${WORKDIR} --depth=1 --recurse-submodule \
-    && git config --global --add safe.directory ${WORKDIR}
-COPY --chmod=755 ./rootfs /
+    && echo "nt ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+COPY --chown=nt:nt . ${WORKDIR}
+COPY --from=db-builder /out/nas-tools-db /usr/local/bin/nas-tools-db
+COPY --chmod=755 docker/rootfs /
 EXPOSE 3000
 VOLUME [ "/config" ]
 ENTRYPOINT [ "/init" ]

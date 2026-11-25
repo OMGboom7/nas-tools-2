@@ -1,4 +1,4 @@
-.PHONY: backend-dev backend-test backend-build frontend-install frontend-dev frontend-build production-build production-up production-down go-only-build python-exit-status python-exit-enforce
+.PHONY: backend-dev backend-test backend-build db-build frontend-install frontend-dev frontend-build production-build production-up production-down go-only-build python-exit-status python-exit-enforce
 
 backend-dev:
 	@root="$$PWD"; cd backend && \
@@ -12,6 +12,9 @@ backend-test:
 
 backend-build:
 	cd backend && mkdir -p bin && go build -o bin/nas-tools-go ./cmd/server
+
+db-build:
+	cd backend && mkdir -p bin && go build -trimpath -o bin/ ./cmd/nas-tools-db
 
 frontend-install:
 	cd frontend && npm install

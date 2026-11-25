@@ -15,7 +15,6 @@ services:
       - PGID=0
       - UMASK=000
       - NASTOOL_UI_MODE=react
-      - NASTOOL_AUTO_UPDATE=false
     restart: unless-stopped
     hostname: nas-tools
     container_name: nas-tools

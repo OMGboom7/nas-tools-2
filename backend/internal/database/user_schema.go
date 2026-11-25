@@ -128,7 +128,12 @@ func sqliteFileURL(path string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}, nil
+	path = filepath.ToSlash(abs)
+	if filepath.VolumeName(abs) != "" && !strings.HasPrefix(path, "/") {
+		// A drive letter belongs in the path of file:///C:/..., not its host.
+		path = "/" + path
+	}
+	return &url.URL{Scheme: "file", Path: path}, nil
 }
 
 func (table userTableUpgrade) apply(tx *sql.Tx) error {

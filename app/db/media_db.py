@@ -1,6 +1,5 @@
 import json
 import os
-import threading
 import time
 
 from cachetools import cached, TTLCache
@@ -8,11 +7,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.pool import QueuePool
 
-from app.db.models import BaseMedia, MEDIASYNCITEMS, MEDIASYNCSTATISTIC
+from app.db.models import MEDIASYNCITEMS, MEDIASYNCSTATISTIC
 from app.utils import ExceptionUtils
 from config import Config
 
-lock = threading.Lock()
 _Engine = create_engine(
     f"sqlite:///{os.path.join(Config().get_config_path(), 'media.db')}?check_same_thread=False",
     echo=False,
@@ -32,11 +30,6 @@ class MediaDb:
     @property
     def session(self):
         return _Session()
-
-    @staticmethod
-    def init_db():
-        with lock:
-            BaseMedia.metadata.create_all(_Engine)
 
     def insert(self, server_type, iteminfo, seasoninfo):
         if not server_type or not iteminfo:

@@ -3,46 +3,20 @@
 # <<< START ADDED PART
 from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT, BUNDLE, TOC
 import babelfish
+import os
+from pathlib import Path
 
-def collect_pkg_data(package, include_py_files=False, subdir=None):
-    import os
-    from PyInstaller.utils.hooks import get_package_paths, remove_prefix, PY_IGNORE_EXTENSIONS
-
-    # Accept only strings as packages.
-    if type(package) is not str:
-        raise ValueError
-
-    pkg_base, pkg_dir = get_package_paths(package)
-    if subdir:
-        pkg_dir = os.path.join(pkg_dir, subdir)
-    # Walk through all file in the given package, looking for data files.
-    data_toc = TOC()
-    for dir_path, dir_names, files in os.walk(pkg_dir):
-        for f in files:
-            extension = os.path.splitext(f)[1]
-            if include_py_files or (extension not in PY_IGNORE_EXTENSIONS):
-                source_file = os.path.join(dir_path, f)
-                dest_folder = remove_prefix(dir_path, os.path.dirname(pkg_base) + os.sep)
-                dest_file = os.path.join(dest_folder, f)
-                data_toc.append((dest_file, source_file, 'DATA'))
-
-    return data_toc
-
-
-pkg_data1 = collect_pkg_data('web')
-pkg_data2 = collect_pkg_data('config')
-pkg_data3 = collect_pkg_data('scripts', include_py_files=True)  # <<< Put the name of your package here
-# <<< END ADDED PART
-
-
-# <<< START PATHEX PART
-pathex_tp = []
-with open("third_party.txt") as third_party:
-    for third_party_lib in third_party:
-        pathex_tp.append(('./../third_party/' + third_party_lib).replace("\n", ""))
-
-
-# <<< END PATHEX PART
+project = Path(SPECPATH).resolve().parent
+helper_name = 'nas-tools-db.exe' if os.name == 'nt' else 'nas-tools-db'
+web_data = [(str(file.relative_to(project)), str(file), 'DATA')
+            for file in (project / 'web').rglob('*')
+            if file.is_file() and '__pycache__' not in file.parts and file.suffix not in {'.py', '.pyc', '.pyo'}]
+config_data = [('config/config.yaml', str(project / 'backend/internal/config/default_config.yaml'), 'DATA'),
+               ('config/default-category.yaml', str(project / 'config/default-category.yaml'), 'DATA')]
+script_data = [(str(file.relative_to(project)), str(file), 'DATA')
+               for file in (project / 'scripts/sqls').glob('*.sql')]
+pathex_tp = [str(project / 'third_party' / line) for line in
+             (project / 'third_party.txt').read_text().splitlines() if line]
 
 # <<< START HIDDENIMPORTS PART
 def collect_local_submodules(package):
@@ -104,10 +78,10 @@ block_cipher = None
 a = Analysis(
     ['./../run.py'],
     pathex=pathex_tp,
-    binaries=[],
+    binaries=[(str(project / 'backend/bin' / helper_name), '.')],
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=[str(project / 'package/rely')],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
@@ -118,23 +92,23 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 a.datas += [('./nas-tools.ico', './nas-tools.ico', 'DATA')]
-a.datas += [('./third_party.txt', './third_party.txt', 'DATA')]
+a.datas += [('third_party.txt', str(project / 'third_party.txt'), 'DATA')]
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
     a.zipfiles,
     a.datas,
-    pkg_data1,
-    pkg_data2,
-    pkg_data3,
+    web_data,
+    config_data,
+    script_data,
     [],
     name='nas-tools',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=['nas-tools-db.exe', 'nas-tools-db'],
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,

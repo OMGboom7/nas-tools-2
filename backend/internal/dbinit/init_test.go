@@ -1,4 +1,4 @@
-package main
+package dbinit
 
 import (
 	"database/sql"
@@ -12,8 +12,8 @@ import (
 )
 
 func TestInitializeDatabaseProvisionsEmptyVolume(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "new", "config.yaml")
-	if err := initializeDatabase(path, "init-db"); err != nil {
+	path := filepath.Join(t.TempDir(), "新安装 #1%", "config.yaml")
+	if err := Run(path, "init-db"); err != nil {
 		t.Fatal(err)
 	}
 	app, err := config.LoadApplication(path)
@@ -27,7 +27,7 @@ func TestInitializeDatabaseProvisionsEmptyVolume(t *testing.T) {
 	if stat, err := os.Stat(path + ".bak"); err != nil || (runtime.GOOS != "windows" && stat.Mode().Perm()&0077 != 0) {
 		t.Fatal("initial configuration backup permissions", err)
 	}
-	if err := initializeDatabase(path, "init-db"); err != nil {
+	if err := Run(path, "init-db"); err != nil {
 		t.Fatal(err)
 	}
 	files, err := config.NewStore(path).SyncInitializationFiles()
@@ -51,7 +51,7 @@ func TestInitializeDatabaseRequiresConfigForOldVolume(t *testing.T) {
 	if err := os.WriteFile(media, []byte("retained fixture"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := initializeDatabase(filepath.Join(dir, "config.yaml"), "init-db")
+	err := Run(filepath.Join(dir, "config.yaml"), "init-db")
 	if err == nil || !strings.Contains(err.Error(), "restore config.yaml") {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestInitializeDatabaseRejectsInvalidRecordsBeforeSchemaChanges(t *testing.T
 	if err := os.WriteFile(path, []byte("app: {init_files: {invalid: true}}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	err := initializeDatabase(path, "init-db")
+	err := Run(path, "init-db")
 	if err == nil || !strings.Contains(err.Error(), "init_files") {
 		t.Fatal(err)
 	}

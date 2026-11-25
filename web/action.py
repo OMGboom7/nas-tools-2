@@ -105,7 +105,6 @@ class WebAction:
             "get_site_favicon": self.__get_site_favicon,
             "restart": self.__restart,
             "update_system": self.update_system,
-            "reset_db_version": self.__reset_db_version,
             "logout": self.__logout,
             "update_config": self.__update_config,
             "update_directory": self.__update_directory,
@@ -1247,49 +1246,8 @@ class WebAction:
                 # 重启
                 self.restart_server()
         else:
-            # 清除git代理
-            os.system("sudo git config --global --unset http.proxy")
-            os.system("sudo git config --global --unset https.proxy")
-            # 设置git代理
-            proxy = Config().get_proxies() or {}
-            http_proxy = proxy.get("http")
-            https_proxy = proxy.get("https")
-            if http_proxy or https_proxy:
-                os.system(
-                    f"sudo git config --global http.proxy {http_proxy or https_proxy}")
-                os.system(
-                    f"sudo git config --global https.proxy {https_proxy or http_proxy}")
-            # 清理
-            os.system("sudo git clean -dffx")
-            # 升级
-            branch = os.getenv("NASTOOL_VERSION", "master")
-            if os.system(f"sudo git fetch --depth 1 origin {branch}") != 0:
-                return {"code": -1}
-            os.system(f"sudo git reset --hard origin/{branch}")
-            if os.system("sudo git submodule update --init --recursive") != 0:
-                return {"code": -2}
-            # 安装依赖
-            if os.system('sudo pip install -r /nas-tools/requirements.txt') != 0:
-                return {"code": -3}
-            # 修复权限
-            os.system('sudo chown -R nt:nt /nas-tools')
-            # 重启
-            self.restart_server()
+            return {"code": 1, "msg": "请更新容器镜像或完整发行包。源码安装请同时更新代码并运行 make db-build。"}
         return {"code": 0}
-
-    @staticmethod
-    def __reset_db_version():
-        """
-        重置数据库版本
-        """
-        if os.environ.get("NASTOOL_GO_INIT_DATA") == "1":
-            return {"code": 1, "msg": "Go 会在启动时按实际表结构升级数据库，无需重置版本号"}
-        try:
-            DbHelper().drop_table("alembic_version")
-            return {"code": 0}
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            return {"code": 1, "msg": str(e)}
 
     @staticmethod
     def __logout():

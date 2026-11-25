@@ -1,14 +1,11 @@
 import os
-import threading
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.pool import QueuePool
 
-from app.db.models import Base
 from app.utils import ExceptionUtils, PathUtils
 from config import Config
 
-lock = threading.Lock()
 _Engine = create_engine(
     f"sqlite:///{os.path.join(Config().get_config_path(), 'user.db')}?check_same_thread=False",
     echo=False,
@@ -30,28 +27,13 @@ class MainDb:
     def session(self):
         return _Session()
 
-    def init_db(self):
-        with lock:
-            Base.metadata.create_all(_Engine)
-            self.init_db_version()
-
-    def init_db_version(self):
-        """
-        初始化数据库版本
-        """
-        try:
-            self.excute("delete from alembic_version where 1")
-            self.commit()
-        except Exception as err:
-            print(str(err))
-
     def init_data(self):
         """
         读取config目录下的sql文件，并初始化到数据库，只处理一次
         """
         config = Config().get_config()
         init_files = Config().get_config("app").get("init_files") or []
-        if os.environ.get("NASTOOL_GO_INIT_DATA") == "1" and not init_files:
+        if not init_files:
             raise RuntimeError("无法读取 Go 写入的数据初始化记录")
         config_dir = Config().get_script_path()
         sql_files = PathUtils.get_dir_level1_files(in_path=config_dir, exts=".sql")
