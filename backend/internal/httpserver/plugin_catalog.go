@@ -101,9 +101,12 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			item.ActionsAvailable = administrator
 		}
 		if item.ID == "IYUUAutoSeed" && service.iyuu != nil {
+			item.NativeBindingPage = administrator
 			item.ActionsAvailable = administrator
-			item.HasPage = administrator
-			item.Description = "绑定 IYUU 合作站点，手动或定时匹配已完成的种子，暂停添加、校验后开始做种。"
+			item.HasPage = administrator || !service.iyuu.transfer.login.pureGo
+			if service.iyuu.transfer.login.pureGo {
+				item.Description = "绑定 IYUU 合作站点，手动或定时匹配已完成的种子，暂停添加、校验后开始做种。"
+			}
 		}
 		if service.nativeArchiveRunner(item.ID) {
 			item.ActionsAvailable = administrator
@@ -311,7 +314,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 	}
 	for i := range data.Items {
 		item := &data.Items[i]
-		item.CanViewPage = item.HasPage && (item.ActionsAvailable || item.NativeHistoryPage || item.NativeArchivePage || item.ID == helperID)
+		item.CanViewPage = item.HasPage && (item.ActionsAvailable || item.NativeHistoryPage || item.NativeArchivePage || item.ID == helperID || item.ID == "IYUUAutoSeed" && service.iyuu != nil)
 		if item.Installed {
 			data.InstalledCount++
 		}

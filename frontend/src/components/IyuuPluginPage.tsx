@@ -47,7 +47,7 @@ export function IyuuPluginPage({ token, onClose, onSessionExpired }: {
   }, [token, reload]);
 
   useEffect(() => {
-    if (!overview) return;
+    if (!overview?.matchFingerprint) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -88,8 +88,9 @@ export function IyuuPluginPage({ token, onClose, onSessionExpired }: {
     setReceipt(await bindIyuuSite(token, input));
   }
   const used = !!overview && receipt?.id === overview.requestId;
-  return <div className="editor-backdrop"><section className="plugin-page-dialog" role="dialog" aria-modal="true" aria-label="IYUU 自动辅种">
-    <header><h2>IYUU 自动辅种</h2><button type="button" onClick={onClose} aria-label="关闭">×</button></header>
+  const title = overview && !overview.matchFingerprint ? "IYUU 站点绑定" : "IYUU 自动辅种";
+  return <div className="editor-backdrop"><section className="plugin-page-dialog" role="dialog" aria-modal="true" aria-label={title}>
+    <header><h2>{title}</h2><button type="button" onClick={onClose} aria-label="关闭">×</button></header>
     {error && <p role="alert">{error}</p>}
     {overview ? <>
       {overview.schedule && (overview.schedule.next || overview.schedule.once || overview.schedule.last) && <section>
@@ -111,7 +112,7 @@ export function IyuuPluginPage({ token, onClose, onSessionExpired }: {
             </fieldset>
           </form>)}
       </section>
-      <section><h3>匹配已完成的种子</h3>
+      {overview.matchFingerprint && <section><h3>匹配已完成的种子</h3>
         <p>{overview.downloaders.length ? `将向 IYUU 提交以下下载器中符合条件的种子哈希：${overview.downloaders.join("、")}。` : "请先在插件配置中选择辅种下载器。"}</p>
         <button type="button" disabled={working || !overview.downloaders.length} onClick={() => void run(async () => {
           setMatches(undefined); setMatches(await matchIyuuTorrents(token, overview.matchFingerprint));
@@ -120,8 +121,8 @@ export function IyuuPluginPage({ token, onClose, onSessionExpired }: {
           {matches.items.length > 0 && <div className="plugin-page-table"><table><thead><tr><th>下载器</th><th>源任务</th><th>目标站点</th><th>种子编号</th><th>操作</th></tr></thead><tbody>
             {matches.items.map(v => <tr key={[v.downloaderId, v.source, v.siteId, v.torrentId, v.hash].join(":")}><td>{v.downloader}</td><td>{v.name}</td><td>{v.site}</td><td>{v.torrentId}</td><td><button type="button" disabled={working} onClick={() => void run(() => submit(v))}>暂停添加，校验后做种</button></td></tr>)}
           </tbody></table></div>}</>}
-      </section>
-      {seeds.length > 0 && <section><h3>最近辅种记录</h3><div className="plugin-page-table"><table>
+      </section>}
+      {overview.matchFingerprint && seeds.length > 0 && <section><h3>最近辅种记录</h3><div className="plugin-page-table"><table>
         <thead><tr><th>源任务</th><th>下载器</th><th>站点</th><th>进度</th></tr></thead>
         <tbody>{seeds.map(v => <tr key={v.id}><td>{v.name}</td><td>{v.downloader}</td><td>{v.site}</td><td>{seedStates[v.state] || v.state}</td></tr>)}</tbody>
       </table></div></section>}

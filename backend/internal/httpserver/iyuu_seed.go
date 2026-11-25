@@ -61,7 +61,7 @@ func (api *iyuuAPI) seedDB(ctx context.Context) (*sql.DB, error) {
 	return db, nil
 }
 func (api *iyuuAPI) listSeeds(w http.ResponseWriter, r *http.Request) {
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, true)
 	if !ok {
 		return
 	}
@@ -169,7 +169,7 @@ func iyuuPayloadMatches(task torrenttransfer.Task, meta torrentmeta.TransferMeta
 	return true
 }
 func (api *iyuuAPI) submitSeed(w http.ResponseWriter, r *http.Request) {
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, true)
 	if !ok {
 		return
 	}

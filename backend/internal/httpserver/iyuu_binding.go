@@ -29,10 +29,14 @@ type iyuuReceipt struct {
 	State string `json:"state"`
 }
 
-func (api *iyuuAPI) requestScope(w http.ResponseWriter, r *http.Request) (iyuuScope, bool) {
+func (api *iyuuAPI) requestScope(w http.ResponseWriter, r *http.Request, needsSeedRuntime bool) (iyuuScope, bool) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	actor, ok := api.transfer.login.actor(w, r, true)
+	actor, ok := api.transfer.login.actor(w, r, false)
 	if !ok {
+		return iyuuScope{}, false
+	}
+	if needsSeedRuntime && !api.transfer.login.pureGo {
+		writeAPIError(w, 501, 501, "种子匹配和辅种任务需要 Go 独立运行模式")
 		return iyuuScope{}, false
 	}
 	s, err := api.scope(r.Context(), actor)
@@ -62,7 +66,7 @@ func (api *iyuuAPI) bindingTx(ctx context.Context, s iyuuScope, apply func(*sql.
 func (s iyuuScope) account() string { return sitelogin.Hash([]string{s.actor, s.cfg.Token}) }
 
 func (api *iyuuAPI) overview(w http.ResponseWriter, r *http.Request) {
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, false)
 	if !ok {
 		return
 	}
@@ -78,6 +82,10 @@ func (api *iyuuAPI) overview(w http.ResponseWriter, r *http.Request) {
 	id, nonceErr := refreshNonce()
 	if err != nil || nonceErr != nil {
 		writeAPIError(w, 503, 503, "读取 IYUU 绑定记录失败")
+		return
+	}
+	if !api.transfer.login.pureGo {
+		signinJSON(w, map[string]any{"fingerprint": s.proof, "requestId": id, "latest": latest, "matchFingerprint": "", "downloaders": []string{}})
 		return
 	}
 	selection, err := api.selection(ctx, s)
@@ -101,17 +109,12 @@ func (api *iyuuAPI) overview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *iyuuAPI) partners(w http.ResponseWriter, r *http.Request) {
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, false)
 	if !ok {
 		return
 	}
-	partners, err := s.client.Partners(r.Context())
-	if err != nil {
-		writeAPIError(w, 502, 502, "读取 IYUU 合作站点失败")
-		return
-	}
-	if api.current(r.Context(), s) != nil {
-		writeAPIError(w, 409, 409, "IYUU 设置已变化，请刷新")
+	partners, ok := api.checkedPartners(w, r, s)
+	if !ok {
 		return
 	}
 	rows := make([]map[string]string, 0, len(partners))
@@ -121,8 +124,21 @@ func (api *iyuuAPI) partners(w http.ResponseWriter, r *http.Request) {
 	signinJSON(w, map[string]any{"fingerprint": s.proof, "items": rows})
 }
 
+func (api *iyuuAPI) checkedPartners(w http.ResponseWriter, r *http.Request, s iyuuScope) ([]iyuu.Partner, bool) {
+	partners, err := s.client.Partners(r.Context())
+	if err != nil {
+		writeAPIError(w, 502, 502, "读取 IYUU 合作站点失败")
+		return nil, false
+	}
+	if api.current(r.Context(), s) != nil {
+		writeAPIError(w, 409, 409, "IYUU 设置已变化，请刷新")
+		return nil, false
+	}
+	return partners, true
+}
+
 func (api *iyuuAPI) bind(w http.ResponseWriter, r *http.Request) {
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, false)
 	if !ok {
 		return
 	}
@@ -210,20 +226,70 @@ func (api *iyuuAPI) bindSite(ctx context.Context, s iyuuScope, in iyuuBinding) (
 	return result, err
 }
 
-func (api *iyuuAPI) partnerPage(w http.ResponseWriter, r *http.Request, legacy bool) {
-	s, ok := api.requestScope(w, r)
-	if !ok {
+// The original partner directory was visible to signed-in users in mixed
+// deployments. Binding and receipt access have their own administrator check.
+func (service pluginService) iyuuPartnerPage(w http.ResponseWriter, r *http.Request, legacy bool) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	if service.iyuu.transfer.login.pureGo {
+		scope, ok := service.iyuu.requestScope(w, r, false)
+		if !ok {
+			return
+		}
+		if partners, ok := service.iyuu.checkedPartners(w, r, scope); ok {
+			writeIyuuPartnerPage(w, partners, legacy)
+		}
 		return
 	}
-	partners, err := s.client.Partners(r.Context())
+	if _, ok := service.catalogReader(w, r); !ok {
+		return
+	}
+	ctx := r.Context()
+	keys := []string{"UserInstalledPlugins", iyuu.ConfigKey, iyuuGeneration}
+	before, err := service.system.ReadMany(ctx, keys)
+	if err != nil {
+		writeAPIError(w, 503, 503, "读取 IYUU 配置失败")
+		return
+	}
+	installed, err := indexerInstalled(before["UserInstalledPlugins"], iyuu.Plugin)
+	if err != nil {
+		writeAPIError(w, 503, 503, "无法读取已安装插件")
+		return
+	}
+	if !installed {
+		writeAPIError(w, 404, 404, "尚未安装 IYUU 插件")
+		return
+	}
+	token, err := iyuu.BindingToken(before[iyuu.ConfigKey])
+	if err != nil {
+		writeAPIError(w, 409, 409, "请核对 IYUU 插件配置")
+		return
+	}
+	if token == "" {
+		if _, command := w.(pluginCommandPageWriter); command {
+			writeJSON(w, 200, map[string]any{"code": 0, "title": nil, "content": nil, "func": nil})
+		} else {
+			writeAPIError(w, 404, 404, "请先在 IYUU 插件配置中保存 Token")
+		}
+		return
+	}
+	client := iyuu.Client{Token: token, Transport: service.iyuu.transport}
+	partners, err := client.Partners(ctx)
 	if err != nil {
 		writeAPIError(w, 502, 502, "读取 IYUU 合作站点失败")
 		return
 	}
-	if api.current(r.Context(), s) != nil {
+	if _, ok := service.catalogReader(w, r); !ok {
+		return
+	}
+	after, err := service.system.ReadMany(ctx, keys)
+	if err != nil || !maps.Equal(before, after) {
 		writeAPIError(w, 409, 409, "IYUU 设置已变化，请刷新")
 		return
 	}
+	writeIyuuPartnerPage(w, partners, legacy)
+}
+
+func writeIyuuPartnerPage(w http.ResponseWriter, partners []iyuu.Partner, legacy bool) {
 	table := pluginPageTable{Columns: []string{"合作站点", "站点代码", "编号"}, Rows: [][]string{}, RowActions: []*pluginPageRowAction{}}
 	for _, v := range partners {
 		table.Rows = append(table.Rows, []string{v.Nickname, v.Site, v.ID.String()})
@@ -243,7 +309,7 @@ func (api *iyuuAPI) legacyBind(w http.ResponseWriter, r *http.Request, body json
 		writeAPIError(w, 400, 400, "不支持的 IYUU 操作")
 		return true
 	}
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, false)
 	if !ok {
 		return true
 	}

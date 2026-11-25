@@ -64,7 +64,7 @@ func (s pluginService) nativeFeedPlugin(id string) bool {
 		return s.helper != nil
 	}
 	if id == iyuu.Plugin {
-		return s.iyuu != nil
+		return s.iyuu != nil && s.iyuu.transfer.login.pureGo
 	}
 	if id == mteamFeedID {
 		return s.mteamFeed != nil

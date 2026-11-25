@@ -292,3 +292,116 @@ func TestIYUUSettingsAndAdministratorScope(t *testing.T) {
 		t.Fatal("unauthorized provider call")
 	}
 }
+
+func TestIYUUMixedPagesAndBindingUseGoWithLegacyScheduler(t *testing.T) {
+	f := newIyuuFixture(t)
+	const old = `{"token":"fixture-service-token","downloaders":["old-client-name"],"enable":true,"onlyonce":true,"future":"preserved"}`
+	if _, err := f.db.Exec("UPDATE SYSTEM_DICT SET VALUE=? WHERE KEY=?", old, iyuu.ConfigKey); err != nil {
+		t.Fatal(err)
+	}
+	start := func() {
+		t.Helper()
+		var err error
+		f.handler, err = newHandler(config.Config{ApplicationConfigPath: f.config, LegacyBackendURL: "http://flask.invalid"}, roundTripFunc(f.upstream))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.token = loginForTest(t, f.handler, "admin", "password")
+	}
+	start()
+	admin := f.token
+	if w := performFormRequest(f.handler, "/api/v1/user/manage", admin, url.Values{"oper": {"add"}, "name": {"viewer"}, "password": {"fixture-password"}, "pris": {"插件"}}); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	viewer := loginForTest(t, f.handler, "viewer", "fixture-password")
+	for _, actor := range []string{admin, viewer} {
+		f.token = actor
+		var catalog struct{ Data pluginsData }
+		list := f.request("GET", "/api/v1/plugins", nil, 200)
+		if err := json.Unmarshal(list.Body.Bytes(), &catalog); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, p := range catalog.Data.Items {
+			if p.ID == iyuu.Plugin {
+				found = p.CanViewPage && p.HasPage && !p.Native && p.NativeBindingPage == (actor == admin)
+			}
+		}
+		if !found {
+			t.Fatal("incorrect partner page capability")
+		}
+		for _, w := range []*httptest.ResponseRecorder{
+			f.request("GET", iyuuBase+"page", nil, 200),
+			f.request("POST", "/do", map[string]any{"cmd": "get_plugin_page", "data": map[string]string{"id": iyuu.Plugin}}, 200),
+			performFormRequest(f.handler, "/api/v1/plugin/page", actor, url.Values{"id": {iyuu.Plugin}}),
+		} {
+			if w.Code != 200 || !strings.Contains(w.Body.String(), "Fixture partner") || strings.Contains(w.Body.String(), iyuuTestToken) {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		}
+	}
+	f.request("GET", iyuuBase+"overview", nil, 403)
+	f.request("POST", iyuuBase+"bind", map[string]string{}, 403)
+	f.token = admin
+	in, match := f.overview()
+	if match != "" {
+		t.Fatal("mixed deployment offered a downloader operation")
+	}
+	f.request("GET", iyuuBase+"partners", nil, 200)
+	f.request("POST", iyuuBase+"matches", map[string]string{}, 501)
+	f.request("POST", iyuuBase+"seeds", map[string]string{}, 501)
+	f.request("GET", iyuuBase+"seeds", nil, 501)
+	if !strings.Contains(f.request("POST", iyuuBase+"bind", in, 200).Body.String(), `"state":"bound"`) {
+		t.Fatal("missing confirmation")
+	}
+	start()
+	f.request("POST", iyuuBase+"bind", in, 200)
+	if f.binds != 1 || f.lookups != 0 || !strings.Contains(f.request("GET", iyuuBase+"overview", nil, 200).Body.String(), `"state":"bound"`) {
+		t.Fatal("unexpected replay or seed activity")
+	}
+	legacy := map[string]any{"cmd": "run_plugin_method", "data": map[string]string{"plugin_id": iyuu.Plugin, "method": "iyuu_bind_site", "sid": "2", "site": "fixture", "uid": "45", "passkey": "mock-passkey"}}
+	f.token = viewer
+	f.request("POST", "/do", legacy, 403)
+	f.token = admin
+	for range 2 {
+		if w := f.request("POST", "/do", legacy, 200); !strings.Contains(w.Body.String(), `"result":{"code":0`) {
+			t.Fatal(w.Body.String())
+		}
+	}
+	var saved string
+	if err := f.db.QueryRow("SELECT VALUE FROM SYSTEM_DICT WHERE KEY=?", iyuu.ConfigKey).Scan(&saved); err != nil || saved != old || f.binds != 2 {
+		t.Fatal("legacy settings or binding idempotency changed", err)
+	}
+}
+
+func TestIYUUMixedPageRechecksInstallationAndToken(t *testing.T) {
+	f := newIyuuFixture(t)
+	calls := 0
+	var err error
+	f.handler, err = newHandler(config.Config{ApplicationConfigPath: f.config, LegacyBackendURL: "http://flask.invalid"}, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		res, err := f.upstream(r)
+		if _, e := f.db.Exec("UPDATE SYSTEM_DICT SET VALUE='{}' WHERE KEY=?", iyuu.ConfigKey); e != nil {
+			t.Fatal(e)
+		}
+		return res, err
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := f.request("GET", iyuuBase+"page", nil, 409); strings.Contains(w.Body.String(), "Fixture partner") {
+		t.Fatal("stale list disclosed")
+	}
+	f.request("GET", iyuuBase+"page", nil, 404)
+	cmd := map[string]any{"cmd": "get_plugin_page", "data": map[string]string{"id": iyuu.Plugin}}
+	if w := f.request("POST", "/do", cmd, 200); !strings.Contains(w.Body.String(), `"content":null`) {
+		t.Fatal(w.Body.String())
+	}
+	if _, err := f.db.Exec("UPDATE SYSTEM_DICT SET VALUE='[]' WHERE KEY='UserInstalledPlugins'"); err != nil {
+		t.Fatal(err)
+	}
+	f.request("GET", iyuuBase+"page", nil, 404)
+	if calls != 1 {
+		t.Fatalf("unexpected upstream requests: %d", calls)
+	}
+}

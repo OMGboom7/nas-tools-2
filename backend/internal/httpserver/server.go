@@ -756,16 +756,18 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		plugins.disk = &diskSpaceAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, cfg.ApplicationConfigPath}
 		plugins.autoSub = &autoSubAPI{nativeSiteLogin, organizationJobs, nativeSystemConfig, transport}
 	}
+	if nativeSites != nil && nativeSystemConfig != nil && nativeDownloaders != nil {
+		plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport, downloads: &downloads}
+		mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/overview", plugins.iyuu.overview)
+		mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/partners", plugins.iyuu.partners)
+		mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/bind", plugins.iyuu.bind)
+		mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/matches", plugins.iyuu.matches)
+		mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.submitSeed)
+		mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.listSeeds)
+	}
 	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
 		if nativeDownloaders != nil && nativeSiteLogin != nil {
 			plugins.helper = &downloaderHelperAPI{transfer: &transferAPI, downloads: &downloads}
-			plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport, downloads: &downloads}
-			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/overview", plugins.iyuu.overview)
-			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/partners", plugins.iyuu.partners)
-			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/bind", plugins.iyuu.bind)
-			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/matches", plugins.iyuu.matches)
-			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.submitSeed)
-			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.listSeeds)
 		}
 		plugins.mteamFeed = &mteamFeedService{system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, limits: siteLimits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}
 	}

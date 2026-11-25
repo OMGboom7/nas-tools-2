@@ -151,7 +151,12 @@ func (api *iyuuAPI) scope(ctx context.Context, actor string) (iyuuScope, error) 
 	if err != nil || !installed {
 		return s, iyuu.ErrInput
 	}
-	cfg, err := iyuu.Read(raw[iyuu.ConfigKey])
+	var cfg iyuu.Settings
+	if api.transfer.login.pureGo {
+		cfg, err = iyuu.Read(raw[iyuu.ConfigKey])
+	} else {
+		cfg.Token, err = iyuu.BindingToken(raw[iyuu.ConfigKey])
+	}
 	if err != nil || cfg.Token == "" {
 		return s, iyuu.ErrInput
 	}

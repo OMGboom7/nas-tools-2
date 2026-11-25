@@ -57,6 +57,7 @@ type pluginSummary struct {
 	Installed         bool   `json:"installed"`
 	Running           bool   `json:"running"`
 	Configurable      bool   `json:"configurable"`
+	NativeBindingPage bool   `json:"nativeBindingPage,omitempty"`
 	NativeArchivePage bool   `json:"nativeArchivePage,omitempty"`
 	NativeHistoryPage bool   `json:"nativeHistoryPage,omitempty"`
 	CanViewPage       bool   `json:"canViewPage"`

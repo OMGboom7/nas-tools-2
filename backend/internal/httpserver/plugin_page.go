@@ -60,7 +60,7 @@ func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, i
 	case s.system != nil && id == helperID:
 		s.helperPage(w, r, legacy)
 	case s.iyuu != nil && id == "IYUUAutoSeed":
-		s.iyuu.partnerPage(w, r, legacy)
+		s.iyuuPartnerPage(w, r, legacy)
 	case s.nativeArchivePage(id):
 		s.serveArchivePage(w, r, legacy)
 	case s.nativeSubscriptionHistory(id):

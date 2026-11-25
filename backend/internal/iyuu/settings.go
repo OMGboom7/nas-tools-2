@@ -22,6 +22,23 @@ func Values(raw string) (map[string]json.RawMessage, error) {
 	return v, nil
 }
 
+// BindingToken does not require downloader settings owned by an older scheduler.
+func BindingToken(raw string) (string, error) {
+	v, err := Values(raw)
+	if err != nil {
+		return "", err
+	}
+	return readToken(v)
+}
+
+func readToken(v map[string]json.RawMessage) (string, error) {
+	var token string
+	if b := v["token"]; b != nil && (json.Unmarshal(b, &token) != nil || token != "" && !ValidToken(token)) {
+		return "", ErrInput
+	}
+	return token, nil
+}
+
 func Read(raw string) (Settings, error) {
 	var s Settings
 	v, err := Values(raw)
@@ -47,7 +64,8 @@ func Read(raw string) (Settings, error) {
 			}
 		}
 	}
-	if b := v["token"]; b != nil && (json.Unmarshal(b, &s.Token) != nil || s.Token != "" && !ValidToken(s.Token)) {
+	s.Token, err = readToken(v)
+	if err != nil {
 		return s, ErrInput
 	}
 	var labels string

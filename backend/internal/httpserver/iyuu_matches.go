@@ -78,7 +78,7 @@ type iyuuMatch struct {
 }
 
 func (api *iyuuAPI) matches(w http.ResponseWriter, r *http.Request) {
-	s, ok := api.requestScope(w, r)
+	s, ok := api.requestScope(w, r, true)
 	if !ok {
 		return
 	}
