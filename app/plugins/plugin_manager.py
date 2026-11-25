@@ -113,6 +113,8 @@ class PluginManager:
             module_id = plugin.__name__
             if module_id == "DiskSpaceSaver" and os.environ.get("NASTOOL_DISK_SPACE_OWNER") == "go":
                 continue
+            if module_id == "MteamRssGen" and os.environ.get("NASTOOL_MTEAM_RSS_OWNER") == "go":
+                continue
             self._plugins[module_id] = plugin
             # 未安装的跳过加载
             if module_id not in user_plugins:

@@ -35,6 +35,8 @@ make python-exit-status
 
 ## 当前基线
 
+默认 React 过渡镜像已由 Go 运行馒头大包监控（MteamRssGen）。Go 与本机 Flask 从同一启动脚本选择执行者。使用临时配置两次启动实际 Go 进程，验证了旧客户端安装、React 保存、重启回读及卸载，模拟 Flask 收到 0 个请求。另用本机回环端口和模拟站点验证实际 RSS、端口冲突恢复、重启及卸载释放监听；独立和过渡两种模式均通过并发检查。真实站点与容器启动仍待验收。
+
 旧插件市场的安装统计服务已停用。源码启动、安装和市场查询已移除这项 Python 统计调用，原客户端仍收到空的 `statistic` 对象。安装记录和插件重载继续沿用原行为。
 
 2026-11-25 首页媒体库容量统计已接入 Windows 卷查询。Windows x64 完整 Go 服务及容量测试程序、Linux x64 完整 Go 服务均已在本机交叉编译成功。macOS 已验证同卷多个路径去重、缺失路径和首页兼容接口。发行包流程会在 Windows 和 Linux 运行数据库与容量测试并编译完整 Go 服务。Windows 实机上的卷、网络共享和服务启动仍待验收。[容量实现](../../backend/internal/diskusage) · [发行包工作流](../../.github/workflows/build-package.yml)

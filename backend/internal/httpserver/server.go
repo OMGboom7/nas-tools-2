@@ -112,7 +112,6 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		}
 		waitHelper := startDownloaderHelper(workerContext, runner.archivePlugin.helper)
 		waitIyuuSeeds := startIyuuSeeds(workerContext, runner.archivePlugin.iyuu)
-		waitMteamFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
 		waitArchive := startMediaArchiveWorker(workerContext, runner.archivePlugin)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
 		wait = func() {
@@ -148,13 +147,13 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitAutoSub()
 			waitHelper()
 			waitIyuuSeeds()
-			waitMteamFeed()
 		}
 	}
-	if workerContext != nil && runner.archivePlugin.disk != nil {
+	if workerContext != nil {
 		waitOthers := wait
 		waitDisk := startDiskSpace(workerContext, runner.archivePlugin.disk)
-		wait = func() { waitOthers(); waitDisk() }
+		waitFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
+		wait = func() { waitOthers(); waitDisk(); waitFeed() }
 	}
 	return handler, wait, nil
 }
@@ -786,8 +785,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.submitSeed)
 		mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.listSeeds)
 	}
-	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
-		if nativeDownloaders != nil && nativeSiteLogin != nil {
+	if cfg.ManagedMTeamFeed && (nativeSites == nil || nativeSystemConfig == nil) {
+		return nil, fmt.Errorf("M-Team RSS requires the local site and plugin settings")
+	}
+	if (cfg.DisableLegacy || cfg.ManagedMTeamFeed) && nativeSites != nil && nativeSystemConfig != nil {
+		if cfg.DisableLegacy && nativeDownloaders != nil && nativeSiteLogin != nil {
 			plugins.helper = &downloaderHelperAPI{transfer: &transferAPI, downloads: &downloads}
 		}
 		plugins.mteamFeed = &mteamFeedService{system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, limits: siteLimits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}

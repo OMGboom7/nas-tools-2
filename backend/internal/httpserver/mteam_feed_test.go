@@ -21,6 +21,7 @@ import (
 
 type mteamFixture struct {
 	path, token string
+	paired      bool
 	handler     http.Handler
 	feed        *mteamFeedService
 	db          *sql.DB
@@ -30,9 +31,9 @@ type mteamFixture struct {
 
 const mtResponse = `{"code":"0","data":{"data":[{"id":"42","name":"Fixture & Movie","category":"401","size":"2147483649","createdDate":"2026-11-25 08:00:00","status":{"discount":"FREE"}}]}}`
 
-func newMteamFixture(t *testing.T) *mteamFixture {
+func newMteamFixture(t *testing.T, paired bool) *mteamFixture {
 	t.Helper()
-	f := &mteamFixture{path: filepath.Join(t.TempDir(), "config.yaml")}
+	f := &mteamFixture{path: filepath.Join(t.TempDir(), "config.yaml"), paired: paired}
 	if err := os.WriteFile(f.path, []byte("app:\n  login_user: admin\n  login_password: password\nsecurity:\n  api_key: fixture\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,12 @@ func newMteamFixture(t *testing.T) *mteamFixture {
 func (f *mteamFixture) start(t *testing.T) {
 	t.Helper()
 	var runner *rssRunAPI
-	h, err := buildHandler(config.Config{ApplicationConfigPath: f.path, DisableLegacy: true}, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	cfg := config.Config{ApplicationConfigPath: f.path, DisableLegacy: !f.paired}
+	if f.paired {
+		cfg.ManagedMTeamFeed = true
+		cfg.LegacyBackendURL = "http://127.0.0.1:3002"
+	}
+	h, err := buildHandler(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.String() != "https://api.m-team.io/api/torrent/search" || r.UserAgent() != "Fixture Agent" || r.Header.Get("x-api-key") != "fixture-key" || r.Header.Get("cookie") != "" {
 			t.Errorf("unexpected request to %s", r.URL.Host)
 			return nil, context.Canceled
@@ -75,6 +81,9 @@ func (f *mteamFixture) start(t *testing.T) {
 	}
 	f.handler = h
 	f.feed = runner.archivePlugin.mteamFeed
+	if f.feed == nil || f.paired && runner.archivePlugin.helper != nil {
+		t.Fatal("unexpected feed or downloader helper ownership")
+	}
 }
 func (f *mteamFixture) action(t *testing.T, action, cfg string, want int) {
 	t.Helper()
@@ -93,7 +102,7 @@ func (f *mteamFixture) read(t *testing.T, path, method string, want int) *httpte
 	return w
 }
 func TestMTeamFeedCompatibilityAndEdits(t *testing.T) {
-	f := newMteamFixture(t)
+	f := newMteamFixture(t, false)
 	f.action(t, "install", "", 200)
 	if err := f.feed.system.Set(t.Context(), mteamFeedKey, `{"watch_categories":[],"future":"private-fixture"}`); err != nil {
 		t.Fatal(err)
@@ -139,7 +148,7 @@ func TestMTeamFeedCompatibilityAndEdits(t *testing.T) {
 func TestMTeamFeedFailedCategoriesAndChangedSource(t *testing.T) {
 	for _, mode := range []string{"partial", "all-failed", "changed-site", "stopped", "missing-proxy"} {
 		t.Run(mode, func(t *testing.T) {
-			f := newMteamFixture(t)
+			f := newMteamFixture(t, false)
 			f.action(t, "install", "", 200)
 			f.action(t, "config", `{"enabled":true,"watch_categories":["movie","tvshow"]}`, 200)
 			if mode == "missing-proxy" {
@@ -188,7 +197,12 @@ func TestMTeamFeedFailedCategoriesAndChangedSource(t *testing.T) {
 	}
 }
 func TestMTeamFeedListenerRestartPortConflictAndUninstall(t *testing.T) {
-	f := newMteamFixture(t)
+	t.Run("standalone", func(t *testing.T) { testMTeamListener(t, false) })
+	t.Run("paired", func(t *testing.T) { testMTeamListener(t, true) })
+}
+
+func testMTeamListener(t *testing.T, paired bool) {
+	f := newMteamFixture(t, paired)
 	port, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +236,10 @@ func TestMTeamFeedListenerRestartPortConflictAndUninstall(t *testing.T) {
 		}
 	}
 	read()
+	state := performFormRequest(f.handler, "/api/v1/plugin/status", f.token, url.Values{"id": {mteamFeedID}})
+	if state.Code != 200 || !strings.Contains(state.Body.String(), `"state":true`) {
+		t.Fatal(state.Code, state.Body.String())
+	}
 	cancel()
 	wait()
 	f.start(t)
@@ -233,7 +251,10 @@ func TestMTeamFeedListenerRestartPortConflictAndUninstall(t *testing.T) {
 		t.Fatal("unexpected replay")
 	}
 	read()
-	f.action(t, "uninstall", "", 200)
+	w := nativeJSONRequest(f.handler, "DELETE", "/api/v1/plugins/"+mteamFeedID, f.token, "")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
 	free, err := net.Listen("tcp4", address)
 	if err != nil {
 		t.Fatal("listener retained after uninstall", err)
