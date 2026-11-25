@@ -56,6 +56,15 @@ func endpoint(base *url.URL, path string) *url.URL {
 	return &next
 }
 
+// DiscoveryURL rebuilds a saved indexer's endpoint for the original local plugin page.
+func DiscoveryURL(cfg Config, remoteID string) (string, error) {
+	base, err := baseURL(cfg)
+	if err != nil || !validRemoteID(cfg.Kind, remoteID) {
+		return "", ErrConfig
+	}
+	return indexerEndpoint(base, cfg.Kind, remoteID).String(), nil
+}
+
 func indexerEndpoint(base *url.URL, kind, remoteID string) *url.URL {
 	if kind == "Jackett" {
 		return endpoint(base, "/api/v2.0/indexers/"+remoteID+"/results/torznab/")

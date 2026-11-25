@@ -169,7 +169,7 @@ func TestNativeIndexerPluginLifecycleConfigurationWorkerAndPages(t *testing.T) {
 		t.Fatal("not due probe", err, f.calls)
 	}
 	// A reconstructed manager uses the persisted next occurrence, not an eager replay.
-	restarted := &nativeIndexerPlugins{system: f.store, transport: f.manager.transport, pureGo: true}
+	restarted := &nativeIndexerPlugins{system: f.store, transport: f.manager.transport, ownsRuntime: true}
 	if err := restarted.tick(t.Context(), now.Add(2*time.Second)); err != nil || f.calls != 3 {
 		t.Fatal(err, f.calls)
 	}
@@ -234,7 +234,7 @@ func TestNativeIndexerPluginPublicationRejectsConfigChangeAndUninstallReinstallA
 				saveIndexer(t, f, "Prowlarr", false)
 			}
 		}
-		if err := f.manager.refresh(t.Context(), "Prowlarr", time.Now()); !errors.Is(err, errIndexerScope) {
+		if err := f.manager.refresh(t.Context(), "Prowlarr", time.Now(), false); !errors.Is(err, errIndexerScope) {
 			t.Fatal("stale probe published", err)
 		}
 		_, s, _, err := f.manager.read(t.Context(), "Prowlarr")
@@ -260,12 +260,12 @@ func TestNativeIndexerPluginConcurrentClaimAndWorkerCancellation(t *testing.T) {
 	})
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() { defer wg.Done(); _ = f.manager.refresh(context.Background(), "Prowlarr", time.Now()) }()
+	go func() { defer wg.Done(); _ = f.manager.refresh(context.Background(), "Prowlarr", time.Now(), false) }()
 	<-entered
 	other := &nativeIndexerPlugins{system: f.store, transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		t.Error("concurrent claim issued network request")
 		return nil, errors.New("unexpected")
-	}), pureGo: true}
+	}), ownsRuntime: true}
 	if err := other.tick(t.Context(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestNativeIndexerPluginPermissionAndMixedModeBoundary(t *testing.T) {
 	if raw, _ := f.store.Get(t.Context(), "plugin.Prowlarr"); raw != before || f.calls != 0 {
 		t.Fatal("mixed mode modified state or contacted upstream")
 	}
-	mixed := &nativeIndexerPlugins{system: f.store, transport: f.manager.transport, pureGo: false}
+	mixed := &nativeIndexerPlugins{system: f.store, transport: f.manager.transport, ownsRuntime: false}
 	if err := mixed.tick(t.Context(), time.Now()); err != nil || f.calls != 0 {
 		t.Fatal(err, f.calls)
 	}
@@ -385,5 +385,39 @@ func TestNativeIndexerPluginUninstallDoesNotRequireValidConfigOrDeleteSecrets(t 
 	}
 	if err := f.manager.tick(t.Context(), time.Now()); err != nil || f.calls != 0 {
 		t.Fatal("uninstalled corrupt config probed", err, f.calls)
+	}
+}
+
+func TestPairedIndexerPluginLifecycle(t *testing.T) {
+	f := nativeIndexerPluginFixture(t)
+	cfg := config.Config{ApplicationConfigPath: filepath.Join(filepath.Dir(f.path), "config.yaml"), LegacyBackendURL: "http://unused.invalid", ManagedIndexerPlugins: true}
+	var runner *rssRunAPI
+	var err error
+	f.h, err = buildHandler(cfg, f.manager.transport, &runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"Jackett", "Prowlarr"} {
+		installIndexer(t, f, id)
+		saveIndexer(t, f, id, true)
+	}
+	if err := runner.indexerPlugins.tick(t.Context(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	checked := f.calls
+	if checked != 3 {
+		t.Fatalf("expected two index lists and Jackett login, got %d requests", checked)
+	}
+	for _, id := range []string{"Jackett", "Prowlarr"} {
+		values, state, installed, err := runner.indexerPlugins.read(t.Context(), id)
+		if err != nil || !installed || values["onlyonce"] != false || values["refresh_enabled"] != true || len(state.Items) != 1 {
+			t.Fatal(id, err)
+		}
+		if code := f.call("DELETE", "/api/v1/plugins/"+id, ""); code != 200 {
+			t.Fatal(id, code)
+		}
+	}
+	if err := runner.indexerPlugins.tick(t.Context(), time.Now().Add(48*time.Hour)); err != nil || f.calls != checked {
+		t.Fatal("uninstalled indexer polled", err, f.calls)
 	}
 }

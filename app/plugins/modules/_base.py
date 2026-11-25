@@ -1,12 +1,15 @@
 import json
 import os
+import subprocess
+from html import escape
+from threading import Lock
 from abc import ABCMeta, abstractmethod
 
 import log
 from app.conf import SystemConfig
 from app.helper import DbHelper
 from app.message import Message
-from config import Config
+from config import Config, go_helper_path, run_go_helper
 
 
 class _IPluginModule(metaclass=ABCMeta):
@@ -221,3 +224,68 @@ class _IPluginModule(metaclass=ABCMeta):
         :param msg: 日志信息
         """
         log.debug(f"【Plugin】{self.module_name} - {msg}")
+
+
+class _IndexerPlugin(_IPluginModule):
+    """Standalone plugin host. The paired deployment runs the same worker in its Go server."""
+
+    def __init__(self):
+        self._worker = None
+        self._lock = Lock()
+
+    def init_config(self, config=None):
+        with self._lock:
+            self._stop_worker()
+            if not config or not config.get("host") or not config.get("api_key"):
+                return
+            process = subprocess.Popen([go_helper_path(), "indexer-worker", self.module_name],
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            self._worker = process
+            try:
+                if process.stdout.readline() != b"ready\n":
+                    raise RuntimeError("索引器插件启动失败")
+            except BaseException:
+                self._stop_worker()
+                raise
+            finally:
+                process.stdout.close()
+
+    def _stop_worker(self):
+        if self._worker is not None:
+            self._worker.stdin.close()
+            try:
+                self._worker.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self._worker.kill()
+                self._worker.wait()
+            self._worker = None
+
+    def stop_service(self):
+        with self._lock:
+            self._stop_worker()
+
+    def _snapshot(self):
+        return json.loads(run_go_helper("indexer-view", self.module_name))
+
+    def get_state(self):
+        return bool(self._snapshot())
+
+    def get_page(self):
+        items = self._snapshot()
+        if not items:
+            return None, None, None
+        rows = "".join(f"<tr><td>{escape(row['ID'])}</td><td>{escape(row['Domain'])}</td>"
+                       f"<td>{row['Public']}</td></tr>" for row in items)
+        return "索引列表", ("<table><thead><tr><th>id</th><th>索引</th><th>是否公开</th></tr></thead>"
+                         f"<tbody>{rows}</tbody></table>"), None
+
+    def get_indexers(self, check=True, indexer_id=None, public=True, plugins=True):
+        from app.indexer.indexerConf import plugin_indexers
+        return plugin_indexers(self.module_name)
+
+    def search(self, indexer, keyword, page):
+        from app.indexer.indexerConf import plugin_search
+        return plugin_search(self.module_name, indexer, keyword, page)
+
+    def get_status(self):
+        return bool(json.loads(run_go_helper("indexer-check", self.module_name, timeout=35)))

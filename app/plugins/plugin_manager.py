@@ -109,6 +109,10 @@ class PluginManager:
         # 停止所有插件
         self.__stop_plugins()
 
+    @staticmethod
+    def _go_indexer(pid):
+        return pid in ("Jackett", "Prowlarr") and os.environ.get("NASTOOL_INDEXER_PLUGINS_OWNER") == "go"
+
     def __load_plugins(self):
         """
         加载所有插件
@@ -132,7 +136,7 @@ class PluginManager:
                 continue
             self._plugins[module_id] = plugin
             # 未安装的跳过加载
-            if module_id not in user_plugins:
+            if module_id not in user_plugins or self._go_indexer(module_id):
                 continue
             # 生成实例
             self._running_plugins[module_id] = plugin()
@@ -348,6 +352,13 @@ class PluginManager:
         """
         运行插件方法
         """
+        if self._go_indexer(pid):
+            from app.indexer.indexerConf import plugin_indexers, plugin_search
+            if method == "get_indexers":
+                return plugin_indexers(pid)
+            if method == "search":
+                return plugin_search(pid, *args, **kwargs)
+            return None
         if not self._running_plugins.get(pid):
             return None
         if not hasattr(self._running_plugins[pid], method):

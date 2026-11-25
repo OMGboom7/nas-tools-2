@@ -17,6 +17,7 @@ type Config struct {
 	DisableLegacy         bool
 	ManagedDiskSpace      bool
 	ManagedMTeamFeed      bool
+	ManagedIndexerPlugins bool
 	HostsPath             string
 	RcloneConfigFile      string
 	RcloneBinary          string
@@ -52,6 +53,7 @@ func FromEnv() (Config, error) {
 		DisableLegacy:         native,
 		ManagedDiskSpace:      os.Getenv("NASTOOL_DISK_SPACE_OWNER") == "go",
 		ManagedMTeamFeed:      os.Getenv("NASTOOL_MTEAM_RSS_OWNER") == "go",
+		ManagedIndexerPlugins: os.Getenv("NASTOOL_INDEXER_PLUGINS_OWNER") == "go",
 		HostsPath:             os.Getenv("NASTOOL_GO_HOSTS_PATH"),
 		RcloneConfigFile:      os.Getenv("NASTOOL_RCLONE_CONFIG"),
 		RcloneBinary:          envOrDefault("NASTOOL_RCLONE_BINARY", "rclone"),

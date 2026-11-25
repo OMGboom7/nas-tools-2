@@ -84,7 +84,6 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitDownloads := startDownloadMonitorWorker(workerContext, runner.organizer)
 		waitNotifications := startBusinessNotificationWorker(workerContext, runner.notifications)
 		waitMedia := startMediaSyncWorker(workerContext, runner.mediaSync)
-		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
 		waitSubtitles := startSubtitleWorker(workerContext, runner.subtitles)
 		waitOpenSubtitles := startOpenSubtitleWorker(workerContext, runner.openSubtitles)
 		waitScraper := startIntakeScraper(workerContext, runner.scraper)
@@ -120,7 +119,6 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitDownloads()
 			waitNotifications()
 			waitMedia()
-			waitIndexers()
 			waitSubtitles()
 			waitOpenSubtitles()
 			waitScraper()
@@ -153,7 +151,8 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitOthers := wait
 		waitDisk := startDiskSpace(workerContext, runner.archivePlugin.disk)
 		waitFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
-		wait = func() { waitOthers(); waitDisk(); waitFeed() }
+		waitIndexers := startIndexerPluginWorker(workerContext, runner.indexerPlugins)
+		wait = func() { waitOthers(); waitDisk(); waitFeed(); waitIndexers() }
 	}
 	return handler, wait, nil
 }
@@ -910,8 +909,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("/api/v1/media/subtitle/download/", nativeSubtitles.legacySubtitle)
 	mux.HandleFunc(subtitleRequestsBase, nativeSubtitles.serveRequests)
 	mux.HandleFunc(subtitleRequestsBase+"/", nativeSubtitles.serveRequests)
+	if cfg.ManagedIndexerPlugins && nativeSystemConfig == nil {
+		return nil, fmt.Errorf("managed indexers require the local application database")
+	}
 	if nativeSystemConfig != nil {
-		plugins.indexers = &nativeIndexerPlugins{system: nativeSystemConfig, transport: transport, pureGo: cfg.DisableLegacy}
+		plugins.indexers = &nativeIndexerPlugins{system: nativeSystemConfig, transport: transport, ownsRuntime: cfg.DisableLegacy || cfg.ManagedIndexerPlugins}
 		rssRunner.indexerPlugins = plugins.indexers
 	}
 	if cfg.HostsPath != "" {

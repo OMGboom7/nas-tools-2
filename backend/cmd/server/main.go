@@ -51,6 +51,20 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 3 && (os.Args[1] == "indexer-worker" || os.Args[1] == "indexer-view" || os.Args[1] == "indexer-check") {
+		if err := httpserver.IndexerHostCommand(config.ApplicationPath(), os.Args[2], os.Args[1], os.Stdin, os.Stdout); err != nil {
+			slog.Error("indexer plugin runtime unavailable")
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 4 && os.Args[1] == "installed-indexer" {
+		if err := database.InstalledIndexerCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Args[3], os.Stdin, os.Stdout); err != nil {
+			slog.Error("installed indexer unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "external-indexer" {
 		if err := externalindexer.PluginCommand(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("external indexer request failed")

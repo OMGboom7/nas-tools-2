@@ -178,7 +178,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			item.HasPage = true
 		}
 		if service.nativeIndexer(item.ID) {
-			item.ActionsAvailable = service.indexers.pureGo
+			item.ActionsAvailable = service.indexers.ownsRuntime
 		}
 		if service.nativeSubtitle(item.ID) {
 			item.ActionsAvailable = service.subtitles.organizer.pureGo

@@ -21,12 +21,13 @@ var errIndexerPlugin = errors.New("invalid indexer plugin state or configuration
 var errIndexerScope = errors.New("indexer plugin scope changed")
 
 type nativeIndexerPlugins struct {
-	system    *systemconfig.Store
-	transport http.RoundTripper
-	pureGo    bool
+	system      *systemconfig.Store
+	transport   http.RoundTripper
+	ownsRuntime bool
 }
 type indexerPluginRow struct {
 	ID, Name, Domain string
+	RemoteID         string `json:",omitempty"`
 	Public           bool
 }
 type indexerPluginState struct {
@@ -140,7 +141,7 @@ func indexerDetail(id string, values map[string]any) pluginConfigDetail {
 		{Key: "api_key", Title: "API Key", Type: "text", Required: true, WriteOnly: true, Options: []pluginConfigChoice{}},
 		{Key: "cron", Title: "更新周期（五段 cron）", Type: "text", WriteOnly: true, Options: []pluginConfigChoice{}, Placeholder: "0 0 */24 * *", Tooltip: "按 APScheduler 规则：星期一为 0，日与星期同时匹配；留空保留原值。旧默认表达式不是每隔 24 小时。"},
 		{Key: "refresh_enabled", Title: "启用周期读取索引器列表", Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "只读取列表，不搜索、不下种；关闭不影响实际检索时的实时发现。"},
-		{Key: "onlyonce", Title: "立即读取一次，并启用周期", Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "纯 Go 后台消费一次后自动关闭此开关，保留周期刷新。"},
+		{Key: "onlyonce", Title: "立即读取一次，并启用周期", Type: "switch", Options: []pluginConfigChoice{}, Tooltip: "Go 后台读取一次后自动关闭此开关，保留周期刷新。"},
 	}
 	if id == "Jackett" {
 		fields[0].Placeholder = "http://127.0.0.1:9117"
@@ -190,7 +191,7 @@ func (m *nativeIndexerPlugins) summary(ctx context.Context, id string) (bool, bo
 	return known && len(state.Items) > 0, known
 }
 
-// All native mutation paths are admin-only and pure-Go. Saving and uninstalling
+// All native mutation paths are admin-only and require ownership of the worker. Saving and uninstalling
 // invalidate an in-flight publication in the same transaction, without waiting
 // on the remote service. Configuration never becomes a fictitious probe result.
 func (s pluginService) serveIndexerPlugin(w http.ResponseWriter, r *http.Request, action string) {
@@ -212,8 +213,8 @@ func (s pluginService) serveIndexerPlugin(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, 403, 403, "administrator permission required")
 		return
 	}
-	if write && !s.indexers.pureGo {
-		writeAPIError(w, 501, 501, "native indexer plugin changes require disabled legacy backend")
+	if write && !s.indexers.ownsRuntime {
+		writeAPIError(w, 501, 501, "当前部署的索引器插件由原服务管理")
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -359,8 +360,8 @@ func (s pluginService) serveIndexerPlugin(w http.ResponseWriter, r *http.Request
 
 func (s pluginService) writeIndexerPage(w http.ResponseWriter, id string, values map[string]any, state indexerPluginState) {
 	data := pluginPageData{Title: id + " 索引列表", ReadOnly: true, Sections: []string{}, Tables: []pluginPageTable{}, DeleteConfirmation: ""}
-	if !s.indexers.pureGo {
-		data.Sections = append(data.Sections, "当前非纯 Go 模式，原生周期读取不会启动。")
+	if !s.indexers.ownsRuntime {
+		data.Sections = append(data.Sections, "当前部署由原服务管理索引器周期读取。")
 	}
 	data.Sections = append(data.Sections, "此页为带时间的列表快照，不代表当前检索成功；实际检索仍实时读取索引器。")
 	if state.Checked.IsZero() {
@@ -394,7 +395,7 @@ func (s pluginService) writeIndexerPage(w http.ResponseWriter, id string, values
 }
 
 func (m *nativeIndexerPlugins) tick(ctx context.Context, now time.Time) error {
-	if m == nil || !m.pureGo {
+	if m == nil || !m.ownsRuntime {
 		return nil
 	}
 	var first error
@@ -402,15 +403,15 @@ func (m *nativeIndexerPlugins) tick(ctx context.Context, now time.Time) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := m.refresh(ctx, id, now); err != nil && !errors.Is(err, errIndexerScope) && first == nil {
+		if err := m.refresh(ctx, id, now, false); err != nil && !errors.Is(err, errIndexerScope) && first == nil {
 			first = err
 		}
 	}
 	return first
 }
 
-func (m *nativeIndexerPlugins) refresh(ctx context.Context, id string, now time.Time) error {
-	if m == nil || !m.pureGo {
+func (m *nativeIndexerPlugins) refresh(ctx context.Context, id string, now time.Time, onLoad bool) error {
+	if m == nil || !m.ownsRuntime {
 		return nil
 	}
 	k := indexerKeys(id)
@@ -442,7 +443,7 @@ func (m *nativeIndexerPlugins) refresh(ctx context.Context, id string, now time.
 		}
 		due := values["refresh_enabled"] == true && !state.Next.IsZero() && !now.Before(state.Next)
 		interrupted := !changed && state.Status == "checking" && !now.Before(state.Started.Add(time.Minute))
-		if !changed && values["onlyonce"] != true && !due && !interrupted {
+		if !onLoad && !changed && values["onlyonce"] != true && !due && !interrupted {
 			return nil, nil
 		}
 		if changed {
@@ -521,7 +522,7 @@ func (m *nativeIndexerPlugins) refresh(ctx context.Context, id string, now time.
 			state.Status = "ready"
 			state.Items = []indexerPluginRow{}
 			for _, item := range items {
-				state.Items = append(state.Items, indexerPluginRow{ID: item.ID, Name: item.Name, Domain: indexercatalog.Domain(item.Domain), Public: item.Public})
+				state.Items = append(state.Items, indexerPluginRow{ID: item.ID, Name: item.Name, RemoteID: item.RemoteID, Domain: indexercatalog.Domain(item.Domain), Public: item.Public})
 			}
 		}
 		encoded, err := encodeIndexerState(state)
@@ -533,7 +534,7 @@ func (m *nativeIndexerPlugins) refresh(ctx context.Context, id string, now time.
 }
 
 func startIndexerPluginWorker(ctx context.Context, m *nativeIndexerPlugins) func() {
-	if m == nil || !m.pureGo {
+	if m == nil || !m.ownsRuntime {
 		return func() {}
 	}
 	done := make(chan struct{})
