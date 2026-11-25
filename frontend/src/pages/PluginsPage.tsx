@@ -51,8 +51,7 @@ export function PluginsPage({ session, currentPath, pageID, onNavigate, onLogout
   useEffect(() => { void load(); }, [session.token]);
 
   const data = state.kind === "ready" ? state.data : undefined;
-  const viewing = data?.items.find((plugin) => plugin.id === pageID && plugin.installed && plugin.hasPage &&
-    (plugin.actionsAvailable !== false || plugin.nativeHistoryPage || plugin.nativeArchivePage));
+  const viewing = data?.items.find((plugin) => plugin.id === pageID && plugin.installed && canViewPage(plugin));
   const closePage = () => onNavigate("/plugins");
   const filtered = useMemo(() => (data?.items || []).filter((plugin) => {
     const needle = query.trim().toLocaleLowerCase();
@@ -134,15 +133,19 @@ export function PluginsPage({ session, currentPath, pageID, onNavigate, onLogout
   </WorkspaceLayout>;
 }
 
+function canViewPage(plugin: PluginSummary): boolean {
+  return plugin.canViewPage ?? (plugin.hasPage && (plugin.actionsAvailable !== false || !!plugin.nativeHistoryPage || !!plugin.nativeArchivePage));
+}
+
 function PluginCard({ plugin, busy, onView, onConfigure, onInstall, onUninstall }: { plugin: PluginSummary; busy: boolean; onView: () => void; onConfigure: () => void; onInstall: () => void; onUninstall: () => void }) {
   const status = plugin.stateKnown === false ? "状态待迁移" : plugin.running ? "运行中" : plugin.installed ? "未运行" : "未安装";
   const unavailable = busy || plugin.actionsAvailable === false;
   return <article className={`plugin-card ${plugin.running ? "is-running" : ""}`}>
     <header><span className="plugin-card__mark">{plugin.name.slice(0, 1).toUpperCase()}</span><div><small>{plugin.version ? `VERSION ${plugin.version}` : "PLUGIN"}</small><h2 title={plugin.name}>{plugin.name}</h2></div><span className={`service-state ${plugin.running ? "is-enabled" : ""}`}>{status}</span></header>
     <p className="plugin-description">{plugin.description || "暂无插件简介。"}</p>
-    <div className="plugin-meta"><span>{plugin.configurable ? "可配置" : "无需配置"}</span>{plugin.hasPage && <span>{plugin.id === "IYUUAutoSeed" && plugin.native ? "站点绑定与种子匹配" : plugin.nativeArchivePage ? "含归档记录" : plugin.nativeHistoryPage ? "含订阅历史" : "含只读扩展页"}</span>}{plugin.actionsAvailable === false && <span>{plugin.nativeArchivePage && plugin.native ? "需要管理员管理" : plugin.nativeHistoryPage || plugin.nativeArchivePage ? "任务执行待迁移" : "功能尚未迁移"}</span>}</div>
+    <div className="plugin-meta"><span>{plugin.configurable ? "可配置" : "无需配置"}</span>{plugin.hasPage && <span>{plugin.id === "IYUUAutoSeed" && plugin.native ? "站点绑定与种子匹配" : plugin.nativeArchivePage ? "含归档记录" : plugin.nativeHistoryPage ? "含订阅历史" : "含只读扩展页"}</span>}{plugin.actionsAvailable === false && <span>{(plugin.nativeArchivePage || plugin.id === "DownloaderHelper") && plugin.native ? "需要管理员管理" : plugin.nativeHistoryPage || plugin.nativeArchivePage ? "任务执行待迁移" : "功能尚未迁移"}</span>}</div>
     <footer><div className="plugin-author"><small>作者</small>{plugin.authorUrl ? <a href={plugin.authorUrl} target="_blank" rel="noreferrer">{plugin.author || "查看主页"}</a> : <strong>{plugin.author || "未知"}</strong>}</div>
-      <div className="plugin-card__actions">{plugin.installed && plugin.hasPage && <button className="plugin-action" type="button" disabled={busy || (unavailable && !plugin.nativeHistoryPage && !plugin.nativeArchivePage)} onClick={onView}>查看</button>}{plugin.installed && plugin.configurable && <button className="plugin-action" type="button" disabled={unavailable} onClick={onConfigure}>配置</button>}{plugin.installed ? <button className="plugin-action is-danger" type="button" disabled={unavailable} onClick={onUninstall}>{busy ? "处理中…" : "卸载"}</button> : <button className="plugin-action" type="button" disabled={unavailable} onClick={onInstall}>{busy ? "安装中…" : "安装"}</button>}</div></footer>
+      <div className="plugin-card__actions">{plugin.installed && plugin.hasPage && <button className="plugin-action" type="button" disabled={busy || !canViewPage(plugin)} onClick={onView}>查看</button>}{plugin.installed && plugin.configurable && <button className="plugin-action" type="button" disabled={unavailable} onClick={onConfigure}>配置</button>}{plugin.installed ? <button className="plugin-action is-danger" type="button" disabled={unavailable} onClick={onUninstall}>{busy ? "处理中…" : "卸载"}</button> : <button className="plugin-action" type="button" disabled={unavailable} onClick={onInstall}>{busy ? "安装中…" : "安装"}</button>}</div></footer>
   </article>;
 }
 

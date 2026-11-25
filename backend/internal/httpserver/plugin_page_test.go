@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 func TestPluginPageReturnsOnlyNormalizedStructure(t *testing.T) {
@@ -44,10 +46,10 @@ func TestPluginPageReturnsOnlyNormalizedStructure(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if result.Data.Title != "同步历史" || !result.Data.ReadOnly || !result.Data.ActionsOmitted || !result.Data.CanDeleteRecords || len(result.Data.Tables) != 1 || result.Data.Tables[0].Rows[0][0] != "示例电影" {
+	if result.Data.Title != "同步历史" || !result.Data.ReadOnly || !result.Data.ActionsOmitted || result.Data.CanDeleteRecords || len(result.Data.Tables) != 1 || result.Data.Tables[0].Rows[0][0] != "示例电影" {
 		t.Fatalf("unexpected page: %#v", result.Data)
 	}
-	if len(result.Data.Tables[0].RowActions) != 2 || result.Data.Tables[0].RowActions[0] == nil || result.Data.Tables[0].RowActions[0].RecordID != "12345" || result.Data.Tables[0].RowActions[1] != nil {
+	if len(result.Data.Tables[0].RowActions) != 2 || result.Data.Tables[0].RowActions[0] != nil || result.Data.Tables[0].RowActions[1] != nil {
 		t.Fatalf("unexpected row actions: %#v", result.Data.Tables[0].RowActions)
 	}
 	if len(result.Data.Sections) != 2 || result.Data.Sections[1] != "详情：example.test" {
@@ -55,60 +57,137 @@ func TestPluginPageReturnsOnlyNormalizedStructure(t *testing.T) {
 	}
 }
 
-func TestPluginPageRecordDeleteUsesWhitelistedAction(t *testing.T) {
-	t.Parallel()
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path != "/api/v1/plugin/page/action" {
-			t.Fatalf("unexpected path: %s", request.URL.Path)
+func TestPluginRecordActionsRequireLocalStorageAndNeverForward(t *testing.T) {
+	h, err := newHandler(config.Config{LegacyBackendURL: "http://legacy:3000"}, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("forwarded plugin mutation to %s", r.URL.Path)
+		return nil, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, record := range map[string]string{
+		"DoubanSync": "001", "DoubanRank": "42", "MovieRandom": "9007199254740993",
+		"MediaLibraryArchive": "归档_20260919080000.md",
+	} {
+		body := `{"recordId":"` + record + `","confirmation":"` + record + `"}`
+		if w := nativeJSONRequest(h, "DELETE", "/api/v1/plugins/"+id+"/page/records", "fixture", body); w.Code != 503 {
+			t.Fatal(id, w.Code, w.Body.String())
 		}
-		payload, _ := io.ReadAll(request.Body)
-		form, _ := url.ParseQuery(string(payload))
-		if form.Get("id") != "DoubanSync" || form.Get("action") != "delete" || form.Get("record_id") != "12345" {
-			t.Fatalf("unexpected action: %#v", form)
+		form := url.Values{"id": {id}, "action": {"delete"}, "record_id": {record}, "confirmation": {record}}
+		if w := performFormRequest(h, "/api/v1/plugin/page/action", "fixture", form); w.Code != 503 {
+			t.Fatal(id, w.Code, w.Body.String())
 		}
-		return jsonResponse(request, `{"code":0,"success":true,"message":"扩展页记录已删除"}`), nil
-	})
-	handler, _ := newHandler(config.Config{LegacyBackendURL: "http://legacy:3000"}, transport)
-	request := httptest.NewRequest(http.MethodDelete, "/api/v1/plugins/DoubanSync/page/records", strings.NewReader(`{"recordId":"12345"}`))
-	request.Header.Set("Authorization", "test-token")
-	request.Header.Set("Content-Type", "application/json")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "扩展页记录已删除") {
-		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+		if w := performFormRequest(h, "/api/v1/plugin/page/action", "", form); w.Code != 401 {
+			t.Fatal(id, w.Code)
+		}
+	}
+	const path = "/api/v1/plugin/page/action"
+	if w := nativeJSONRequest(h, "GET", path, "fixture", ""); w.Code != 405 || w.Header().Get("Allow") != "POST" {
+		t.Fatal(w.Code, w.Header())
+	}
+	if w := performFormRequest(h, path, "fixture", url.Values{"id": {"DoubanRank"}, "action": {"run"}}); w.Code != 400 {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }
 
-func TestPluginArchiveDeleteRequiresExactFilenameConfirmation(t *testing.T) {
-	t.Parallel()
-	requests := 0
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests++
-		payload, _ := io.ReadAll(request.Body)
-		form, _ := url.ParseQuery(string(payload))
-		filename := "归档_20260919080000.md"
-		if request.URL.Path != "/api/v1/plugin/page/action" || form.Get("id") != "MediaLibraryArchive" || form.Get("action") != "delete" || form.Get("record_id") != filename || form.Get("confirmation") != filename {
-			t.Fatalf("unexpected archive action: path=%s form=%#v", request.URL.Path, form)
+func TestExternalPageInMixedDeploymentIsReadOnlyForBothClients(t *testing.T) {
+	var calls int
+	h, token, _ := nativeServicesFixture(t, "", nil, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/plugin/page" || r.FormValue("id") != "ExternalPage" {
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
 		}
-		return jsonResponse(request, `{"code":0,"success":true,"message":"归档文件已删除"}`), nil
-	})
-	handler, _ := newHandler(config.Config{LegacyBackendURL: "http://legacy:3000"}, transport)
-	filename := "归档_20260919080000.md"
-
-	mismatch := httptest.NewRequest(http.MethodDelete, "/api/v1/plugins/MediaLibraryArchive/page/records", strings.NewReader(`{"recordId":"`+filename+`","confirmation":"错误名称"}`))
-	mismatch.Header.Set("Authorization", "test-token")
-	mismatchResponse := httptest.NewRecorder()
-	handler.ServeHTTP(mismatchResponse, mismatch)
-	if mismatchResponse.Code != http.StatusBadRequest || requests != 0 {
-		t.Fatalf("mismatch status = %d, requests = %d: %s", mismatchResponse.Code, requests, mismatchResponse.Body.String())
+		calls++
+		return jsonResponse(r, `{"code":0,"data":{"title":"扩展","sections":["显示记录"],"tables":[{"columns":["名称"],"rows":[["展示"]],"row_actions":[{"type":"delete","record_id":"123"}]}],"html":"untrusted-markup"}}`), nil
+	}))
+	form := url.Values{"id": {"ExternalPage"}}
+	modern := nativeJSONRequest(h, "GET", "/api/v1/plugins/ExternalPage/page", token, "")
+	original := performFormRequest(h, "/api/v1/plugin/page", token, form)
+	for _, w := range []*httptest.ResponseRecorder{modern, original} {
+		body := w.Body.String()
+		if w.Code != 200 || !strings.Contains(body, "展示") || strings.Contains(body, "untrusted-markup") || strings.Contains(body, "123") {
+			t.Fatal(w.Code, body)
+		}
 	}
+	if !strings.Contains(modern.Body.String(), `"actionsOmitted":true`) || !strings.Contains(original.Body.String(), `"actions_omitted":true`) {
+		t.Fatal("missing read-only status")
+	}
+	form.Set("action", "delete")
+	form.Set("record_id", "123")
+	if w := performFormRequest(h, "/api/v1/plugin/page/action", token, form); w.Code != 400 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if calls != 2 {
+		t.Fatal("expected just two upstream reads", calls)
+	}
+}
 
-	confirmed := httptest.NewRequest(http.MethodDelete, "/api/v1/plugins/MediaLibraryArchive/page/records", strings.NewReader(`{"recordId":"`+filename+`","confirmation":"`+filename+`"}`))
-	confirmed.Header.Set("Authorization", "test-token")
-	confirmedResponse := httptest.NewRecorder()
-	handler.ServeHTTP(confirmedResponse, confirmed)
-	if confirmedResponse.Code != http.StatusOK || requests != 1 || !strings.Contains(confirmedResponse.Body.String(), "归档文件已删除") {
-		t.Fatalf("confirmed status = %d, requests = %d: %s", confirmedResponse.Code, requests, confirmedResponse.Body.String())
+func TestHelperHelpAcrossModesAndLegacyClients(t *testing.T) {
+	mixed, admin, db := nativeServicesFixture(t, "", nil, nil)
+	native, err := newHandler(config.Config{ApplicationConfigPath: filepath.Join(filepath.Dir(db), "config.yaml"), DisableLegacy: true}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := systemconfig.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	const route = "/api/v1/plugins/DownloaderHelper/page"
+	if w := nativeJSONRequest(mixed, "GET", route, admin, ""); w.Code != 404 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if err := store.Set(t.Context(), "UserInstalledPlugins", `["DownloaderHelper","Customization"]`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Set(t.Context(), helperControlKey, `{"Last":"private-job-result"}`); err != nil {
+		t.Fatal(err)
+	}
+	if w := performFormRequest(mixed, "/api/v1/user/manage", admin, url.Values{"oper": {"add"}, "name": {"viewer"}, "password": {"strong-password"}, "pris": {""}}); w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	viewer := loginForTest(t, mixed, "viewer", "strong-password")
+	for _, deployment := range []struct {
+		h             http.Handler
+		showAdminRuns bool
+	}{{mixed, false}, {native, true}} {
+		for _, actor := range []struct {
+			token string
+			admin bool
+		}{{admin, true}, {viewer, false}} {
+			h := deployment.h
+			list := nativeJSONRequest(h, "GET", "/api/v1/plugins", actor.token, "")
+			var catalog struct{ Data pluginsData }
+			if list.Code != 200 || json.Unmarshal(list.Body.Bytes(), &catalog) != nil {
+				t.Fatal("catalog read failed", list.Code)
+			}
+			found := false
+			for _, item := range catalog.Data.Items {
+				if item.ID == helperID {
+					found = item.CanViewPage && item.HasPage && (!deployment.showAdminRuns || item.ActionsAvailable == actor.admin)
+				}
+			}
+			if !found {
+				t.Fatal("help link and management permissions disagree")
+			}
+			for _, w := range []*httptest.ResponseRecorder{
+				nativeJSONRequest(h, "GET", route, actor.token, ""),
+				performFormRequest(h, "/api/v1/plugin/page", actor.token, url.Values{"id": {helperID}}),
+				nativeJSONRequest(h, "POST", "/do", actor.token, `{"cmd":"get_plugin_page","data":{"id":"DownloaderHelper"}}`),
+			} {
+				body := w.Body.String()
+				if w.Code != 200 || !strings.Contains(body, "全局配置") || !strings.Contains(body, "自动删种") || strings.Contains(body, "private-job-result") != (actor.admin && deployment.showAdminRuns) {
+					t.Fatal(w.Code, body)
+				}
+			}
+		}
+	}
+	for _, w := range []*httptest.ResponseRecorder{
+		nativeJSONRequest(mixed, "GET", "/api/v1/plugins/Customization/page", admin, ""),
+		performFormRequest(mixed, "/api/v1/plugin/page", admin, url.Values{"id": {"Customization"}}),
+	} {
+		if w.Code != 404 {
+			t.Fatal(w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -138,9 +217,9 @@ func TestPluginPageRecordDeleteRejectsUnsupportedOrInvalidRecord(t *testing.T) {
 	}
 }
 
-func TestPluginArchivePageOnlyAcceptsExactArchiveFilenames(t *testing.T) {
+func TestForwardedArchivePageOmitsRemoteActions(t *testing.T) {
 	t.Parallel()
-	data := normalizePluginPage("MediaLibraryArchive", map[string]any{
+	data := normalizePluginPage(map[string]any{
 		"title": "归档记录",
 		"tables": []any{map[string]any{
 			"columns": []any{"归档名称", "归档大小"},
@@ -154,11 +233,11 @@ func TestPluginArchivePageOnlyAcceptsExactArchiveFilenames(t *testing.T) {
 			},
 		}},
 	})
-	if !data.CanDeleteRecords || data.DeleteConfirmation != "typeRecordId" || len(data.Tables) != 1 || len(data.Tables[0].RowActions) != 2 {
+	if data.CanDeleteRecords || !data.ActionsOmitted || data.DeleteConfirmation != "" || len(data.Tables) != 1 || len(data.Tables[0].RowActions) != 2 {
 		t.Fatalf("unexpected archive page: %#v", data)
 	}
-	if action := data.Tables[0].RowActions[0]; action == nil || action.RecordID != "归档_20260919080000.md" || action.Confirmation != "typeRecordId" {
-		t.Fatalf("valid archive action missing: %#v", action)
+	if action := data.Tables[0].RowActions[0]; action != nil {
+		t.Fatalf("remote archive action exposed: %#v", action)
 	}
 	if data.Tables[0].RowActions[1] != nil {
 		t.Fatalf("forged archive action accepted: %#v", data.Tables[0].RowActions[1])
@@ -193,7 +272,7 @@ func TestPluginPageMapsNotFoundAndRejectsInvalidID(t *testing.T) {
 
 func TestPluginPageIgnoresForgedActionsForReadOnlyPlugin(t *testing.T) {
 	t.Parallel()
-	data := normalizePluginPage("AutoSignin", map[string]any{
+	data := normalizePluginPage(map[string]any{
 		"title": "签到记录",
 		"tables": []any{map[string]any{
 			"columns":     []any{"站点", "结果"},

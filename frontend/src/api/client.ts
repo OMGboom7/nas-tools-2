@@ -800,6 +800,7 @@ export type PluginSummary = {
   running: boolean;
   configurable: boolean;
 	 hasPage: boolean;
+  canViewPage?: boolean;
   nativeHistoryPage?: boolean;
   nativeArchivePage?: boolean;
   stateKnown?: boolean;

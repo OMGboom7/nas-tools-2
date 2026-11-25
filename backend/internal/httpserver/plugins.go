@@ -59,6 +59,7 @@ type pluginSummary struct {
 	Configurable      bool   `json:"configurable"`
 	NativeArchivePage bool   `json:"nativeArchivePage,omitempty"`
 	NativeHistoryPage bool   `json:"nativeHistoryPage,omitempty"`
+	CanViewPage       bool   `json:"canViewPage"`
 	HasPage           bool   `json:"hasPage"`
 	StateKnown        bool   `json:"stateKnown"`
 	Native            bool   `json:"native"`
@@ -236,6 +237,7 @@ func (service pluginService) list(ctx context.Context, token string) (pluginsDat
 			item.Configurable = len(sliceOrJSON(configuration["fields"])) > 0 || len(objectValue(configuration["fields"])) > 0
 			item.HasPage = cleanPluginText(configuration["page"], 120) != ""
 		}
+		item.CanViewPage = item.HasPage
 		if item.Installed {
 			data.InstalledCount++
 		}

@@ -5,13 +5,15 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/mediaarchive"
 )
 
 var pluginPageURLPattern = regexp.MustCompile(`(?i)https?://[^\s<>"']+`)
 var pluginPageRecordIDPattern = regexp.MustCompile(`^[0-9]{1,30}$`)
-var pluginPageArchiveIDPattern = regexp.MustCompile(`^归档_[0-9]{14}\.md$`)
 
 var pluginPageDeleteConfirmation = map[string]string{
 	"DoubanSync": "confirm", "DoubanRank": "confirm", "MovieRandom": "confirm",
@@ -55,7 +57,7 @@ func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, i
 		s.autoSub.page(w, r, s, legacy)
 	case s.disk != nil && id == diskID:
 		s.disk.page(w, r, s, legacy)
-	case s.helper != nil && id == helperID:
+	case s.system != nil && id == helperID:
 		s.helperPage(w, r, legacy)
 	case s.iyuu != nil && id == "IYUUAutoSeed":
 		s.iyuu.partnerPage(w, r, legacy)
@@ -100,21 +102,59 @@ func (s pluginService) serveNativePage(w http.ResponseWriter, r *http.Request, i
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
-	if service.serveNativePage(response, request, strings.TrimSpace(request.PathValue("id")), false) {
+	service.pluginPage(response, request, strings.TrimSpace(request.PathValue("id")), false)
+}
+
+func (s pluginService) legacyPage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+	if err := r.ParseForm(); err != nil {
+		writeAPIError(w, 400, 400, "插件扩展页请求无效")
 		return
 	}
-	if service.unavailablePluginRoute(response, request) {
+	s.pluginPage(w, r, strings.TrimSpace(r.PostForm.Get("id")), true)
+}
+
+func (service pluginService) pluginPage(response http.ResponseWriter, request *http.Request, id string, legacy bool) {
+	if service.serveNativePage(response, request, id, legacy) || service.unavailablePlugin(response, request, id) {
 		return
 	}
 	token, ok := requireServiceToken(response, request)
 	if !ok {
 		return
 	}
-	id := strings.TrimSpace(request.PathValue("id"))
 	if !pluginIDPattern.MatchString(id) {
 		writeAPIError(response, http.StatusBadRequest, 400, "invalid plugin id")
 		return
 	}
+	// The bundled catalog is authoritative for original pages. Only pages
+	// actually provided by another executor need the transitional reader.
+	if service.system != nil {
+		catalog, err := bundledPluginCatalog()
+		if err != nil {
+			writeAPIError(response, 500, 500, "插件目录不可用")
+			return
+		}
+		if entry, known := catalog[id]; known {
+			admin, ok := service.catalogReader(response, request)
+			if !ok {
+				return
+			}
+			if !entry.HasPage || !admin && entry.AuthLevel > 1 {
+				writeAPIError(response, 404, 404, "未找到插件扩展页")
+				return
+			}
+			installed, err := service.nativeMetadataInstalled(request.Context())
+			if err != nil {
+				writeAPIError(response, 503, 503, "无法读取已安装插件")
+				return
+			}
+			if !slices.Contains(installed, id) {
+				writeAPIError(response, 404, 404, "尚未安装此插件")
+				return
+			}
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
 	defer cancel()
 	result, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/page", token, url.Values{"id": {id}})
@@ -139,18 +179,18 @@ func (service pluginService) servePage(response http.ResponseWriter, request *ht
 		writeAPIError(response, http.StatusBadGateway, 502, "plugin page is unavailable")
 		return
 	}
-	data := normalizePluginPage(id, legacyPayload(result))
+	data := normalizePluginPage(legacyPayload(result))
 	if data.Title == "" {
 		writeAPIError(response, http.StatusBadGateway, 502, "plugin page is invalid")
 		return
 	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "data": data})
+	writeNativeRecordPage(response, data, legacy)
 }
 
-func normalizePluginPage(pluginID string, raw map[string]any) pluginPageData {
+func normalizePluginPage(raw map[string]any) pluginPageData {
 	data := pluginPageData{
-		Title: cleanPluginPageText(raw["title"], 120), ReadOnly: true, CanDeleteRecords: pluginPageDeleteConfirmation[pluginID] != "",
-		DeleteConfirmation: pluginPageDeleteConfirmation[pluginID], ActionsOmitted: truthy(raw["actions_omitted"]), Sections: []string{}, Tables: []pluginPageTable{},
+		Title: cleanPluginPageText(raw["title"], 120), ReadOnly: true,
+		ActionsOmitted: truthy(raw["actions_omitted"]), Sections: []string{}, Tables: []pluginPageTable{},
 	}
 	for _, rawSection := range sliceOrJSON(raw["sections"]) {
 		if len(data.Sections) >= 80 {
@@ -179,8 +219,13 @@ func normalizePluginPage(pluginID string, raw map[string]any) pluginPageData {
 		if len(table.Columns) == 0 {
 			continue
 		}
-		rawActions := sliceOrJSON(tableObject["row_actions"])
-		for rowIndex, rawRow := range sliceOrJSON(tableObject["rows"]) {
+		for _, action := range sliceOrJSON(tableObject["row_actions"]) {
+			if action != nil {
+				data.ActionsOmitted = true
+				break
+			}
+		}
+		for _, rawRow := range sliceOrJSON(tableObject["rows"]) {
 			if len(table.Rows) >= 200 {
 				break
 			}
@@ -195,16 +240,7 @@ func normalizePluginPage(pluginID string, raw map[string]any) pluginPageData {
 			}
 			if nonempty {
 				table.Rows = append(table.Rows, row)
-				var action *pluginPageRowAction
-				confirmation := pluginPageDeleteConfirmation[pluginID]
-				if confirmation != "" && rowIndex < len(rawActions) {
-					rawAction := objectValue(rawActions[rowIndex])
-					recordID := strings.TrimSpace(text(rawAction["record_id"]))
-					if text(rawAction["type"]) == "delete" && validPluginPageRecordID(pluginID, recordID) {
-						action = &pluginPageRowAction{Type: "delete", RecordID: recordID, Confirmation: confirmation}
-					}
-				}
-				table.RowActions = append(table.RowActions, action)
+				table.RowActions = append(table.RowActions, nil)
 			}
 		}
 		data.Tables = append(data.Tables, table)
@@ -217,8 +253,7 @@ func (service pluginService) deletePageRecord(response http.ResponseWriter, requ
 		writeAPIError(response, 400, 400, "下载器助手扩展页只支持查看")
 		return
 	}
-	token, ok := requireServiceToken(response, request)
-	if !ok {
+	if _, ok := requireServiceToken(response, request); !ok {
 		return
 	}
 	id := strings.TrimSpace(request.PathValue("id"))
@@ -240,53 +275,60 @@ func (service pluginService) deletePageRecord(response http.ResponseWriter, requ
 		writeAPIError(response, http.StatusBadRequest, 400, "plugin page confirmation does not match")
 		return
 	}
-	if service.nativeArchivePage(id) {
-		service.removeArchiveRecord(response, request, input.RecordID, input.Confirmation, input.Proof)
+	service.removePageRecord(response, request, id, input)
+}
+
+// The original page action API only supports three history plugins and the
+// media archive. All four operate on the data host that verified the account.
+func (s pluginService) removePageRecord(w http.ResponseWriter, r *http.Request, id string, input pluginPageActionRequest) {
+	switch {
+	case s.nativeArchivePage(id):
+		s.removeArchiveRecord(w, r, input.RecordID, input.Confirmation, input.Proof)
+	case s.nativeSubscriptionHistory(id):
+		s.removeSubscriptionHistory(w, r, id, input.RecordID)
+	default:
+		writeAPIError(w, 503, 503, "请连接可访问插件数据和归档目录的 Go 服务")
+	}
+}
+
+func (s pluginService) legacyPageAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeAPIError(w, 405, 405, "此接口仅接受 POST 请求")
 		return
 	}
-	if service.nativeSubscriptionHistory(id) {
-		service.removeSubscriptionHistory(response, request, id, input.RecordID)
+	if _, ok := requireServiceToken(w, r); !ok {
 		return
 	}
-	if service.unavailablePlugin(response, request, id) {
+	r.Body = http.MaxBytesReader(w, r.Body, 128<<10)
+	if err := r.ParseForm(); err != nil {
+		writeAPIError(w, 400, 400, "插件扩展页请求无效")
 		return
 	}
-	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
-	defer cancel()
-	result, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/page/action", token, url.Values{
-		"id": {id}, "action": {"delete"}, "record_id": {input.RecordID}, "confirmation": {input.Confirmation},
-	})
-	if err != nil {
-		writeAPIError(response, http.StatusBadGateway, 502, "legacy service is unavailable")
-		return
-	}
-	code := int(number(result["code"]))
-	if code == 403 {
-		writeAPIError(response, http.StatusUnauthorized, 401, "authorization token is invalid or expired")
-		return
-	}
-	if code == 400 || code == 404 || code == 409 {
-		message := text(result["message"])
-		if message == "" {
-			message = "plugin page action was rejected"
+	id := strings.TrimSpace(r.PostForm.Get("id"))
+	if pluginPageDeleteConfirmation[id] == "" {
+		if s.nativeFeedPlugin(id) && (id == autoSubID || id == diskID || id == helperID || id == "IYUUAutoSeed") {
+			writeAPIError(w, 400, 400, "此扩展页只支持查看")
+			return
 		}
-		writeAPIError(response, code, code, message)
+		if s.unavailablePlugin(w, r, id) {
+			return
+		}
+		writeAPIError(w, 400, 400, "此扩展页没有可执行的记录操作")
 		return
 	}
-	if code != 0 {
-		writeAPIError(response, http.StatusBadGateway, 502, "plugin page action failed")
+	if r.PostForm.Get("action") != "delete" {
+		writeAPIError(w, 400, 400, "不支持的插件扩展页操作")
 		return
 	}
-	message := cleanPluginPageText(result["message"], 200)
-	if message == "" {
-		message = "plugin page record deleted"
-	}
-	writeJSON(response, http.StatusOK, map[string]any{"code": 0, "success": true, "message": message})
+	s.removePageRecord(w, r, id, pluginPageActionRequest{
+		RecordID: r.PostForm.Get("record_id"), Confirmation: r.PostForm.Get("confirmation"), Proof: r.PostForm.Get("proof"),
+	})
 }
 
 func validPluginPageRecordID(pluginID, recordID string) bool {
 	if pluginID == "MediaLibraryArchive" {
-		return pluginPageArchiveIDPattern.MatchString(recordID)
+		return mediaarchive.ValidName(recordID)
 	}
 	return pluginPageDeleteConfirmation[pluginID] == "confirm" && pluginPageRecordIDPattern.MatchString(recordID)
 }

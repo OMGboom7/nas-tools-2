@@ -106,19 +106,38 @@ func (api *downloaderHelperAPI) selection(ctx context.Context, actor string, v m
 	s.proof = sitelogin.Hash([]any{auth, v, s.targets, s.sites})
 	return s, nil
 }
+
+type helperOption struct {
+	key, title, kind, help string
+}
+
+var helperGeneralOptions = []helperOption{
+	{"enable", "启动插件", "switch", "启用定时任务和已配置的事件监听。"},
+	{"run_once", "立即运行一次", "switch", "保存后运行一次已启用的下载器任务，独立于总开关。"},
+	{"enable_notify", "运行时通知", "switch", "任务运行后发送结果通知。"},
+	{"cron", "定时执行周期", "text", "填写五段 cron 表达式，依次为分、时、日、月、周。"},
+	{"exclude_tags", "排除种子标签", "text", "具有任一排除标签的种子会跳过。多个完整标签用英文逗号分隔。"},
+	{"use_site_config", "优先使用站点名称", "switch", "添加站点标签时优先使用已配置的站点名称，其他站点使用域名关键字。"},
+	{"listen_download_event", "监听下载添加事件", "switch", "NAS Tools 添加种子时触发对应下载器的站点打标。"},
+	{"listen_source_file_event", "监听源文件删除事件", "switch", "配合自动删种，按目录映射核对源文件删除事件涉及的下载任务。"},
+}
+
+var helperTaskOptions = []helperOption{
+	{"enable", "任务开关", "switch", "启用当前下载器的任务。"},
+	{"enable_seeding", "自动做种", "switch", "启动已完成且暂停的种子。"},
+	{"enable_tagging", "站点标签", "switch", "给缺少站点标签的种子添加对应标签。"},
+	{"enable_delete", "自动删种", "switch", "下载器报告数据丢失时，移除任务及其剩余下载文件。"},
+}
+
 func (api *downloaderHelperAPI) fields(ctx context.Context) ([]pluginConfigField, error) {
 	fields := []pluginConfigField{}
-	add := func(key, title, kind, section, help string) {
-		fields = append(fields, pluginConfigField{Key: key, Title: title, Type: kind, Section: section, Tooltip: help, Options: []pluginConfigChoice{}})
+	add := func(options []helperOption, prefix, section string) {
+		for _, o := range options {
+			fields = append(fields, pluginConfigField{Key: prefix + o.key, Title: o.title, Type: o.kind, Section: section, Tooltip: o.help, Options: []pluginConfigChoice{}})
+		}
 	}
-	add("enable", "启动插件", "switch", "", "启用定时任务和配置的事件监听。")
-	add("run_once", "立即运行一次", "switch", "", "保存后三秒执行一次，独立于总开关。")
-	add("enable_notify", "运行时通知", "switch", "", "")
-	add("cron", "定时执行周期", "text", "", "五段 cron 表达式。")
-	add("exclude_tags", "排除种子标签", "text", "", "多个标签用英文逗号分隔，按完整标签匹配。")
-	add("use_site_config", "优先使用站点名称", "switch", "", "")
-	add("listen_download_event", "监听下载添加事件", "switch", "", "对相应下载器执行站点打标。")
-	add("listen_source_file_event", "监听源文件删除事件", "switch", "", "按下载器目录映射核对已经删除的源数据。")
+	add(helperGeneralOptions, "", "")
+
 	ds, err := api.transfer.downloaders.List(ctx)
 	if err != nil {
 		return nil, err
@@ -129,10 +148,7 @@ func (api *downloaderHelperAPI) fields(ctx context.Context) ([]pluginConfigField
 		}
 		p := "downloader." + strconv.FormatInt(d.ID, 10) + "."
 		section := d.Name + " · " + strconv.FormatInt(d.ID, 10)
-		add(p+"enable", "任务开关", "switch", section, "")
-		add(p+"enable_seeding", "自动做种", "switch", section, "启动已经完成且暂停的任务。")
-		add(p+"enable_tagging", "站点标签", "switch", section, "")
-		add(p+"enable_delete", "自动删种", "switch", section, "下载器报告数据丢失时，移除任务及其剩余下载文件。")
+		add(helperTaskOptions, p, section)
 	}
 	return fields, nil
 }
@@ -264,25 +280,54 @@ func (api *downloaderHelperAPI) summary(ctx context.Context, raw map[string]stri
 	return err == nil && s.proof == st.Scope, err == nil
 }
 func (service pluginService) helperPage(w http.ResponseWriter, r *http.Request, legacy bool) {
-	if !service.historyReader(w, r) {
+	administrator, ok := service.catalogReader(w, r)
+	if !ok {
 		return
 	}
-	raw, err := service.system.ReadMany(r.Context(), helperKeys)
+	showRuns := administrator && service.helper != nil
+	keys := []string{"UserInstalledPlugins"}
+	if showRuns {
+		keys = append(keys, helperControlKey)
+	}
+	settings, err := service.system.ReadMany(r.Context(), keys)
 	if err != nil {
 		subscriptionHistoryError(w, err)
 		return
 	}
-	ok, err := indexerInstalled(raw["UserInstalledPlugins"], helperID)
-	if err != nil || !ok {
+	present, err := indexerInstalled(settings["UserInstalledPlugins"], helperID)
+	if err != nil {
+		subscriptionHistoryError(w, err)
+		return
+	}
+	if !present {
 		writeAPIError(w, 404, 404, "尚未安装下载器助手")
 		return
 	}
-	st, err := helperState(raw[helperControlKey])
+	w.Header().Set("Cache-Control", "private, no-store")
+	data := pluginPageData{Title: "使用帮助", ReadOnly: true, Sections: []string{
+		"下载器助手支持 qBittorrent 和 Transmission，可为每个下载器单独配置任务。",
+		"开发者 hotlcc · 版本 1.4 · gitee.com/hotlcc/nastool-plugin",
+	}}
+	for _, group := range []struct {
+		title   string
+		options []helperOption
+	}{{"全局配置", helperGeneralOptions}, {"任务配置", helperTaskOptions}} {
+		table := pluginPageTable{Columns: []string{group.title, "说明"}, RowActions: []*pluginPageRowAction{}}
+		for _, o := range group.options {
+			table.Rows = append(table.Rows, []string{o.title, o.help})
+		}
+		data.Tables = append(data.Tables, table)
+	}
+	if !showRuns {
+		writeNativeRecordPage(w, data, legacy)
+		return
+	}
+	st, err := helperState(settings[helperControlKey])
 	if err != nil {
 		writeAPIError(w, 409, 409, "任务记录无效")
 		return
 	}
-	data := pluginPageData{Title: "下载器助手", ReadOnly: true, Tables: []pluginPageTable{}, Sections: []string{"每个下载器可分别配置做种、站点标签和缺失数据清理。完整匹配排除标签的种子会跳过。"}}
+
 	if !st.Once.IsZero() {
 		data.Sections = append(data.Sections, "单次运行时间 "+st.Once.Local().Format(time.DateTime))
 	}

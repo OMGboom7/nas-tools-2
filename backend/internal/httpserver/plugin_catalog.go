@@ -97,6 +97,9 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			item.HasPage = administrator
 			item.ActionsAvailable = administrator
 		}
+		if item.ID == helperID && service.helper != nil {
+			item.ActionsAvailable = administrator
+		}
 		if item.ID == "IYUUAutoSeed" && service.iyuu != nil {
 			item.ActionsAvailable = administrator
 			item.HasPage = administrator
@@ -306,7 +309,9 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			data.Items = append(data.Items, pluginSummary{ID: id, Name: id, Description: "已保留原安装记录和配置。此扩展需要对应的 Go 实现才能运行。", Installed: true})
 		}
 	}
-	for _, item := range data.Items {
+	for i := range data.Items {
+		item := &data.Items[i]
+		item.CanViewPage = item.HasPage && (item.ActionsAvailable || item.NativeHistoryPage || item.NativeArchivePage || item.ID == helperID)
 		if item.Installed {
 			data.InstalledCount++
 		}

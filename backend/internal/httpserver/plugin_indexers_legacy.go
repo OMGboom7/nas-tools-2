@@ -1,12 +1,5 @@
 package httpserver
 
-import (
-	"bytes"
-	"io"
-	"net/http"
-	"strings"
-)
-
 func indexerLegacyFields(detail pluginConfigDetail) []any {
 	rows := []any{}
 	for _, f := range detail.Fields {
@@ -33,45 +26,4 @@ func indexerLegacyFields(detail pluginConfigDetail) []any {
 		rows = append(rows, []any{column})
 	}
 	return []any{map[string]any{"type": "div", "content": rows}}
-}
-
-func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
-		if err != nil {
-			writeAPIError(w, 400, 400, "invalid plugin page request")
-			return
-		}
-		probe := r.Clone(r.Context())
-		probe.Body = io.NopCloser(bytes.NewReader(body))
-		if probe.ParseForm() != nil {
-			writeAPIError(w, 400, 400, "invalid plugin page request")
-			return
-		}
-		id := strings.TrimSpace(probe.PostForm.Get("id"))
-		if !action && s.serveNativePage(w, probe, id, true) {
-			return
-		}
-		if action {
-			switch {
-			case s.nativeArchivePage(id), s.nativeSubscriptionHistory(id):
-				if probe.PostForm.Get("action") != "delete" {
-					writeAPIError(w, 400, 400, "不支持的插件扩展页操作")
-				} else if s.nativeArchivePage(id) {
-					s.removeArchiveRecord(w, probe, probe.PostForm.Get("record_id"), probe.PostForm.Get("confirmation"), probe.PostForm.Get("proof"))
-				} else {
-					s.removeSubscriptionHistory(w, probe, id, probe.PostForm.Get("record_id"))
-				}
-				return
-			case s.nativeFeedPlugin(id) && (id == autoSubID || id == diskID || id == helperID || id == "IYUUAutoSeed"):
-				writeAPIError(w, 400, 400, "此扩展页只支持查看")
-				return
-			}
-		}
-		if s.unavailablePlugin(w, probe, id) {
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		fallback.ServeHTTP(w, r)
-	})
 }
