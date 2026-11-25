@@ -18,16 +18,18 @@ import (
 )
 
 type tmdbRecommendation struct {
-	ID           int64   `json:"id"`
-	MediaType    string  `json:"media_type"`
-	Title        string  `json:"title"`
-	Name         string  `json:"name"`
-	ReleaseDate  string  `json:"release_date"`
-	FirstAirDate string  `json:"first_air_date"`
-	PosterPath   string  `json:"poster_path"`
-	BackdropPath string  `json:"backdrop_path"`
-	Overview     string  `json:"overview"`
-	VoteAverage  float64 `json:"vote_average"`
+	ID               int64   `json:"id"`
+	MediaType        string  `json:"media_type"`
+	Title            string  `json:"title"`
+	Name             string  `json:"name"`
+	ReleaseDate      string  `json:"release_date"`
+	FirstAirDate     string  `json:"first_air_date"`
+	PosterPath       string  `json:"poster_path"`
+	BackdropPath     string  `json:"backdrop_path"`
+	Overview         string  `json:"overview"`
+	OriginalLanguage string  `json:"original_language"`
+	GenreIDs         []int   `json:"genre_ids"`
+	VoteAverage      float64 `json:"vote_average"`
 }
 
 func (service discoveryService) nativeRecommendations(ctx context.Context, endpoint string, page int) ([]discoveryMedia, error) {
@@ -39,61 +41,9 @@ func (service discoveryService) nativeRecommendations(ctx context.Context, endpo
 		return nil, err
 	}
 	app := objectValue(snapshot["app"])
-	media := objectValue(snapshot["media"])
-	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
-	if key == "" {
-		return nil, errors.New("TMDB API key is unavailable")
-	}
-	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
-	if host == "" {
-		host = "api.themoviedb.org"
-	}
-	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
-		return nil, errors.New("invalid TMDB API domain")
-	}
-	apiURL := url.URL{Scheme: "https", Host: host, Path: "/3" + endpoint}
-	if apiURL.Hostname() == "" {
-		return nil, errors.New("invalid TMDB API domain")
-	}
-	language := strings.TrimSpace(text(media["tmdb_language"]))
-	if language == "" {
-		language = "zh"
-	}
-	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
-		return nil, errors.New("invalid TMDB language")
-	}
-	query := url.Values{"api_key": {key}, "page": {strconv.Itoa(page)}, "language": {language}}
-	if truthy(media["tmdb_include_adult"]) {
-		query.Set("include_adult", "true")
-	} else {
-		query.Set("include_adult", "false")
-	}
-	apiURL.RawQuery = query.Encode()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL.String(), nil)
+	payload, err := fetchTMDBPage(ctx, service.client, snapshot, endpoint, page, nil)
 	if err != nil {
 		return nil, err
-	}
-	request.Header.Set("Accept", "application/json")
-	client := *service.client
-	client.Timeout = 15 * time.Second
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	upstream, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer upstream.Body.Close()
-	if upstream.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TMDB status %d", upstream.StatusCode)
-	}
-	contents, err := io.ReadAll(io.LimitReader(upstream.Body, 2<<20+1))
-	if err != nil || len(contents) > 2<<20 {
-		return nil, errors.New("TMDB response is unavailable or too large")
-	}
-	var payload struct {
-		Results []tmdbRecommendation `json:"results"`
-	}
-	if err := json.Unmarshal(contents, &payload); err != nil || payload.Results == nil {
-		return nil, errors.New("invalid TMDB response")
 	}
 	databaseURL := (&url.URL{Scheme: "file", Path: service.databasePath, RawQuery: "mode=ro"}).String()
 	database, err := sql.Open("sqlite", databaseURL)
@@ -175,4 +125,71 @@ func discoverySubscribed(ctx context.Context, database *sql.DB, kind, id, title,
 		return false, err
 	}
 	return exists != 0, nil
+}
+
+type tmdbPage struct {
+	Results    []tmdbRecommendation `json:"results"`
+	TotalPages *int                 `json:"total_pages"`
+}
+
+func fetchTMDBPage(ctx context.Context, clientSource *http.Client, snapshot map[string]any, endpoint string, page int, filters map[string]string) (tmdbPage, error) {
+	app := objectValue(snapshot["app"])
+	media := objectValue(snapshot["media"])
+	key := strings.TrimSpace(text(app["rmt_tmdbkey"]))
+	if key == "" {
+		return tmdbPage{}, errors.New("TMDB API key is unavailable")
+	}
+	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(text(app["tmdb_domain"])), "https://"), "http://"), "/")
+	if host == "" {
+		host = "api.themoviedb.org"
+	}
+	if strings.ContainsAny(host, "/?#@\\") || strings.Contains(host, "..") {
+		return tmdbPage{}, errors.New("invalid TMDB API domain")
+	}
+	apiURL := url.URL{Scheme: "https", Host: host, Path: "/3" + endpoint}
+	if apiURL.Hostname() == "" {
+		return tmdbPage{}, errors.New("invalid TMDB API domain")
+	}
+	language := strings.TrimSpace(text(media["tmdb_language"]))
+	if language == "" {
+		language = "zh"
+	}
+	if len(language) > 32 || strings.ContainsAny(language, "\r\n") {
+		return tmdbPage{}, errors.New("invalid TMDB language")
+	}
+	query := url.Values{"api_key": {key}, "page": {strconv.Itoa(page)}, "language": {language}}
+	if truthy(media["tmdb_include_adult"]) {
+		query.Set("include_adult", "true")
+	} else {
+		query.Set("include_adult", "false")
+	}
+	for k, v := range filters {
+		query.Set(k, v)
+	}
+	apiURL.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL.String(), nil)
+	if err != nil {
+		return tmdbPage{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	client := *clientSource
+	client.Timeout = 15 * time.Second
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	upstream, err := client.Do(request)
+	if err != nil {
+		return tmdbPage{}, err
+	}
+	defer upstream.Body.Close()
+	if upstream.StatusCode != http.StatusOK {
+		return tmdbPage{}, fmt.Errorf("TMDB status %d", upstream.StatusCode)
+	}
+	contents, err := io.ReadAll(io.LimitReader(upstream.Body, 2<<20+1))
+	if err != nil || len(contents) > 2<<20 {
+		return tmdbPage{}, errors.New("TMDB response is unavailable or too large")
+	}
+	var payload tmdbPage
+	if err := json.Unmarshal(contents, &payload); err != nil || payload.Results == nil {
+		return tmdbPage{}, errors.New("invalid TMDB response")
+	}
+	return payload, nil
 }

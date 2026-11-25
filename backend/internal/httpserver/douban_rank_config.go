@@ -3,7 +3,6 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
-	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +16,9 @@ const rankControlKey = "GoDoubanRank"
 
 var rankKeys = []string{"UserInstalledPlugins", rankSettingsKey, rankControlKey, "DefaultRssSettingMOV", "DefaultRssSettingTV"}
 
-// Both plugins expose the same installation and optimistic-edit protocol.
+// Subscription plugins expose the same installation and optimistic-edit protocol.
 // Their settings, schedules and execution state belong to separate keys.
-type doubanPlugin struct {
+type subscriptionPlugin struct {
 	id, name, control string
 	keys              []string
 	detail            func(string, map[string]string) (pluginConfigDetail, error)
@@ -27,11 +26,14 @@ type doubanPlugin struct {
 	changes           func(context.Context, string, map[string]string, map[string]json.RawMessage, []string, time.Time) (map[string]string, error)
 }
 
-func (api *doubanSyncAPI) plugin(id string) doubanPlugin {
-	if id == douban.RankPlugin {
-		return doubanPlugin{id, "豆瓣榜单订阅", rankControlKey, rankKeys, rankDetail, api.rankSummary, api.rankChanges}
+func (api *doubanSyncAPI) plugin(id string) subscriptionPlugin {
+	if id == movieRandomID {
+		return subscriptionPlugin{id, "电影随机订阅", movieRandomControlKey, movieRandomKeys, movieRandomDetail, api.movieRandomSummary, api.movieRandomChanges}
 	}
-	return doubanPlugin{douban.SyncPlugin, "豆瓣同步", doubanControlKey, doubanKeys, func(actor string, raw map[string]string) (pluginConfigDetail, error) {
+	if id == douban.RankPlugin {
+		return subscriptionPlugin{id, "豆瓣榜单订阅", rankControlKey, rankKeys, rankDetail, api.rankSummary, api.rankChanges}
+	}
+	return subscriptionPlugin{douban.SyncPlugin, "豆瓣同步", doubanControlKey, doubanKeys, func(actor string, raw map[string]string) (pluginConfigDetail, error) {
 		cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
 		return doubanDetail(actor, raw, cfg), err
 	}, api.summary, api.changes}
@@ -62,7 +64,7 @@ func rankDetail(actor string, raw map[string]string) (pluginConfigDetail, error)
 	}
 	return pluginConfigDetail{ID: douban.RankPlugin, Name: "豆瓣榜单订阅", Fields: fields, Values: map[string]any{"enable": cfg.Enabled, "onlyonce": cfg.Once, "cron": cfg.Cron, "release_date": strconv.Itoa(cfg.Year), "vote": strconv.FormatFloat(cfg.Vote, 'f', -1, 64), "ranks": append([]string{}, cfg.Ranks...), "rss_addrs": strings.Join(cfg.Addresses, "\n")}, Meta: pluginConfigDetailMeta{Fingerprint: sitelogin.Hash([]any{actor, raw}), HasPage: true}}, nil
 }
-func (api *doubanSyncAPI) rankScope(actor string, raw map[string]string) (string, error) {
+func (api *doubanSyncAPI) scheduleScope(actor, settings string) (string, error) {
 	auth, cfg, err := api.login.authority(actor)
 	if err != nil {
 		return "", err
@@ -73,17 +75,20 @@ func (api *doubanSyncAPI) rankScope(actor string, raw map[string]string) (string
 	if err != nil {
 		return "", err
 	}
-	return sitelogin.Hash([]any{auth, raw[rankSettingsKey], app["tmdb_domain"], app["rmt_tmdbkey"], media, cfg[strings.ToLower(strings.TrimSpace(text(media["media_server"])))], loc.String()}), nil
+	return sitelogin.Hash([]any{auth, settings, app["tmdb_domain"], app["rmt_tmdbkey"], media, cfg[strings.ToLower(strings.TrimSpace(text(media["media_server"])))], loc.String()}), nil
 }
 func (api *doubanSyncAPI) rankSummary(_ context.Context, raw map[string]string) (bool, bool) {
-	c, err := doubanState(raw[rankControlKey])
+	return api.scheduleSummary(raw[rankControlKey], raw[rankSettingsKey])
+}
+func (api *doubanSyncAPI) scheduleSummary(control, settings string) (bool, bool) {
+	c, err := doubanState(control)
 	if err != nil {
 		return false, false
 	}
 	if c.Actor == "" || !c.Running && c.Once.IsZero() && c.Next.IsZero() {
 		return false, true
 	}
-	scope, err := api.rankScope(c.Actor, raw)
+	scope, err := api.scheduleScope(c.Actor, settings)
 	return err == nil && scope == c.Scope, err == nil
 }
 func (api *doubanSyncAPI) rankChanges(_ context.Context, actor string, raw map[string]string, in map[string]json.RawMessage, clear []string, now time.Time) (map[string]string, error) {
@@ -110,38 +115,44 @@ func (api *doubanSyncAPI) rankChanges(_ context.Context, actor string, raw map[s
 	if err != nil {
 		return nil, err
 	}
+	if (cfg.Enabled || cfg.Once) && len(cfg.URLs()) == 0 {
+		return nil, douban.ErrSettings
+	}
+	return api.scheduleChanges(actor, rankSettingsKey, rankControlKey, values, cfg.Enabled, cfg.Once, cfg.Cron, now)
+}
+func (api *doubanSyncAPI) scheduleChanges(actor, settingsKey, controlKey string, values map[string]json.RawMessage, enabled, once bool, cron string, now time.Time) (map[string]string, error) {
 	loc, err := rssWorkerLocation()
 	if err != nil {
 		return nil, err
 	}
-	next, err := cookieCloudSchedule(cfg.Cron, loc, now)
+	next, err := cookieCloudSchedule(cron, loc, now)
 	if err != nil {
 		return nil, err
 	}
 	c := doubanControl{}
-	if cfg.Enabled || cfg.Once {
-		if len(cfg.URLs()) == 0 || cfg.Enabled && !cfg.Once && next.IsZero() {
+	if enabled || once {
+		if enabled && !once && next.IsZero() {
 			return nil, douban.ErrSettings
 		}
-		if cfg.Enabled {
+		if enabled {
 			c.Next = next.UTC()
 		}
-		if cfg.Once {
+		if once {
 			c.Once = now.Add(3 * time.Second).UTC()
 			values["onlyonce"] = json.RawMessage("false")
-			b, err = json.Marshal(values)
-			if err != nil {
-				return nil, err
-			}
 		}
 		c.Actor = actor
-		updated := maps.Clone(raw)
-		updated[rankSettingsKey] = string(b)
-		c.Scope, err = api.rankScope(actor, updated)
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return nil, err
+	}
+	if c.Actor != "" {
+		c.Scope, err = api.scheduleScope(actor, string(b))
 		if err != nil {
 			return nil, err
 		}
 	}
 	state, err := json.Marshal(c)
-	return map[string]string{rankSettingsKey: string(b), rankControlKey: string(state)}, err
+	return map[string]string{settingsKey: string(b), controlKey: string(state)}, err
 }

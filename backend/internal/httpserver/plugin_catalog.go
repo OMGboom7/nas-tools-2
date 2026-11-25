@@ -164,7 +164,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
-			if service.nativeDouban(item.ID) {
+			if service.nativeSubscriptionPlugin(item.ID) {
 				p := service.doubanSync.plugin(item.ID)
 				raw, err := service.system.ReadMany(ctx, p.keys)
 				if err == nil {
@@ -322,7 +322,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 }
 
 func (service pluginService) ownsPlugin(id string) bool {
-	return service.nativeDouban(id) || service.nativeArchiveRunner(id) || nativeMetadataPlugin(id) || service.nativeHosts(id) || service.nativeIndexer(id) || service.nativeSubtitle(id) || service.nativeOpenSubtitles(id) || service.nativeLibrary(id) || service.nativeMediaRefresh(id) || service.nativeEventWebhook(id) || service.nativeSpeedLimiter(id) || service.nativeMovieLike(id) || service.nativeMediaSyncDelete(id) ||
+	return service.nativeSubscriptionPlugin(id) || service.nativeArchiveRunner(id) || nativeMetadataPlugin(id) || service.nativeHosts(id) || service.nativeIndexer(id) || service.nativeSubtitle(id) || service.nativeOpenSubtitles(id) || service.nativeLibrary(id) || service.nativeMediaRefresh(id) || service.nativeEventWebhook(id) || service.nativeSpeedLimiter(id) || service.nativeMovieLike(id) || service.nativeMediaSyncDelete(id) ||
 		service.nativeSignin(id) ||
 		service.nativeCloudflare(id) || service.nativeCookieCloud(id) || service.nativeAutoBackup(id) || service.nativeSyncTimer(id) || service.nativeTorrentMark(id) || service.nativeTorrentRemover(id) || service.nativeTorrentTransfer(id)
 }

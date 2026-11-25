@@ -226,7 +226,7 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
 				continue
 			}
-			if service.nativeDouban(id) {
+			if service.nativeSubscriptionPlugin(id) {
 				p := service.doubanSync.plugin(id)
 				raw, err := service.system.ReadMany(request.Context(), p.keys)
 				if err != nil {

@@ -128,7 +128,7 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 		service.serveSyncTimerPlugin(response, request, action)
 		return
 	}
-	if service.nativeDouban(request.PathValue("id")) {
+	if service.nativeSubscriptionPlugin(request.PathValue("id")) {
 		action := "uninstall"
 		if install {
 			action = "install"

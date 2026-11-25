@@ -66,7 +66,7 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 		service.serveSyncTimerPlugin(response, request, "get")
 		return
 	}
-	if service.nativeDouban(request.PathValue("id")) {
+	if service.nativeSubscriptionPlugin(request.PathValue("id")) {
 		service.doubanSync.serve(response, request, request.PathValue("id"), "get")
 		return
 	}
@@ -174,7 +174,7 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 		service.serveSyncTimerPlugin(response, request, "save")
 		return
 	}
-	if service.nativeDouban(request.PathValue("id")) {
+	if service.nativeSubscriptionPlugin(request.PathValue("id")) {
 		service.doubanSync.serve(response, request, request.PathValue("id"), "save")
 		return
 	}

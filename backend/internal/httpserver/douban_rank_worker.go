@@ -62,7 +62,7 @@ func (api *doubanSyncAPI) rankTick(ctx context.Context, now time.Time) error {
 		}
 		return err
 	}
-	scope, err := api.rankScope(c.Actor, raw)
+	scope, err := api.scheduleScope(c.Actor, raw[rankSettingsKey])
 	if err != nil || scope != c.Scope {
 		return save(doubanControl{Last: "账号或媒体配置已变化，请重新保存榜单设置。"})
 	}
@@ -94,7 +94,7 @@ func (api *doubanSyncAPI) rankTick(ctx context.Context, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		scope, err := api.rankScope(c.Actor, actual)
+		scope, err := api.scheduleScope(c.Actor, actual[rankSettingsKey])
 		if err != nil || scope != c.Scope || !rankRunCurrent(raw, actual) {
 			return douban.ErrSettings
 		}
@@ -258,14 +258,7 @@ func (api *doubanSyncAPI) rankEntry(ctx context.Context, raw map[string]string, 
 				return err
 			}
 			if !historical {
-				// The generic attributes hold JSON numbers as floats. Use the exact decoded TMDB identity.
-				attrs := maps.Clone(media.detail.Attributes)
-				attrs["id"] = media.detail.ID
-				details, err := json.Marshal(attrs)
-				if err != nil {
-					return err
-				}
-				m, err := subscriptionMetadataFromJSON(input, details, objectValue(snapshot["app"]))
+				m, err := recognizedSubscriptionMetadata(input, media, snapshot)
 				if err != nil {
 					return err
 				}
@@ -301,4 +294,15 @@ func (api *doubanSyncAPI) rankEntry(ctx context.Context, raw map[string]string, 
 		return saveDoubanPluginHistory(ctx, tx, douban.RankPlugin, input.MediaID, state, date, data, count)
 	})
 	return result, err
+}
+
+func recognizedSubscriptionMetadata(input subscriptionUpsertRequest, media *nativeRecognition, snapshot map[string]any) (*nativeSubscriptionMetadata, error) {
+	// Preserve the exact TMDB identity when reusing the decoded detail.
+	attrs := maps.Clone(media.detail.Attributes)
+	attrs["id"] = media.detail.ID
+	details, err := json.Marshal(attrs)
+	if err != nil {
+		return nil, err
+	}
+	return subscriptionMetadataFromJSON(input, details, objectValue(snapshot["app"]))
 }

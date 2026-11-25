@@ -49,8 +49,8 @@ type doubanSyncAPI struct {
 func (api *doubanSyncAPI) available() bool {
 	return api != nil && api.plugins.system != nil && api.login.pureGo && api.login.guards != nil && *api.login.guards != nil
 }
-func (s pluginService) nativeDouban(id string) bool {
-	return (id == douban.SyncPlugin || id == douban.RankPlugin) && s.doubanSync.available()
+func (s pluginService) nativeSubscriptionPlugin(id string) bool {
+	return (id == douban.SyncPlugin || id == douban.RankPlugin || id == movieRandomID) && s.doubanSync.available()
 }
 func (api *doubanSyncAPI) scope(ctx context.Context, actor string, raw map[string]string) (string, error) {
 	auth, cfg, err := api.login.authority(actor)
@@ -239,7 +239,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, id, acti
 		case "get":
 			detail, err := p.detail(claims.Username, raw)
 			if err != nil {
-				writeAPIError(w, 409, 409, "原豆瓣设置无效")
+				writeAPIError(w, 409, 409, "原订阅插件设置无效")
 				return
 			}
 			signinJSON(w, detail)
@@ -257,7 +257,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, id, acti
 			want := sitelogin.Hash([]any{claims.Username, raw})
 			if action == "legacy-save" {
 				if json.Unmarshal([]byte(r.FormValue("config")), &in.Values) != nil {
-					writeAPIError(w, 400, 400, "豆瓣设置无效")
+					writeAPIError(w, 400, 400, "订阅插件设置无效")
 					return
 				}
 				in.Fingerprint = r.FormValue("fingerprint")
@@ -277,7 +277,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, id, acti
 				return
 			}
 		default:
-			writeAPIError(w, 404, 404, "未知豆瓣操作")
+			writeAPIError(w, 404, 404, "未知订阅插件操作")
 			return
 		}
 	}

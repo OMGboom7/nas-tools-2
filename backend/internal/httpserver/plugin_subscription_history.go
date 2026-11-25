@@ -98,7 +98,7 @@ func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *h
 		table.RowActions = append(table.RowActions, action)
 	}
 	data := pluginPageData{Title: systemconfig.SubscriptionHistoryTitle(id), Sections: []string{}, Tables: []pluginPageTable{table}, ReadOnly: true, CanDeleteRecords: true, DeleteConfirmation: "confirm"}
-	if service.nativeDouban(id) {
+	if service.nativeSubscriptionPlugin(id) {
 		control, err := service.system.Get(r.Context(), service.doubanSync.plugin(id).control)
 		if err != nil {
 			subscriptionHistoryError(w, err)

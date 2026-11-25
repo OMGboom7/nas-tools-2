@@ -101,6 +101,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitTransferSchedule := startTransferScheduler(workerContext, runner.torrentTransfer)
 		waitCookieCloud := startCookieCloudWorker(workerContext, runner.cookieCloud)
 		waitDoubanSync := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣同步", runner.archivePlugin.doubanSync.tick)
+		waitRandom := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "电影随机订阅", runner.archivePlugin.doubanSync.movieRandomTick)
 		waitRank := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣榜单", runner.archivePlugin.doubanSync.rankTick)
 		waitArchive := startMediaArchiveWorker(workerContext, runner.archivePlugin)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
@@ -133,6 +134,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitArchive()
 			waitDoubanSync()
 			waitRank()
+			waitRandom()
 		}
 	}
 	return handler, wait, nil
