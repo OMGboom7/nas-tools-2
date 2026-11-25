@@ -41,14 +41,12 @@ hiddenimports = ['Crypto.Math',
                  'babelfish.converters.opensubtitles',
                  'babelfish.converters.countryname',
                  'logging.config',
-                 'app.sites.siteuserinfo',
                  'app.mediaserver.client',
                  'app.message.client',
                  'app.indexer.client',
                  'app.downloader.client',
                  'app.plugins.modules',
                  'app.plugins.modules._autosignin']
-hiddenimports += collect_local_submodules('app.sites.siteuserinfo')
 hiddenimports += collect_local_submodules('app.mediaserver.client')
 hiddenimports += collect_local_submodules('app.message.client')
 hiddenimports += collect_local_submodules('app.indexer.client')

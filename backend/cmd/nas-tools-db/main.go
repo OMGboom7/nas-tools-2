@@ -18,6 +18,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "site-statistics" {
+		if err := httpserver.ScheduledStatisticsCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("scheduled site statistics unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "render-catalog" {
 		if err := httpserver.RenderCatalogCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("browser catalog search unavailable")

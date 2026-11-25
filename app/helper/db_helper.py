@@ -1157,112 +1157,6 @@ class DbHelper:
             }
         )
 
-    @DbPersist(_db)
-    def update_site_user_statistics(self, site_user_infos: list):
-        """
-        更新站点用户粒度数据
-        """
-        if not site_user_infos:
-            return
-        update_at = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
-        for site_user_info in site_user_infos:
-            site = site_user_info.site_name
-            username = site_user_info.username
-            user_level = site_user_info.user_level
-            join_at = site_user_info.join_at
-            last_seen = site_user_info.last_seen
-            upload = site_user_info.upload
-            download = site_user_info.download
-            ratio = site_user_info.ratio
-            seeding = site_user_info.seeding
-            seeding_size = site_user_info.seeding_size
-            leeching = site_user_info.leeching
-            bonus = site_user_info.bonus
-            url = site_user_info.site_url
-            msg_unread = site_user_info.message_unread
-            if not self.is_exists_site_user_statistics(url):
-                self._db.insert(SITEUSERINFOSTATS(
-                    SITE=site,
-                    USERNAME=username,
-                    USER_LEVEL=user_level,
-                    JOIN_AT=join_at,
-                    LAST_SEEN=last_seen,
-                    UPDATE_AT=update_at,
-                    UPLOAD=upload,
-                    DOWNLOAD=download,
-                    RATIO=ratio,
-                    SEEDING=seeding,
-                    LEECHING=leeching,
-                    SEEDING_SIZE=seeding_size,
-                    BONUS=bonus,
-                    URL=url,
-                    MSG_UNREAD=msg_unread
-                ))
-            else:
-                self._db.query(SITEUSERINFOSTATS).filter(SITEUSERINFOSTATS.URL == url).update(
-                    {
-                        "SITE": site,
-                        "USERNAME": username,
-                        "USER_LEVEL": user_level,
-                        "JOIN_AT": join_at,
-                        "LAST_SEEN": last_seen,
-                        "UPDATE_AT": update_at,
-                        "UPLOAD": upload,
-                        "DOWNLOAD": download,
-                        "RATIO": ratio,
-                        "SEEDING": seeding,
-                        "LEECHING": leeching,
-                        "SEEDING_SIZE": seeding_size,
-                        "BONUS": bonus,
-                        "MSG_UNREAD": msg_unread
-                    }
-                )
-
-    def is_exists_site_user_statistics(self, url):
-        """
-        判断站点数据是滞存在
-        """
-        count = self._db.query(SITEUSERINFOSTATS).filter(SITEUSERINFOSTATS.URL == url).count()
-        if count > 0:
-            return True
-        else:
-            return False
-
-    @DbPersist(_db)
-    def update_site_favicon(self, site_user_infos: list):
-        """
-        更新站点图标数据
-        """
-        if not site_user_infos:
-            return
-        for site_user_info in site_user_infos:
-            site_icon = "data:image/ico;base64," + \
-                        site_user_info.site_favicon if site_user_info.site_favicon else site_user_info.site_url \
-                                                                                        + "/favicon.ico"
-            if not self.is_exists_site_favicon(site_user_info.site_name):
-                self._db.insert(SITEFAVICON(
-                    SITE=site_user_info.site_name,
-                    URL=site_user_info.site_url,
-                    FAVICON=site_icon
-                ))
-            elif site_user_info.site_favicon:
-                self._db.query(SITEFAVICON).filter(SITEFAVICON.SITE == site_user_info.site_name).update(
-                    {
-                        "URL": site_user_info.site_url,
-                        "FAVICON": site_icon
-                    }
-                )
-
-    def is_exists_site_favicon(self, site):
-        """
-        判断站点图标是否存在
-        """
-        count = self._db.query(SITEFAVICON).filter(SITEFAVICON.SITE == site).count()
-        if count > 0:
-            return True
-        else:
-            return False
-
     def get_site_favicons(self, site=None):
         """
         查询站点数据历史
@@ -1285,31 +1179,6 @@ class DbHelper:
                 "SITE": new_name
             }
         )
-
-    @DbPersist(_db)
-    def update_site_seed_info(self, site_user_infos: list):
-        """
-        更新站点做种数据
-        """
-        if not site_user_infos:
-            return
-        update_at = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
-        for site_user_info in site_user_infos:
-            if not self.is_site_seeding_info_exist(url=site_user_info.site_url):
-                self._db.insert(SITEUSERSEEDINGINFO(
-                    SITE=site_user_info.site_name,
-                    UPDATE_AT=update_at,
-                    SEEDING_INFO=site_user_info.seeding_info,
-                    URL=site_user_info.site_url
-                ))
-            else:
-                self._db.query(SITEUSERSEEDINGINFO).filter(SITEUSERSEEDINGINFO.URL == site_user_info.site_url).update(
-                    {
-                        "SITE": site_user_info.site_name,
-                        "UPDATE_AT": update_at,
-                        "SEEDING_INFO": site_user_info.seeding_info
-                    }
-                )
 
     def is_site_user_statistics_exists(self, url):
         """
@@ -1336,19 +1205,6 @@ class DbHelper:
         else:
             return self._db.query(SITEUSERINFOSTATS).limit(num).all()
 
-    def is_site_statistics_history_exists(self, url, date):
-        """
-        判断站点历史数据是否存在
-        """
-        if not url or not date:
-            return False
-        count = self._db.query(SITESTATISTICSHISTORY).filter(SITESTATISTICSHISTORY.URL == url,
-                                                             SITESTATISTICSHISTORY.DATE == date).count()
-        if count > 0:
-            return True
-        else:
-            return False
-
     @DbPersist(_db)
     def update_site_statistics_site_name(self, new_name, old_name):
         """
@@ -1362,55 +1218,6 @@ class DbHelper:
                 "SITE": new_name
             }
         )
-
-    @DbPersist(_db)
-    def insert_site_statistics_history(self, site_user_infos: list):
-        """
-        插入站点数据
-        """
-        if not site_user_infos:
-            return
-        date_now = time.strftime('%Y-%m-%d', time.localtime(time.time()))
-        for site_user_info in site_user_infos:
-            site = site_user_info.site_name
-            upload = site_user_info.upload
-            user_level = site_user_info.user_level
-            download = site_user_info.download
-            ratio = site_user_info.ratio
-            seeding = site_user_info.seeding
-            seeding_size = site_user_info.seeding_size
-            leeching = site_user_info.leeching
-            bonus = site_user_info.bonus
-            url = site_user_info.site_url
-            if not self.is_site_statistics_history_exists(date=date_now, url=url):
-                self._db.insert(SITESTATISTICSHISTORY(
-                    SITE=site,
-                    USER_LEVEL=user_level,
-                    DATE=date_now,
-                    UPLOAD=upload,
-                    DOWNLOAD=download,
-                    RATIO=ratio,
-                    SEEDING=seeding,
-                    LEECHING=leeching,
-                    SEEDING_SIZE=seeding_size,
-                    BONUS=bonus,
-                    URL=url
-                ))
-            else:
-                self._db.query(SITESTATISTICSHISTORY).filter(SITESTATISTICSHISTORY.DATE == date_now,
-                                                             SITESTATISTICSHISTORY.URL == url).update(
-                    {
-                        "SITE": site,
-                        "USER_LEVEL": user_level,
-                        "UPLOAD": upload,
-                        "DOWNLOAD": download,
-                        "RATIO": ratio,
-                        "SEEDING": seeding,
-                        "LEECHING": leeching,
-                        "SEEDING_SIZE": seeding_size,
-                        "BONUS": bonus
-                    }
-                )
 
     def get_site_statistics_history(self, site, days=30):
         """
@@ -1427,17 +1234,6 @@ class DbHelper:
         """
         return self._db.query(SITEUSERSEEDINGINFO.SEEDING_INFO).filter(
             SITEUSERSEEDINGINFO.SITE == site).first()
-
-    def is_site_seeding_info_exist(self, url):
-        """
-        判断做种数据是否已存在
-        """
-        count = self._db.query(SITEUSERSEEDINGINFO).filter(
-            SITEUSERSEEDINGINFO.URL == url).count()
-        if count > 0:
-            return True
-        else:
-            return False
 
     def get_site_statistics_recent_sites(self, days=7, end_day=None, strict_urls=None):
         """

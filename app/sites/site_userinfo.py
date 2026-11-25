@@ -1,20 +1,15 @@
 import json
+import subprocess
 from datetime import datetime
-from multiprocessing.dummy import Pool as ThreadPool
 from threading import Lock
-import re
-from urllib.parse import urlparse, urlunparse
-
-import requests
 
 import log
-from app.helper import ChromeHelper, SubmoduleHelper, DbHelper
+from app.helper import DbHelper
 from app.message import Message
 from app.sites.sites import Sites
-from app.sites.siteuserinfo.mteam_project import MteamSiteUserInfo
-from app.utils import RequestUtils, ExceptionUtils, StringUtils, MteamUtils
+from app.utils import StringUtils
 from app.utils.commons import singleton
-from config import Config
+from config import Config, run_go_helper
 
 lock = Lock()
 
@@ -25,17 +20,10 @@ class SiteUserInfo(object):
     dbhelper = None
     message = None
 
-    _MAX_CONCURRENCY = 10
     _last_update_time = None
     _sites_data = {}
 
     def __init__(self):
-
-        # 加载模块
-        self._site_schema = SubmoduleHelper.import_submodules('app.sites.siteuserinfo',
-                                                              filter_func=lambda _, obj: hasattr(obj, 'schema'))
-        self._site_schema.sort(key=lambda x: x.order)
-        log.debug(f"【Sites】加载站点解析：{self._site_schema}")
         self.init_config()
 
     def init_config(self):
@@ -47,222 +35,17 @@ class SiteUserInfo(object):
         # 站点数据
         self._sites_data = {}
 
-    def __build_class(self, html_text):
-        for site_schema in self._site_schema:
-            try:
-                if site_schema.match(html_text):
-                    return site_schema
-            except Exception as e:
-                ExceptionUtils.exception_traceback(e)
-        return None
-
-    def build(self, url, site_id, site_name,
-              site_cookie=None, ua=None, emulate=None, proxy=False, api_key=None):
-        if MteamUtils.is_site(url):
-            if self.sites.check_ratelimit(site_id):
-                return None
-            info = MteamSiteUserInfo(site_name, StringUtils.get_base_url(url), None, None, ua=ua, proxy=proxy)
-            info.api_key = api_key
-            return info
-        if not site_cookie:
-            return None
-        session = requests.Session()
-        log.debug(f"【Sites】站点 {site_name} url={url} ua={ua}")
-
-        # 站点流控
-        if self.sites.check_ratelimit(site_id):
+    def __notify_unread_msg(self, site_name, count, messages):
+        if not count or self._sites_data.get(site_name, {}).get("message_unread") == count:
             return
-
-        # 检测环境，有浏览器内核的优先使用仿真签到
-        chrome = ChromeHelper()
-        if emulate and chrome.get_status():
-            if not chrome.visit(url=url, ua=ua, cookie=site_cookie, proxy=proxy):
-                log.error("【Sites】%s 无法打开网站" % site_name)
-                return None
-            # 循环检测是否过cf
-            cloudflare = chrome.pass_cloudflare()
-            if not cloudflare:
-                log.error("【Sites】%s 跳转站点失败" % site_name)
-                return None
-            # 判断是否已签到
-            html_text = chrome.get_html()
-        else:
-            proxies = Config().get_proxies() if proxy else None
-            res = RequestUtils(cookies=site_cookie,
-                               session=session,
-                               headers=ua,
-                               proxies=proxies
-                               ).get_res(url=url)
-            if res and res.status_code == 200:
-                if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
-                    res.encoding = "UTF-8"
-                else:
-                    res.encoding = res.apparent_encoding
-                html_text = res.text
-                # 第一次登录反爬
-                if html_text.find("title") == -1:
-                    i = html_text.find("window.location")
-                    if i == -1:
-                        return None
-                    tmp_url = url + html_text[i:html_text.find(";")] \
-                        .replace("\"", "").replace("+", "").replace(" ", "").replace("window.location=", "")
-                    res = RequestUtils(cookies=site_cookie,
-                                       session=session,
-                                       headers=ua,
-                                       proxies=proxies
-                                       ).get_res(url=tmp_url)
-                    if res and res.status_code == 200:
-                        if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
-                            res.encoding = "UTF-8"
-                        else:
-                            res.encoding = res.apparent_encoding
-                        html_text = res.text
-                        if not html_text:
-                            return None
-                    else:
-                        log.error("【Sites】站点 %s 被反爬限制：%s, 状态码：%s" % (site_name, url, res.status_code))
-                        return None
-
-                # 兼容假首页情况，假首页通常没有 <link rel="search" 属性
-                if '"search"' not in html_text and '"csrf-token"' not in html_text:
-                    res = RequestUtils(cookies=site_cookie,
-                                       session=session,
-                                       headers=ua,
-                                       proxies=proxies
-                                       ).get_res(url=url + "/index.php")
-                    if res and res.status_code == 200:
-                        if "charset=utf-8" in res.text or "charset=UTF-8" in res.text:
-                            res.encoding = "UTF-8"
-                        else:
-                            res.encoding = res.apparent_encoding
-                        html_text = res.text
-                        if not html_text:
-                            return None
-            elif res is not None:
-                log.error(f"【Sites】站点 {site_name} 连接失败，状态码：{res.status_code}")
-                return None
-            else:
-                log.error(f"【Sites】站点 {site_name} 无法访问：{url}")
-                return None
-        # 解析站点类型
-        site_schema = self.__build_class(html_text)
-        if not site_schema:
-            log.error("【Sites】站点 %s 无法识别站点类型" % site_name)
-            return None
-
-        parsed_url = urlparse(url)
-        if parsed_url.netloc:
-            site_domain_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
-        return site_schema(site_name, site_domain_url, site_cookie, html_text, session=session, ua=ua, emulate=emulate, proxy=proxy)
-
-    def __refresh_site_data(self, site_info):
-        """
-        更新单个site 数据信息
-        :param site_info:
-        :return:
-        """
-        site_id = site_info.get("id")
-        site_name = site_info.get("name")
-        log.info(f"【Sites】开始刷新站点：{site_name}")
-        site_url = site_info.get("strict_url")
-        original_site_url = site_url
-        if not site_url:
-            return
-        site_cookie = site_info.get("cookie")
-        ua = site_info.get("ua")
-        unread_msg_notify = site_info.get("unread_msg_notify")
-        chrome = site_info.get("chrome")
-        proxy = site_info.get("proxy")
-
-        need_goto_user_detail_fetch, user_detail_pattern = self.sites.need_goto_user_detail_fetch(site_id=site_id)
-        if need_goto_user_detail_fetch:
-            proxies = Config().get_proxies() if proxy else None
-            res = RequestUtils(cookies=site_cookie,
-                               session=requests.Session(),
-                               headers=ua,
-                               proxies=proxies
-                               ).get_res(url=site_url)
-            if res and res.status_code == 200:
-                try:
-                    matches = re.findall(user_detail_pattern, res.text)
-                    if matches:
-                        site_url = site_url.rstrip("/") + f"/userdetails.php?id={matches[0]}"
-                except requests.exceptions.RequestException as e:
-                    pass
-
-        try:
-            log.info(f"【Sites】[{site_name}] Building site user info...")
-            site_user_info = self.build(url=site_url,
-                                        site_id=site_id,
-                                        site_name=site_name,
-                                        site_cookie=site_cookie,
-                                        ua=ua,
-                                        emulate=chrome,
-                                        proxy=proxy, api_key=site_info.get("api_key") or "")
-            log.info(f"【Sites】[{site_name}] Site user info built: {'OK' if site_user_info else 'Failed'}")
-            if site_user_info:
-                log.debug(f"【Sites】站点 {site_name} 开始以 {site_user_info.site_schema()} 模型解析")
-                # 开始解析
-                log.info(f"【Sites】[{site_name}] Parsing site user info...")
-                site_user_info.parse()
-                log.info(f"【Sites】[{site_name}] Site user info parsed.")
-                log.debug(f"【Sites】站点 {site_name} 解析完成")
-
-                # 获取不到数据时，仅返回错误信息，不做历史数据更新
-                if site_user_info.err_msg:
-                    self._sites_data.update({site_name: {"err_msg": site_user_info.err_msg}})
-                    return
-
-                # 发送通知，存在未读消息
-                self.__notify_unread_msg(site_name, site_user_info, unread_msg_notify)
-
-                _updated_sites_data = {
-                        site_name: {
-                            "upload": site_user_info.upload,
-                            "username": site_user_info.username,
-                            "user_level": site_user_info.user_level,
-                            "join_at": site_user_info.join_at,
-                            "last_seen": site_user_info.last_seen,
-                            "download": site_user_info.download,
-                            "ratio": site_user_info.ratio,
-                            "seeding": site_user_info.seeding,
-                            "seeding_size": site_user_info.seeding_size,
-                            "leeching": site_user_info.leeching,
-                            "bonus": site_user_info.bonus,
-                            "url": original_site_url,
-                            "err_msg": site_user_info.err_msg,
-                            "message_unread": site_user_info.message_unread
-                        }
-                    }
-
-                _updated_sites_json = json.dumps(_updated_sites_data, indent=4)
-                log.debug(f"【Sites】站点 {site_name} 数据：{_updated_sites_json}")
-
-                self._sites_data.update(_updated_sites_data)
-
-                return site_user_info
-
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            log.error(f"【Sites】站点 {site_name} 获取流量数据失败：{str(e)}")
-
-    def __notify_unread_msg(self, site_name, site_user_info, unread_msg_notify):
-        if site_user_info.message_unread <= 0:
-            return
-        if self._sites_data.get(site_name, {}).get('message_unread') == site_user_info.message_unread:
-            return
-        if not unread_msg_notify:
-            return
-
-        # 解析出内容，则发送内容
-        if len(site_user_info.message_unread_contents) > 0:
-            for head, date, content in site_user_info.message_unread_contents:
-                msg_title = f"【站点 {site_user_info.site_name} 消息】"
-                msg_text = f"时间：{date}\n标题：{head}\n内容：\n{content}"
+        if messages:
+            for item in messages:
+                msg_title = f"【站点 {site_name} 消息】"
+                msg_text = f"时间：{item['date']}\n标题：{item['title']}\n内容：\n{item['content']}"
                 self.message.send_site_message(title=msg_title, text=msg_text)
         else:
             self.message.send_site_message(
-                title=f"站点 {site_user_info.site_name} 收到 {site_user_info.message_unread} 条新消息，请登陆查看")
+                title=f"站点 {site_name} 收到 {count} 条新消息，请登陆查看")
 
     def refresh_site_data_now(self):
         """
@@ -342,26 +125,25 @@ class SiteUserInfo(object):
                 log.info("【Sites】没有需要刷新的站点，任务退出。")
                 return
 
-            log.info(f"【Sites】共 {len(refresh_sites)} 个站点待刷新，开始并行抓取...")
-            # 并发刷新
-            with ThreadPool(min(len(refresh_sites), self._MAX_CONCURRENCY)) as p:
-                log.info(f"【Sites】Starting parallel refresh with {min(len(refresh_sites), self._MAX_CONCURRENCY)} threads...")
-                site_user_infos = p.map(self.__refresh_site_data, refresh_sites)
-                site_user_infos = [info for info in site_user_infos if info]
-            log.info("【Sites】Parallel refresh finished.")
-
-            log.info(f"【DB】站点数据抓取完成，成功 {len(site_user_infos)} 个。开始更新数据库...")
-            # 登记历史数据
-            self.dbhelper.insert_site_statistics_history(site_user_infos)
-            # 实时用户数据
-            self.dbhelper.update_site_user_statistics(site_user_infos)
-            # 更新站点图标
-            self.dbhelper.update_site_favicon(site_user_infos)
-            # 实时做种信息
-            self.dbhelper.update_site_seed_info(site_user_infos)
-            # 站点图标重新加载
+            targets = [{"id": site["id"], "name": site["name"], "url": site["strict_url"]}
+                       for site in refresh_sites if not self.sites.check_ratelimit(site["id"])]
+            if not targets:
+                return
+            try:
+                rows = json.loads(run_go_helper("site-statistics", payload=json.dumps(targets).encode(), timeout=None))
+            except (OSError, ValueError, subprocess.SubprocessError):
+                log.error("【Sites】统计任务未能完成，请查看原站点配置")
+                return
+            for row in rows:
+                name, data = row["name"], row["data"]
+                if row.get("notify"):
+                    try:
+                        self.__notify_unread_msg(name, data["message_unread"], row.get("messages"))
+                    except Exception:
+                        log.error(f"【Sites】{name} 未读消息通知失败")
+                        continue
+                self._sites_data[name] = data
             self.sites.init_favicons()
-            log.info("【DB】数据库更新完成。")
 
             # 更新时间
             self._last_update_time = datetime.now()

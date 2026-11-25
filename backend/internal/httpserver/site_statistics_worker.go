@@ -249,37 +249,7 @@ func (api *siteStatisticsAPI) refresh(ctx context.Context, j sitestats.Job, site
 	if e != nil {
 		return e
 	}
-	note := map[string]any{}
-	if site.Note != "" && site.Note != "null" && decodeJSONMap([]byte(site.Note), &note) != nil {
-		return sitestats.ErrState
-	}
-	origin := safeSiteOrigin(defaultString(site.SignURL, site.RSSURL))
-	u, e := url.Parse(origin)
-	if e != nil || u.Host == "" {
-		return sitestats.ErrOrigin
-	}
-	app := objectValue(cfg["app"])
-	transport := api.login.transport
-	if note["proxy"] == "Y" || truthy(note["proxy"]) {
-		transport, e = siteProxyTransport(transport, objectValue(app["proxies"]), u.Scheme)
-		if e != nil {
-			return e
-		}
-	}
-	ua := text(note["ua"])
-	if ua == "" {
-		ua = text(app["user_agent"])
-	}
-	if ua == "" {
-		ua = defaultSiteUserAgent
-	}
-	_, isMTeam := builtinindexer.MTeamAPIOrigin(defaultString(site.SignURL, site.RSSURL))
-	if !isMTeam {
-		if _, knownHost := builtinindexer.MTeamAPIOrigin("https://" + u.Hostname()); knownHost {
-			return sitestats.ErrOrigin
-		}
-	}
-	client := &sitestats.Client{Origin: origin, Cookie: site.Cookie, APIKey: site.APIKey, UserAgent: ua, Transport: transport, Renderer: api.login.browser, Emulate: note["chrome"] == "Y" || truthy(note["chrome"]), ReadMessages: j.ReadMessages, Guard: func(ctx context.Context) error { return api.valid(ctx, j) }, Before: func(ctx context.Context, r sitestats.Request) error {
+	before := func(ctx context.Context, r sitestats.Request) error {
 		if e := api.valid(ctx, j); e != nil {
 			return e
 		}
@@ -296,25 +266,10 @@ func (api *siteStatisticsAPI) refresh(ctx context.Context, j sitestats.Job, site
 			}
 			return nil
 		})
-	}}
-	var v sitestats.Snapshot
-	if isMTeam {
-		v, e = sitestats.MTeamStatistics(ctx, client, site.Name)
-	} else {
-		home, err := client.Home(ctx)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(strings.ToLower(u.Hostname()), "hhanclub") {
-			if id := siteClaimUserID(string(home)); id != "" {
-				home, err = client.Fetch(ctx, sitestats.Request{Path: "userdetails.php?id=" + id})
-				if err != nil {
-					return err
-				}
-			}
-		}
-		v, e = sitestats.Parse(ctx, client, home, sitestats.Options{Site: site.Name, URL: origin, ReadMessages: j.ReadMessages})
 	}
+	client := sitestats.Client{Transport: api.login.transport, Renderer: api.login.browser, Emulate: true, ReadMessages: j.ReadMessages,
+		Guard: func(ctx context.Context) error { return api.valid(ctx, j) }, Before: before}
+	snapshot, e := collectSiteStatistics(ctx, site, cfg, client)
 	if e != nil {
 		return e
 	}
@@ -322,7 +277,64 @@ func (api *siteStatisticsAPI) refresh(ctx context.Context, j sitestats.Job, site
 		return e
 	}
 	now := time.Now().In(loc)
-	return api.store.Save(ctx, j, v, now.Format("2006-01-02"), now.Format("2006-01-02 15:04:05"), note["message"] == "Y" || truthy(note["message"]), site)
+	return api.store.Save(ctx, j, snapshot, now.Format("2006-01-02"), now.Format(time.DateTime), siteMessageEnabled(site), site)
+}
+
+func siteMessageEnabled(site siteconfig.Site) bool {
+	var note map[string]any
+	return decodeJSONMap([]byte(site.Note), &note) == nil && (note["message"] == "Y" || truthy(note["message"]))
+}
+
+func collectSiteStatistics(ctx context.Context, site siteconfig.Site, cfg map[string]any, client sitestats.Client) (sitestats.Snapshot, error) {
+	note := map[string]any{}
+	if site.Note != "" && site.Note != "null" && decodeJSONMap([]byte(site.Note), &note) != nil {
+		return sitestats.Snapshot{}, sitestats.ErrState
+	}
+	origin := safeSiteOrigin(defaultString(site.SignURL, site.RSSURL))
+	u, e := url.Parse(origin)
+	if e != nil || u.Host == "" {
+		return sitestats.Snapshot{}, sitestats.ErrOrigin
+	}
+	app := objectValue(cfg["app"])
+
+	if note["proxy"] == "Y" || truthy(note["proxy"]) {
+		client.Transport, e = siteProxyTransport(client.Transport, objectValue(app["proxies"]), u.Scheme)
+		if e != nil {
+			return sitestats.Snapshot{}, e
+		}
+	}
+	ua := text(note["ua"])
+	if ua == "" {
+		ua = text(app["user_agent"])
+	}
+	if ua == "" {
+		ua = defaultSiteUserAgent
+	}
+	_, isMTeam := builtinindexer.MTeamAPIOrigin(defaultString(site.SignURL, site.RSSURL))
+	if !isMTeam {
+		if _, knownHost := builtinindexer.MTeamAPIOrigin("https://" + u.Hostname()); knownHost {
+			return sitestats.Snapshot{}, sitestats.ErrOrigin
+		}
+	}
+	client.Origin, client.Cookie, client.APIKey, client.UserAgent = origin, site.Cookie, site.APIKey, ua
+	client.Emulate = client.Emulate && (note["chrome"] == "Y" || truthy(note["chrome"]))
+
+	if isMTeam {
+		return sitestats.MTeamStatistics(ctx, &client, site.Name)
+	}
+	home, err := client.Home(ctx)
+	if err != nil {
+		return sitestats.Snapshot{}, err
+	}
+	if strings.Contains(strings.ToLower(u.Hostname()), "hhanclub") {
+		if id := siteClaimUserID(string(home)); id != "" {
+			home, err = client.Fetch(ctx, sitestats.Request{Path: "userdetails.php?id=" + id})
+			if err != nil {
+				return sitestats.Snapshot{}, err
+			}
+		}
+	}
+	return sitestats.Parse(ctx, &client, home, sitestats.Options{Site: site.Name, URL: origin, ReadMessages: client.ReadMessages})
 }
 
 func startSiteStatisticsWorker(ctx context.Context, api *siteStatisticsAPI) func() {

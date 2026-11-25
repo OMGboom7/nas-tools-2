@@ -59,8 +59,3 @@ class MteamUtils:
                 return api_key
 
         return None
-
-    @staticmethod
-    def statistics(url, key, ua, proxy):
-        # Go limits each request and the number of pages in the complete snapshot.
-        return MteamUtils._inspect("mteam-statistics", url, key, ua, proxy, timeout=None)

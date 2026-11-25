@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
@@ -311,11 +312,8 @@ func (s *Store) Save(ctx context.Context, j Job, v Snapshot, day, updated string
 		return ErrState
 	}
 	if len(expected) > 0 {
-		want := expected[0]
-		var actual siteconfig.Site
-		e = tx.QueryRowContext(ctx, `SELECT ID,COALESCE(NAME,''),COALESCE(PRI,''),COALESCE(RSSURL,''),COALESCE(SIGNURL,''),COALESCE(COOKIE,''),COALESCE(APIKEY,''),COALESCE(INCLUDE,''),COALESCE(EXCLUDE,''),COALESCE(SIZE,''),COALESCE(NOTE,'')FROM CONFIG_SITE WHERE ID=?`, want.ID).Scan(&actual.ID, &actual.Name, &actual.Priority, &actual.RSSURL, &actual.SignURL, &actual.Cookie, &actual.APIKey, &actual.Include, &actual.Exclude, &actual.Size, &actual.Note)
-		if e != nil || Hash(actual) != Hash(want) {
-			return ErrState
+		if e = checkSite(ctx, tx, expected[0]); e != nil {
+			return e
 		}
 	}
 	if j.Epoch != "" {
@@ -329,7 +327,39 @@ func (s *Store) Save(ctx context.Context, j Job, v Snapshot, day, updated string
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
-	_, e = tx.ExecContext(ctx, `INSERT INTO SITE_USER_INFO_STATS(SITE,USERNAME,USER_LEVEL,JOIN_AT,LAST_SEEN,UPDATE_AT,UPLOAD,DOWNLOAD,RATIO,SEEDING,LEECHING,SEEDING_SIZE,BONUS,URL,MSG_UNREAD) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(URL) DO UPDATE SET SITE=excluded.SITE,USERNAME=excluded.USERNAME,USER_LEVEL=excluded.USER_LEVEL,JOIN_AT=excluded.JOIN_AT,LAST_SEEN=excluded.LAST_SEEN,UPDATE_AT=excluded.UPDATE_AT,UPLOAD=excluded.UPLOAD,DOWNLOAD=excluded.DOWNLOAD,RATIO=excluded.RATIO,SEEDING=excluded.SEEDING,LEECHING=excluded.LEECHING,SEEDING_SIZE=excluded.SEEDING_SIZE,BONUS=excluded.BONUS,MSG_UNREAD=excluded.MSG_UNREAD`, v.Site, v.Username, v.Level, v.Joined, v.LastSeen, updated, v.Upload, v.Download, v.Ratio, v.Seeding, v.Leeching, v.SeedingSize, v.Bonus, v.URL, v.Unread)
+	if e = writeStatistics(ctx, tx, v, day, updated); e != nil {
+		return e
+	}
+	if notify && v.Unread > 0 && v.Unread != unread {
+		messages := v.Messages
+		if len(messages) == 0 {
+			messages = []Message{{Title: "收到 " + stringInt(v.Unread) + " 条新消息，请登录查看"}}
+		}
+		for i, m := range messages {
+			title := "【站点 " + v.Site + " 消息】"
+			body := m.Title
+			if m.Content != "" {
+				body = "时间：" + m.Date + "\n标题：" + m.Title + "\n内容：\n" + m.Content
+			}
+			if e = bus.Emit(ctx, tx, "site_message", Hash([]any{j.ID, v.URL, i}), j.ID, title, body); e != nil {
+				return e
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func checkSite(ctx context.Context, tx *sql.Tx, want siteconfig.Site) error {
+	var actual siteconfig.Site
+	e := tx.QueryRowContext(ctx, `SELECT ID,COALESCE(NAME,''),COALESCE(PRI,''),COALESCE(RSSURL,''),COALESCE(SIGNURL,''),COALESCE(COOKIE,''),COALESCE(APIKEY,''),COALESCE(INCLUDE,''),COALESCE(EXCLUDE,''),COALESCE(SIZE,''),COALESCE(NOTE,'')FROM CONFIG_SITE WHERE ID=?`, want.ID).Scan(&actual.ID, &actual.Name, &actual.Priority, &actual.RSSURL, &actual.SignURL, &actual.Cookie, &actual.APIKey, &actual.Include, &actual.Exclude, &actual.Size, &actual.Note)
+	if e != nil || actual != want {
+		return ErrState
+	}
+	return nil
+}
+
+func writeStatistics(ctx context.Context, tx *sql.Tx, v Snapshot, day, updated string) error {
+	_, e := tx.ExecContext(ctx, `INSERT INTO SITE_USER_INFO_STATS(SITE,USERNAME,USER_LEVEL,JOIN_AT,LAST_SEEN,UPDATE_AT,UPLOAD,DOWNLOAD,RATIO,SEEDING,LEECHING,SEEDING_SIZE,BONUS,URL,MSG_UNREAD) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(URL) DO UPDATE SET SITE=excluded.SITE,USERNAME=excluded.USERNAME,USER_LEVEL=excluded.USER_LEVEL,JOIN_AT=excluded.JOIN_AT,LAST_SEEN=excluded.LAST_SEEN,UPDATE_AT=excluded.UPDATE_AT,UPLOAD=excluded.UPLOAD,DOWNLOAD=excluded.DOWNLOAD,RATIO=excluded.RATIO,SEEDING=excluded.SEEDING,LEECHING=excluded.LEECHING,SEEDING_SIZE=excluded.SEEDING_SIZE,BONUS=excluded.BONUS,MSG_UNREAD=excluded.MSG_UNREAD`, v.Site, v.Username, v.Level, v.Joined, v.LastSeen, updated, v.Upload, v.Download, v.Ratio, v.Seeding, v.Leeching, v.SeedingSize, v.Bonus, v.URL, v.Unread)
 	if e != nil {
 		return e
 	}
@@ -353,20 +383,33 @@ func (s *Store) Save(ctx context.Context, j Job, v Snapshot, day, updated string
 			return e
 		}
 	}
-	if notify && v.Unread > 0 && v.Unread != unread {
-		messages := v.Messages
-		if len(messages) == 0 {
-			messages = []Message{{Title: "收到 " + stringInt(v.Unread) + " 条新消息，请登录查看"}}
-		}
-		for i, m := range messages {
-			title := "【站点 " + v.Site + " 消息】"
-			body := m.Title
-			if m.Content != "" {
-				body = "时间：" + m.Date + "\n标题：" + m.Title + "\n内容：\n" + m.Content
-			}
-			if e = bus.Emit(ctx, tx, "site_message", Hash([]any{j.ID, v.URL, i}), j.ID, title, body); e != nil {
-				return e
-			}
+	return nil
+}
+
+// SaveScheduled publishes the original scheduler's result without creating a
+// second notification sender. Preserve its icon fallback on first discovery.
+func (s *Store) SaveScheduled(ctx context.Context, site siteconfig.Site, v Snapshot, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Reserve the write before checking the account, including across processes.
+	if _, err = tx.ExecContext(ctx, "UPDATE CONFIG_SITE SET ID=ID WHERE 0"); err != nil {
+		return err
+	}
+	if err = checkSite(ctx, tx, site); err != nil {
+		return err
+	}
+	if v.Favicon != "" && !strings.HasPrefix(v.Favicon, "data:") {
+		v.Favicon = "data:image/ico;base64," + v.Favicon
+	}
+	if err = writeStatistics(ctx, tx, v, now.Format(time.DateOnly), now.Format(time.DateTime)); err != nil {
+		return err
+	}
+	if v.Favicon == "" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO SITE_FAVICON(SITE,URL,FAVICON) VALUES(?,?,?) ON CONFLICT(SITE) DO NOTHING`, v.Site, v.URL, v.URL+"/favicon.ico"); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()
