@@ -43,3 +43,36 @@ func TestTransferTaskDoesNotInferFullV2IdentityFromPrefix(t *testing.T) {
 		t.Fatal("full property hash not recognized")
 	}
 }
+
+func TestTransferCompletionWithVisibleAndHiddenPadding(t *testing.T) {
+	payload := torrentfiles.File{Index: 7, Path: "bundle/.pad/movie", Size: 8, Selected: true}
+	pad := torrentfiles.File{Index: 9, Path: "bundle/.pad/2", Size: 2, Padding: true}
+	m := torrentmeta.TransferMetadata{V1Hash: strings.Repeat("a", 40), Files: []torrentfiles.File{payload, pad}}
+	live := pad
+	live.Padding, live.Selected = false, true
+	s := Task{Kind: "transmission", WireID: m.V1Hash, V1Hash: m.V1Hash, AddedAt: 123, Directory: "/library", State: "stopped", Paused: true, Complete: true, Labels: []string{}, Files: []torrentfiles.File{live, payload}, Done: []int{7, 9}}
+	if !s.FullComplete(m) {
+		t.Fatal("complete client-visible padding rejected")
+	}
+	s.Done = []int{7}
+	if s.FullComplete(m) {
+		t.Fatal("selected incomplete padding accepted")
+	}
+	s.Files[0].Selected = false
+	if !s.FullComplete(m) {
+		t.Fatal("unwanted padding blocked completion")
+	}
+	s.Files = []torrentfiles.File{payload}
+	if !s.FullComplete(m) {
+		t.Fatal("hidden padding blocked completion")
+	}
+	s.Done = nil
+	if s.FullComplete(m) {
+		t.Fatal("missing payload completion accepted")
+	}
+	s.Done = []int{7}
+	s.Files[0].Selected = false
+	if s.FullComplete(m) {
+		t.Fatal("unselected payload accepted")
+	}
+}

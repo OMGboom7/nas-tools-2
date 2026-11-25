@@ -104,14 +104,11 @@ func (c *Client) addTransferPaused(ctx context.Context, content []byte, director
 	if err != nil {
 		return r, ErrConfiguration
 	}
-	if !torrenttransfer.Hex(m.V1Hash, 40) {
-		return r, torrenttransfer.ErrProtocol
-	}
 	directory, err = torrenttransfer.NormalizeRemote(directory)
 	if err != nil || strings.TrimSpace(directory) != directory {
 		return r, ErrConfiguration
 	}
-	if _, err := c.TransferCapabilities(ctx); err != nil {
+	if _, err := c.TransferWireID(ctx, m); err != nil {
 		return r, err
 	}
 	encoded := base64.StdEncoding.EncodeToString(m.Content)
@@ -272,6 +269,15 @@ func (c *Client) StartTransfer(ctx context.Context, expected torrenttransfer.Tas
 func (c *Client) TransferWireID(ctx context.Context, m torrentmeta.TransferMetadata) (string, error) {
 	if !torrenttransfer.Hex(m.V1Hash, 40) {
 		return "", torrenttransfer.ErrProtocol
+	}
+	// Transmission exposes v1 padding as ordinary files. Its file list
+	// requires distinct storage paths, including for otherwise identical gaps.
+	paths := make(map[string]struct{}, len(m.Files))
+	for _, f := range m.Files {
+		if _, exists := paths[f.Path]; exists {
+			return "", torrenttransfer.ErrProtocol
+		}
+		paths[f.Path] = struct{}{}
 	}
 	if _, err := c.TransferCapabilities(ctx); err != nil {
 		return "", err

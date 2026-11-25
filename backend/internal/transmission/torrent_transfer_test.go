@@ -2,15 +2,37 @@ package transmission
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
+	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
 var transferMetainfo = []byte("d4:infod6:lengthi8e4:name9:movie.mkv6:pieces20:xxxxxxxxxxxxxxxxxxxxee")
+
+func TestTransferRejectsRepeatedPaddingPathsBeforeRPC(t *testing.T) {
+	const payload = "d6:lengthi1e4:pathl5:a.mkvee"
+	const padding = "d4:attr1:p6:lengthi1e4:pathl4:.pad1:1ee"
+	content := []byte("d4:infod5:filesl" + payload + padding + padding + "e4:name4:show12:piece lengthi4e6:pieces20:xxxxxxxxxxxxxxxxxxxxee")
+	meta, err := torrentmeta.PrepareTransfer(content, nil)
+	if err != nil || len(meta.Files) != 3 {
+		t.Fatal(meta.Files, err)
+	}
+	c, _ := New("tr.fixture", "", "", "", transportFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected RPC for unrepresentable layout: %s", r.URL.Path)
+		return nil, nil
+	}))
+	if _, err := c.TransferWireID(t.Context(), meta); !errors.Is(err, torrenttransfer.ErrProtocol) {
+		t.Fatal(err)
+	}
+	if _, err := c.AddTransferPaused(t.Context(), content, "/library"); !errors.Is(err, torrenttransfer.ErrProtocol) {
+		t.Fatal(err)
+	}
+}
 
 func TestTransferAddDistinguishesDuplicateInBothRPCDialects(t *testing.T) {
 	for _, modern := range []bool{false, true} {

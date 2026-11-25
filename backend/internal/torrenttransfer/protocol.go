@@ -139,7 +139,7 @@ func (s Task) Valid() bool {
 }
 
 func (s Task) Matches(m torrentmeta.TransferMetadata) bool {
-	return s.Valid() && (m.V1Hash != "" && s.V1Hash == m.V1Hash || m.V1Hash == "" && m.V2Hash != "" && s.V2Hash == m.V2Hash) && (s.V2Hash == "" || s.V2Hash == m.V2Hash) && torrentfiles.Match(m.Files, s.Files)
+	return s.Valid() && (m.V1Hash != "" && s.V1Hash == m.V1Hash || m.V1Hash == "" && m.V2Hash != "" && s.V2Hash == m.V2Hash) && (s.V2Hash == "" || s.V2Hash == m.V2Hash) && torrentfiles.MatchTransfer(m.Files, s.Files)
 }
 
 // SameInstance deliberately excludes progress and running state. File
@@ -168,7 +168,10 @@ func (s Task) FullComplete(m torrentmeta.TransferMetadata) bool {
 		padding[f.Path] = f.Padding
 	}
 	for _, f := range s.Files {
-		if !padding[f.Path] && (!f.Selected || !done[f.Index]) {
+		if padding[f.Path] && !f.Selected {
+			continue
+		}
+		if !f.Selected || !done[f.Index] {
 			return false
 		}
 	}

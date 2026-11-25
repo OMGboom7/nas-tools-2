@@ -47,24 +47,29 @@ func Normalize(files []File) ([]File, error) {
 	}
 	out := append([]File{}, files...)
 	ids := map[int]bool{}
-	names := map[string]bool{}
+	names := map[string]File{}
 	var size int64
 	budget := 0
 	for _, f := range out {
 		folded := strings.ToLower(f.Path)
 		budget += len(f.Path)
-		if f.Index < 0 || f.Index > 1000000 || !Relative(f.Path) || f.Size < 0 || f.Size > math.MaxInt64-size || ids[f.Index] || names[folded] || budget > 4<<20 || f.Padding && f.Selected {
+		if f.Index < 0 || f.Index > 1000000 || !Relative(f.Path) || f.Size < 0 || f.Size > math.MaxInt64-size || ids[f.Index] || budget > 4<<20 || f.Padding && f.Selected {
+			return nil, ErrManifest
+		}
+		// Equal BEP 47 gaps can reuse the same .pad/<length> path at
+		// different indexes. Only explicit, identical padding may repeat.
+		if previous, exists := names[folded]; exists && (!f.Padding || !previous.Padding || previous.Path != f.Path || previous.Size != f.Size) {
 			return nil, ErrManifest
 		}
 		size += f.Size
 		ids[f.Index] = true
-		names[folded] = true
+		names[folded] = f
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Index < out[j].Index })
 	// A file cannot also be another file's parent.
 	for name := range names {
 		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-			if names[parent] {
+			if _, exists := names[parent]; exists {
 				return nil, ErrManifest
 			}
 		}
@@ -75,6 +80,16 @@ func Normalize(files []File) ([]File, error) {
 // Match compares all real files by exact path/length, not list position.
 // BEP padding may be hidden by the client; any visible padding stays unwanted.
 func Match(expected, actual []File) bool {
+	return match(expected, actual, false)
+}
+
+// MatchTransfer accepts a downloader that materializes declared padding as a
+// wanted file. Selection operations still require visible padding to be unwanted.
+func MatchTransfer(expected, actual []File) bool {
+	return match(expected, actual, true)
+}
+
+func match(expected, actual []File, allowSelectedPadding bool) bool {
 	e, err := Normalize(expected)
 	if err != nil {
 		return false
@@ -83,19 +98,27 @@ func Match(expected, actual []File) bool {
 	if err != nil {
 		return false
 	}
-	byPath := map[string]File{}
+	type entry struct {
+		file  File
+		count int
+	}
+	byPath := make(map[string]entry, len(e))
 	for _, f := range e {
-		byPath[f.Path] = f
+		byPath[f.Path] = entry{file: f, count: byPath[f.Path].count + 1}
 	}
 	for _, f := range a {
 		old, ok := byPath[f.Path]
-		if !ok || old.Size != f.Size || old.Padding && f.Selected {
+		if !ok || old.count == 0 || old.file.Size != f.Size || f.Padding && !old.file.Padding {
 			return false
 		}
-		delete(byPath, f.Path)
+		if old.file.Padding && f.Selected && !allowSelectedPadding {
+			return false
+		}
+		old.count--
+		byPath[f.Path] = old
 	}
 	for _, f := range byPath {
-		if !f.Padding {
+		if f.count > 0 && !f.file.Padding {
 			return false
 		}
 	}

@@ -91,3 +91,49 @@ func TestExactSeasonNeverAssignsUnqualifiedFilesToSeveralSeasons(t *testing.T) {
 		t.Fatal(eps, err)
 	}
 }
+
+func TestRepeatedPaddingRetainsMultiplicityAndCannotHidePayload(t *testing.T) {
+	payload := File{Index: 0, Path: "show/.pad/movie", Size: 11}
+	pad := File{Index: 1, Path: "show/.pad/5", Size: 5, Padding: true}
+	second := pad
+	second.Index = 2
+	manifest := []File{payload, pad, second}
+	if normalized, err := Normalize(manifest); err != nil || !slices.Equal(normalized, manifest) {
+		t.Fatal(normalized, err)
+	}
+	for _, live := range [][]File{{payload}, {payload, second}, manifest} {
+		if !Match(manifest, live) || !MatchTransfer(manifest, live) {
+			t.Fatal("valid client layout rejected", live)
+		}
+	}
+	visible := pad
+	visible.Padding, visible.Selected = false, true
+	live := []File{payload, visible}
+	if !MatchTransfer(manifest, live) || Match(manifest, live) || Wanted(manifest, live) {
+		t.Fatal("wrong rules for selected client-visible padding")
+	}
+	extra := pad
+	extra.Index = 3
+	disguised := payload
+	disguised.Padding = true
+	for _, invalid := range [][]File{{pad}, {disguised}, {payload, pad, second, extra}} {
+		if MatchTransfer(manifest, invalid) {
+			t.Fatal("accepted inconsistent client files", invalid)
+		}
+	}
+	for _, change := range []func(*File){
+		func(f *File) { f.Index = pad.Index },
+		func(f *File) { f.Padding = false },
+		func(f *File) { f.Selected = true },
+		func(f *File) { f.Size++ },
+		func(f *File) { f.Path = "show/.PAD/5" },
+	} {
+		other := second
+		change(&other)
+		for _, pair := range [][]File{{pad, other}, {other, pad}} {
+			if _, err := Normalize(pair); err == nil {
+				t.Fatal("accepted ambiguous file paths", pair)
+			}
+		}
+	}
+}
