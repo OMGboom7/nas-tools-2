@@ -21,14 +21,15 @@ type transferTrigger struct {
 	Due  time.Time `json:"due"`
 }
 type transferSchedule struct {
-	Epoch    string               `json:"epoch"`
-	Actor    string               `json:"actor"`
-	Scope    string               `json:"scope"`
-	Timezone string               `json:"timezone"`
-	Once     *time.Time           `json:"once,omitempty"`
-	Next     *time.Time           `json:"next,omitempty"`
-	Pending  *transferTrigger     `json:"pending,omitempty"`
-	Latest   *transferBatchResult `json:"latest,omitempty"`
+	Exclusive bool                 `json:"exclusive"`
+	Epoch     string               `json:"epoch"`
+	Actor     string               `json:"actor"`
+	Scope     string               `json:"scope"`
+	Timezone  string               `json:"timezone"`
+	Once      *time.Time           `json:"once,omitempty"`
+	Next      *time.Time           `json:"next,omitempty"`
+	Pending   *transferTrigger     `json:"pending,omitempty"`
+	Latest    *transferBatchResult `json:"latest,omitempty"`
 }
 
 func parseTransferSchedule(raw string) (transferSchedule, error) {
@@ -74,6 +75,9 @@ func (api torrentTransferAPI) schedule(w http.ResponseWriter, r *http.Request) {
 		Epoch       string `json:"epoch"`
 		Fingerprint string `json:"fingerprint"`
 		Confirm     bool   `json:"confirm"`
+		Exclusive   bool   `json:"exclusive"`
+		Start       bool   `json:"allowStart"`
+		Remove      bool   `json:"allowRemoval"`
 	}
 	if !siteLoginJSON(w, r, &in) {
 		return
@@ -94,6 +98,11 @@ func (api torrentTransferAPI) schedule(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 409, 409, "请先核对转种周期、下载器及当前调度")
 			return
 		}
+		if in.Exclusive && (in.Start != scope.settings.AutoStart || in.Remove != scope.settings.DeleteSource) {
+			writeAPIError(w, 409, 409, "启动或源移除授权与原配置不符")
+			return
+		}
+		next.Exclusive = in.Exclusive
 		now := time.Now()
 		next.Actor, next.Scope, next.Timezone = actor, scope.fingerprint, loc.String()
 		if scope.settings.Cron != "" {

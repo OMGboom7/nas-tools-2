@@ -211,3 +211,11 @@ func (i AddIntent) targetAction(ctx context.Context, k ActionKey, proof string, 
 	defer cancel()
 	return state, errors.Join(err, i.Ledger.Finish(save, k, i.Receipt, proof, state))
 }
+
+// VerifiedInstance compares a live snapshot with the target whose check was
+// observed for this receipt. A re-added task can reuse the same control ID.
+func (l *Ledger) VerifiedInstance(ctx context.Context, receipt, receiver string, current Task) bool {
+	intent := AddIntent{Ledger: l, Receipt: receipt, Receiver: receiver, WireID: current.WireID}
+	frozen, stage, err := intent.target(ctx)
+	return err == nil && stage == "verified" && frozen.SameInstance(current)
+}

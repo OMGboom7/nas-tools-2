@@ -18,13 +18,16 @@ import (
 // The manifest is sealed before the first submission. After interruption we
 // revisit exactly these receipts, including tasks already visible at the target.
 type transferBatch struct {
-	ID        string   `json:"id"`
-	Receipts  []string `json:"receipts"`
-	Existing  int      `json:"existing"`
-	Failed    int      `json:"failed"`
-	Submitted int      `json:"submitted"`
-	Unknown   int      `json:"unknown"`
-	Cursor    int      `json:"cursor"`
+	Follow    []transferFollowup `json:"follow,omitempty"`
+	Completed int                `json:"completed"`
+	Review    int                `json:"review"`
+	ID        string             `json:"id"`
+	Receipts  []string           `json:"receipts"`
+	Existing  int                `json:"existing"`
+	Failed    int                `json:"failed"`
+	Submitted int                `json:"submitted"`
+	Unknown   int                `json:"unknown"`
+	Cursor    int                `json:"cursor"`
 }
 
 func (api torrentTransferAPI) pendingScope(ctx context.Context, expected transferSchedule) (transferReviewScope, error) {
@@ -134,13 +137,19 @@ func (api torrentTransferAPI) processTransferBatch(parent context.Context) error
 			return err
 		}
 		id := batch.Receipts[batch.Cursor]
-		state, err := api.submitBatchItem(ctx, ledger, scope, id, resolve)
+		state, err := api.submitBatchItem(ctx, ledger, scope, id, resolve, st.Exclusive)
 		if err != nil {
 			return err
 		}
 		switch state {
 		case "added":
 			batch.Submitted++
+			if st.Exclusive {
+				batch.Follow = append(batch.Follow, transferFollowup{Receipt: id, Since: time.Now().UTC()})
+			}
+		case "review":
+			batch.Submitted++
+			batch.Review++
 		case "duplicate":
 			batch.Existing++
 		case "unknown":
@@ -157,7 +166,38 @@ func (api torrentTransferAPI) processTransferBatch(parent context.Context) error
 			return err
 		}
 	}
-	st.Latest = &transferBatchResult{ID: batch.ID, Submitted: batch.Submitted, Existing: batch.Existing, Unknown: batch.Unknown, Failed: batch.Failed}
+	if len(batch.Follow) > 0 {
+		for range len(batch.Follow) {
+			work := batch.Follow[0]
+			if _, err := api.pendingScope(ctx, st); err != nil {
+				return err
+			}
+			state, err := api.followTransfer(ctx, db, ledger, scope, work, resolve)
+			if err != nil {
+				return err
+			}
+			batch.Follow = batch.Follow[1:]
+			switch state {
+			case "complete":
+				batch.Completed++
+			case "review":
+				batch.Review++
+			default:
+				batch.Follow = append(batch.Follow, work)
+			}
+			data, err := json.Marshal(batch)
+			if err != nil {
+				return err
+			}
+			if _, err = db.ExecContext(ctx, "UPDATE GO_TORRENT_TRANSFER_BATCHES SET manifest=? WHERE id=?", string(data), batch.ID); err != nil {
+				return err
+			}
+		}
+		if len(batch.Follow) > 0 {
+			return nil
+		}
+	}
+	st.Latest = &transferBatchResult{Completed: batch.Completed, Review: batch.Review, ID: batch.ID, Submitted: batch.Submitted, Existing: batch.Existing, Unknown: batch.Unknown, Failed: batch.Failed}
 	st.Pending = nil
 	if st.Once == nil && st.Next == nil {
 		st.Actor = ""
@@ -174,6 +214,9 @@ func (api torrentTransferAPI) processTransferBatch(parent context.Context) error
 	total := batch.Submitted + batch.Existing + batch.Failed + batch.Unknown
 	if scope.settings.Notify && total > 0 {
 		message := fmt.Sprintf("提交阶段共 %d 项，暂停添加已应答 %d 项，目标已有 %d 项，失败 %d 项，待核实 %d 项。批次编号：%s", total, batch.Submitted, batch.Existing, batch.Failed, batch.Unknown, batch.ID)
+		if st.Exclusive {
+			message += fmt.Sprintf(" 后续操作已完成 %d 项，需人工核对 %d 项。", batch.Completed, batch.Review)
+		}
 		if err := bus.EmitData(ctx, tx, "plugin_message", batch.ID, batch.ID, "【移转做种任务提交结果】", message, map[string]string{"plugin": torrenttransfer.Plugin}); err != nil {
 			return err
 		}
@@ -191,6 +234,8 @@ func (api torrentTransferAPI) processTransferBatch(parent context.Context) error
 }
 
 type transferBatchResult struct {
+	Completed int    `json:"completed"`
+	Review    int    `json:"review"`
 	ID        string `json:"id"`
 	Submitted int    `json:"submitted"`
 	Existing  int    `json:"existing"`
@@ -198,7 +243,7 @@ type transferBatchResult struct {
 	Failed    int    `json:"failed"`
 }
 
-func (api torrentTransferAPI) submitBatchItem(ctx context.Context, ledger *torrenttransfer.Ledger, scope transferReviewScope, id string, resolve torrenttransfer.ResolveScope) (string, error) {
+func (api torrentTransferAPI) submitBatchItem(ctx context.Context, ledger *torrenttransfer.Ledger, scope transferReviewScope, id string, resolve torrenttransfer.ResolveScope, exclusive bool) (string, error) {
 	plan, err := ledger.LoadPlan(ctx, id)
 	if err != nil {
 		return "", err
@@ -222,6 +267,17 @@ func (api torrentTransferAPI) submitBatchItem(ctx context.Context, ledger *torre
 		if sendErr == nil {
 			if reply.Duplicate {
 				return "duplicate", nil
+			}
+			if exclusive {
+				_, err := ledger.ContinuePlan(ctx, id, resolve, func(_ context.Context, added torrenttransfer.AddReceipt, t torrenttransfer.Task) error {
+					if added != reply || added.Duplicate || t.WireID != plan.WireID {
+						return torrenttransfer.ErrState
+					}
+					return nil
+				}, nil)
+				if err != nil {
+					return "review", nil
+				}
 			}
 			return "added", nil
 		}

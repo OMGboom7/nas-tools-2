@@ -4,7 +4,7 @@ import { ApiError } from "../api/client";
 type Schedule = {
   fingerprint: string; ready: boolean; source: string; target: string;
   cron: string; onlyOnce: boolean; autoStart: boolean; deleteSource: boolean;
-  control: { epoch: string; actor: string; next?: string; once?: string; pending?: {id: string; kind: string; due: string}; latest?: {id: string; submitted: number; existing: number; unknown: number; failed: number} };
+  control: { epoch: string; actor: string; next?: string; once?: string; pending?: {id: string; kind: string; due: string}; latest?: {id: string; submitted: number; existing: number; unknown: number; failed: number; completed?: number; review?: number} };
 };
 const base = "/api/v1/torrent-transfer/schedule";
 
@@ -12,6 +12,7 @@ export function TorrentTransferSchedule({token, expired, select}: {token: string
   const [status, setStatus] = useState<Schedule>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [exclusive, setExclusive] = useState(false);
   const [batchId, setBatchId] = useState("");
   const [receipts, setReceipts] = useState<string[]>();
   const request = useRef<AbortController | null>(null);
@@ -49,7 +50,7 @@ export function TorrentTransferSchedule({token, expired, select}: {token: string
     try {
       const options = {headers: {Authorization: token, "Content-Type": "application/json"}, signal: c.signal};
       if (action) {
-        const response = await fetch(base + "/" + action, {...options, method: "POST", body: JSON.stringify({epoch: status!.control.epoch, fingerprint: status!.fingerprint, confirm: true})});
+        const response = await fetch(base + "/" + action, {...options, method: "POST", body: JSON.stringify({epoch: status!.control.epoch, fingerprint: status!.fingerprint, confirm: true, exclusive, allowStart: exclusive && status!.autoStart, allowRemoval: exclusive && status!.deleteSource})});
         const body = await response.json();
         if (!response.ok || body?.code !== 0) throw new ApiError(body?.message || "调度操作失败", response.status);
       }
@@ -62,7 +63,7 @@ export function TorrentTransferSchedule({token, expired, select}: {token: string
           ![s.ready,s.onlyOnce,s.autoStart,s.deleteSource].every(v => typeof v === "boolean") ||
           (s.control.pending && typeof s.control.pending.id !== "string") ||
           (s.control.latest && (typeof s.control.latest.id !== "string" || ![s.control.latest.submitted, s.control.latest.existing, s.control.latest.unknown, s.control.latest.failed].every(n => Number.isSafeInteger(n) && n >= 0)))) throw new Error();
-      if (!c.signal.aborted) setStatus(s);
+      if (!c.signal.aborted) { setStatus(s); setExclusive(false); }
     } catch (e) {
       if (c.signal.aborted) return;
       setStatus(undefined);
@@ -78,8 +79,9 @@ export function TorrentTransferSchedule({token, expired, select}: {token: string
       {status.control.next && <p>下次周期触发 {new Date(status.control.next).toLocaleString()}</p>}
       {(status.onlyOnce || status.control.once) && <p>已配置单次运行</p>}
       {status.control.pending && <p>等待执行的批次 <code>{status.control.pending.id}</code></p>}
-      {status.control.latest && <p>最近批次 <code>{status.control.latest.id}</code> · 暂停添加已应答 {status.control.latest.submitted} · 目标已有 {status.control.latest.existing} · 待核实 {status.control.latest.unknown} · 失败 {status.control.latest.failed}</p>}
+      {status.control.latest && <p>最近批次 <code>{status.control.latest.id}</code> · 暂停添加已应答 {status.control.latest.submitted} · 目标已有 {status.control.latest.existing} · 待核实 {status.control.latest.unknown} · 失败 {status.control.latest.failed} · 后续操作完成 {status.control.latest.completed ?? 0} · 需人工核对 {status.control.latest.review ?? 0}</p>}
       {status.control.latest && <button type="button" disabled={busy} onClick={() => void lookupBatch(status.control.latest!.id)}>查看最近批次回执</button>}
+      {!status.control.actor && status.ready && <label><input type="checkbox" checked={exclusive} disabled={busy} onChange={e => setExclusive(e.target.checked)} />确认旧转种执行器已停止，源和目标任务仅由此调度修改。授权后台绑定并校验目标{status.autoStart ? "、启动做种" : ""}{status.deleteSource ? "、移除源任务并保留文件" : ""}。</label>}
       {status.control.actor ? <button disabled={busy} onClick={() => void operate("stop")}>停止调度</button> :
         <button disabled={busy || !status.ready} onClick={() => void operate("activate")}>启用调度</button>}
     </div>}
