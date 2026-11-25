@@ -31,6 +31,7 @@ type pluginService struct {
 	cloudflare      *cloudflareAPI
 	cookieCloud     *cookieCloudAPI
 	torrentMark     *torrentMarkAPI
+	torrentTransfer *torrentTransferAPI
 	torrentRemover  *torrentRemovalAPI
 	autoBackup      *autoBackupAPI
 	syncTimer       *organizationAPI
@@ -88,6 +89,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
+	if service.nativeTorrentTransfer(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveTorrentTransferPlugin(response, request, action)
+		return
+	}
 	if service.nativeTorrentRemover(request.PathValue("id")) {
 		action := "uninstall"
 		if install {

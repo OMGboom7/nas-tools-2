@@ -84,9 +84,9 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 			return
 		}
 		for _, id := range installed {
-			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) && !service.nativeCookieCloud(id) && !service.nativeAutoBackup(id) && !service.nativeSyncTimer(id) && !service.nativeTorrentMark(id) && !service.nativeTorrentRemover(id) {
+			if !nativeMetadataPlugin(id) && !service.nativeHosts(id) && !service.nativeIndexer(id) && !service.nativeSubtitle(id) && !service.nativeOpenSubtitles(id) && !service.nativeLibrary(id) && !service.nativeMediaRefresh(id) && !service.nativeEventWebhook(id) && !service.nativeSpeedLimiter(id) && !service.nativeMovieLike(id) && !service.nativeMediaSyncDelete(id) && !service.nativeSignin(id) && !service.nativeCloudflare(id) && !service.nativeCookieCloud(id) && !service.nativeAutoBackup(id) && !service.nativeSyncTimer(id) && !service.nativeTorrentMark(id) && !service.nativeTorrentTransfer(id) && !service.nativeTorrentRemover(id) {
 				for _, other := range installed {
-					if service.nativeTorrentRemover(other) || service.nativeTorrentMark(other) || service.nativeCookieCloud(other) || service.nativeAutoBackup(other) || service.nativeSyncTimer(other) {
+					if service.nativeTorrentTransfer(other) || service.nativeTorrentRemover(other) || service.nativeTorrentMark(other) || service.nativeCookieCloud(other) || service.nativeAutoBackup(other) || service.nativeSyncTimer(other) {
 						writeAPIError(response, 501, 501, "混合插件配置请使用各自的配置页")
 						return
 					}
@@ -101,6 +101,19 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 		}
 		result := map[string]any{}
 		for _, id := range installed {
+			if service.nativeTorrentTransfer(id) {
+				actor, ok := service.torrentTransfer.login.actor(response, request, false)
+				if !ok {
+					return
+				}
+				st, err := service.transferConfig(request.Context(), actor)
+				if err != nil {
+					writeAPIError(response, 409, 409, "无法读取转种配置")
+					return
+				}
+				result[id] = map[string]any{"name": st.detail.Name, "version": "1.0", "config": st.detail.Values, "fields": indexerLegacyFields(st.detail), "state": false, "stateKnown": true, "native": true, "fingerprint": st.detail.Meta.Fingerprint}
+				continue
+			}
 			if service.nativeTorrentRemover(id) {
 				api := service.torrentRemover
 				actor, ok := api.actor(response, request, false)

@@ -50,6 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeTorrentTransfer(request.PathValue("id")) {
+		service.serveTorrentTransferPlugin(response, request, "get")
+		return
+	}
 	if service.nativeTorrentRemover(request.PathValue("id")) {
 		service.serveTorrentRemoverPlugin(response, request, "get")
 		return
@@ -146,6 +150,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
+	if service.nativeTorrentTransfer(request.PathValue("id")) {
+		service.serveTorrentTransferPlugin(response, request, "save")
+		return
+	}
 	if service.nativeTorrentRemover(request.PathValue("id")) {
 		service.serveTorrentRemoverPlugin(response, request, "save")
 		return

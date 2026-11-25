@@ -8,12 +8,14 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
 type torrentTransferAPI struct {
-	database string
-	login    *siteLoginAPI
+	downloaders *downloaderconfig.Store
+	database    string
+	login       *siteLoginAPI
 }
 
 func (api torrentTransferAPI) record(w http.ResponseWriter, r *http.Request) {

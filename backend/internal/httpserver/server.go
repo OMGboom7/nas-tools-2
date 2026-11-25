@@ -610,7 +610,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.torrentMark = markAPI
 	removalAPI := &torrentRemovalAPI{login: nativeSiteLogin, store: nativeTorrentRemovals, organizer: &organizer}
 	rssRunner.torrentRemover = removalAPI
-	transferAPI := torrentTransferAPI{database: nativeUserDatabasePath, login: nativeSiteLogin}
+	transferAPI := torrentTransferAPI{downloaders: nativeDownloaders, database: nativeUserDatabasePath, login: nativeSiteLogin}
 	mux.HandleFunc("GET /api/v1/torrent-transfer/records/{id}", transferAPI.record)
 	mux.HandleFunc("GET /api/v1/torrent-remover", removalAPI.serve)
 	mux.HandleFunc("GET /api/v1/torrent-remover/records/{id}", removalAPI.serve)
@@ -722,6 +722,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins := pluginService{legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	plugins.cookieCloud = cloudCookies
 	plugins.torrentMark = markAPI
+	plugins.torrentTransfer = &transferAPI
 	plugins.torrentRemover = removalAPI
 	plugins.autoBackup = backup
 	plugins.syncTimer = &organizer
