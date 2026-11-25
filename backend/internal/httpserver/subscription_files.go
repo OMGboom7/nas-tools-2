@@ -110,13 +110,16 @@ func (api *subscriptionSearchRunner) prepareSubscriptionFiles(ctx context.Contex
 		}
 		plan.raw = raw
 		plan.typedSource = true
-		if err := api.freezeSeasonMembers(ctx, tx, members, id, plan, item, baseOptions); err != nil {
+		if err := api.freezeSeasonMembers(ctx, tx, members, id, plan); err != nil {
 			return err
 		}
 		d.Scope = scope
 		return nil
 	})
 	if err != nil {
+		return nil, options, err
+	}
+	if err := download.checkSeasonDownloadSettings(ctx, members, item, baseOptions); err != nil {
 		return nil, options, err
 	}
 	// No pre-existing task/profile is adopted as a newly selected download.

@@ -193,8 +193,7 @@ func (api *subscriptionSearchRunner) planSeasonCohort(ctx context.Context, id in
 	return out, leadEpisodes, members, nil
 }
 
-func (api *subscriptionSearchRunner) freezeSeasonMembers(ctx context.Context, tx *sql.Tx, members []subscriptionSeasonMember, leader int64, plan *subscriptionSearchPlan, item downloaderconfig.Downloader, options downloadAddOptions) error {
-	download := api.planner.runner.download.service
+func (api *subscriptionSearchRunner) freezeSeasonMembers(ctx context.Context, tx *sql.Tx, members []subscriptionSeasonMember, leader int64, plan *subscriptionSearchPlan) error {
 	for i := range members {
 		m := &members[i]
 		if err := verifySubscriptionSnapshot(ctx, tx, "TV", m.ID, m.Plan); err != nil {
@@ -212,9 +211,18 @@ func (api *subscriptionSearchRunner) freezeSeasonMembers(ctx context.Context, tx
 		if m.ID == leader {
 			plan.raw = raw
 		}
+	}
+	return nil
+}
+
+// Settings and PT checks use separate connections. Finish the snapshot
+// transaction first so a writer waiting to commit cannot block these reads.
+// Reservation rechecks the captured settings digest and all member rows.
+func (download downloadService) checkSeasonDownloadSettings(ctx context.Context, members []subscriptionSeasonMember, item downloaderconfig.Downloader, options downloadAddOptions) error {
+	for _, m := range members {
 		// Resolved settings must be identical: a single torrent cannot honor
 		// contradictory directories, clients, paused states or PT constraints.
-		source := normalizeNativeSubscriptionRow(raw)
+		source := normalizeNativeSubscriptionRow(m.Plan.raw)
 		d, o, err := download.searchDownloadSettings(ctx, m.Candidate.resource.Indexer, addResourceRequest{Setting: text(source["download_setting"]), Directory: text(source["save_path"])})
 		if err != nil || bus.Hash(d) != bus.Hash(item) {
 			return errSubscriptionSubmissionConflict
