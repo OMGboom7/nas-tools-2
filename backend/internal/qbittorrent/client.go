@@ -73,6 +73,11 @@ func New(host, port, username, password string, transport http.RoundTripper) (*C
 }
 
 func (client *Client) request(ctx context.Context, method, path string, form url.Values) ([]byte, error) {
+	contents, _, err := client.requestWithStatus(ctx, method, path, form)
+	return contents, err
+}
+
+func (client *Client) requestWithStatus(ctx context.Context, method, path string, form url.Values) ([]byte, int, error) {
 	endpoint := *client.base
 	path, query, _ := strings.Cut(path, "?")
 	endpoint.Path += "/api/v2/" + path
@@ -84,7 +89,7 @@ func (client *Client) request(ctx context.Context, method, path string, form url
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint.String(), strings.NewReader(body))
 	if err != nil {
-		return nil, ErrConfiguration
+		return nil, 0, ErrConfiguration
 	}
 	request.Header.Set("Origin", client.base.Scheme+"://"+client.base.Host)
 	request.Header.Set("Referer", client.base.String()+"/")
@@ -93,29 +98,32 @@ func (client *Client) request(ctx context.Context, method, path string, form url
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
-		return nil, ErrConnection
+		return nil, 0, ErrConnection
 	}
 	defer response.Body.Close()
 	if response.StatusCode == 401 || response.StatusCode == 403 {
-		return nil, ErrAuthentication
+		return nil, 0, ErrAuthentication
+	}
+	if method == http.MethodPost && response.StatusCode == http.StatusNoContent {
+		return nil, response.StatusCode, nil
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, ErrResponse
+		return nil, 0, ErrResponse
 	}
 	const limit = 8 << 20
 	contents, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil || len(contents) > limit {
-		return nil, ErrResponse
+		return nil, 0, ErrResponse
 	}
-	return contents, nil
+	return contents, response.StatusCode, nil
 }
 
 func (client *Client) login(ctx context.Context) error {
-	contents, err := client.request(ctx, http.MethodPost, "auth/login", url.Values{"username": {client.username}, "password": {client.password}})
+	contents, status, err := client.requestWithStatus(ctx, http.MethodPost, "auth/login", url.Values{"username": {client.username}, "password": {client.password}})
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(contents)) != "Ok." {
+	if status != http.StatusNoContent && strings.TrimSpace(string(contents)) != "Ok." {
 		return ErrAuthentication
 	}
 	return nil
@@ -265,10 +273,7 @@ func (client *Client) AddMagnetWithOptions(ctx context.Context, magnet string, o
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(string(contents)) != "Ok." {
-		return ErrResponse
-	}
-	return nil
+	return validateAddReply(contents, "")
 }
 
 func (client *Client) AddTorrent(ctx context.Context, torrent []byte) error {
@@ -296,12 +301,12 @@ func (client *Client) AddTorrentWithOptions(ctx context.Context, torrent []byte,
 			return err
 		}
 	}
-	return client.addTorrentForm(ctx, torrent, form)
+	return client.addTorrentForm(ctx, torrent, form, "")
 }
 
 // addTorrentForm sends exactly one already-prepared add. Callers authenticate
 // and validate the form first; an ambiguous response is never retried here.
-func (client *Client) addTorrentForm(ctx context.Context, torrent []byte, form url.Values) error {
+func (client *Client) addTorrentForm(ctx context.Context, torrent []byte, form url.Values, expectedID string) error {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	for key, values := range form {
@@ -343,7 +348,30 @@ func (client *Client) addTorrentForm(ctx context.Context, torrent []byte, form u
 		return ErrResponse
 	}
 	contents, err := io.ReadAll(io.LimitReader(response.Body, 1025))
-	if err != nil || len(contents) > 1024 || strings.TrimSpace(string(contents)) != "Ok." {
+	if err != nil || len(contents) > 1024 {
+		return ErrResponse
+	}
+	return validateAddReply(contents, expectedID)
+}
+
+// Older Web APIs return only "Ok.". The structured single-torrent response
+// must confirm one completed add, and a reviewed transfer must match its ID.
+func validateAddReply(contents []byte, expectedID string) error {
+	if strings.TrimSpace(string(contents)) == "Ok." {
+		return nil
+	}
+	var result struct {
+		Added   []string `json:"added_torrent_ids"`
+		Success *int     `json:"success_count"`
+		Failed  *int     `json:"failure_count"`
+		Pending *int     `json:"pending_count"`
+	}
+	if json.Unmarshal(contents, &result) != nil || result.Success == nil || *result.Success != 1 ||
+		result.Failed == nil || *result.Failed != 0 || result.Pending == nil || *result.Pending != 0 ||
+		len(result.Added) != 1 || len(result.Added[0]) != 40 || !ValidHash(result.Added[0]) {
+		return ErrResponse
+	}
+	if expectedID != "" && !strings.EqualFold(expectedID, result.Added[0]) {
 		return ErrResponse
 	}
 	return nil

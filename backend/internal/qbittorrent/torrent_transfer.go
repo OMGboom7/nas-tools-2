@@ -316,7 +316,7 @@ func (c *Client) addTransferPaused(ctx context.Context, content []byte, director
 		form.Set("seedingTimeLimit", "-1")
 		form.Set("inactiveSeedingTimeLimit", "-1")
 	}
-	send := func() (torrenttransfer.AddReceipt, error) { return r, c.addTorrentForm(ctx, m.Content, form) }
+	send := func() (torrenttransfer.AddReceipt, error) { return r, c.addTorrentForm(ctx, m.Content, form, r.WireID) }
 	if intent != nil {
 		return intent.Send(ctx, c.Address(), r.WireID, directory, m.Content, send)
 	}

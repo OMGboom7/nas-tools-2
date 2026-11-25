@@ -279,3 +279,51 @@ func TestAddWithOptionsSendsPerTorrentSettings(t *testing.T) {
 		t.Fatalf("invalid ratio=%v", err)
 	}
 }
+
+func TestCheckAcceptsNoContentLoginButRequiresReadableStatus(t *testing.T) {
+	sawStatus := false
+	client, err := New("qb.fixture", "", "fixture", "fixture", transportFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path == "/api/v2/auth/login" {
+			r := reply(http.StatusNoContent, "")
+			r.Header.Set("Set-Cookie", "SID=fixture-session; Path=/")
+			return r, nil
+		}
+		cookie, err := req.Cookie("SID")
+		if req.URL.Path != "/api/v2/transfer/info" || err != nil || cookie.Value != "fixture-session" {
+			t.Fatalf("missing authenticated status request: %v", err)
+		}
+		sawStatus = true
+		return reply(http.StatusNoContent, ""), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Check(t.Context()); !sawStatus || !errors.Is(err, ErrResponse) {
+		t.Fatalf("status requested = %v, error = %v", sawStatus, err)
+	}
+}
+
+func TestTransferStructuredAddReplyChecksTheReviewedTask(t *testing.T) {
+	const id = "0123456789abcdef0123456789abcdef01234567"
+	const added = `{"added_torrent_ids":["` + id + `"],"success_count":1,"pending_count":0,"failure_count":0}`
+	for _, tc := range []struct {
+		name, reply, expected string
+		ok                    bool
+	}{
+		{"reviewed", added, id, true},
+		{"generic upload", added, "", true},
+		{"older API", "Ok.", id, true},
+		{"different task", added, strings.Repeat("a", 40), false},
+		{"partial failure", strings.Replace(added, `"failure_count":0`, `"failure_count":1`, 1), id, false},
+		{"pending", strings.Replace(added, `"pending_count":0`, `"pending_count":1`, 1), id, false},
+		{"no counts", `{"added_torrent_ids":["` + id + `"]}`, id, false},
+		{"empty success", "", id, false},
+		{"multiple ids", strings.Replace(added, id, id+`","`+id, 1), id, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateAddReply([]byte(tc.reply), tc.expected); (err == nil) != tc.ok {
+				t.Fatalf("unexpected add result: %v", err)
+			}
+		})
+	}
+}
