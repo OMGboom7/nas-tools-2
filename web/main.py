@@ -330,6 +330,7 @@ def search():
     return render_template("search.html",
                            UserPris=str(pris).split(","),
                            Count=Count,
+                           SearchError=res.get("msg"),
                            Results=SearchResults,
                            SiteDict=Indexer().get_indexer_hash_dict(),
                            UPCHAR=chr(8593))

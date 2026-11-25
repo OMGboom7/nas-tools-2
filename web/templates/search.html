@@ -251,10 +251,10 @@
                                         {% if torrent.respix %}
                                           <span class="badge text-white bg-cyan mb-1">{{ torrent.respix }}</span>
                                         {% endif %}
-                                        {% if torrent.uploadvalue != 1.0 %}
+                                        {% if torrent.uploadvalue is not none and torrent.uploadvalue != 1.0 %}
                                         <span class="badge text-white bg-azure mb-1">{{ (torrent.uploadvalue * 100) | int }}%UL</span>
                                         {% endif %}
-                                        {% if torrent.downloadvalue != 1.0 %}
+                                        {% if torrent.downloadvalue is not none and torrent.downloadvalue != 1.0 %}
                                           {% if torrent.downloadvalue == 0.0 %}
                                             <span class="badge text-white bg-lime mb-1">FREE</span>
                                           {% else %}
@@ -311,6 +311,8 @@
       </div>
     </div>
   </div>
+{% elif SearchError %}
+{{ OOPS.empty(SearchError, '') }}
 {% else %}
 {{ OOPS.empty('没有搜索结果', '输入想看的电影、电视剧名称，点击搜索试试看吧。') }}
 {% endif %}

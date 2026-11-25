@@ -162,8 +162,6 @@ class Searcher:
             return None, no_exists, 0, 0
         else:
             if in_from in self.message.get_search_types():
-                # 保存搜索记录
-                self.delete_all_search_torrents()
                 # 搜索结果排序
                 media_list = sorted(media_list, key=lambda x: "%s%s%s%s" % (str(x.title).ljust(100, ' '),
                                                                             str(x.res_order).rjust(3, '0'),
@@ -171,7 +169,7 @@ class Searcher:
                                                                             str(x.seeders).rjust(10, '0')),
                                     reverse=True)
                 # 插入数据库
-                self.insert_search_results(media_list)
+                self.replace_search_results(media_list)
                 # 微信未开自动下载时返回
                 if not self._search_auto:
                     return None, no_exists, len(media_list), None
@@ -192,6 +190,9 @@ class Searcher:
                 # 全部下完了
                 else:
                     return download_items[0], no_exists, len(media_list), len(download_items)
+
+    def replace_search_results(self, media_items, title=None, ident_flag=True):
+        self.dbhelper.replace_search_results(media_items, title, ident_flag)
 
     def get_search_result_by_id(self, dl_id):
         """

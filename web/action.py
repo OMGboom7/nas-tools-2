@@ -29,10 +29,11 @@ from app.filetransfer import FileTransfer
 from app.filter import Filter, ResourceFilterUnavailable
 from app.helper import DbHelper, ProgressHelper, ThreadHelper, \
     MetaHelper, DisplayHelper, WordsHelper
+from app.helper.db_helper import SearchResultsUnavailable
 from app.helper import RssHelper
 from app.indexer import Indexer
 from app.media import Category, Media, Bangumi, DouBan, Scraper
-from app.media.meta import MetaInfo, MetaBase
+from app.media.meta import MetaInfo
 from app.mediaserver import MediaServer
 from app.message import Message, MessageCenter
 from app.message.client.telegram import TelegramReceiver
@@ -566,33 +567,35 @@ class WebAction:
         dl_id = data.get("id")
         dl_dir = data.get("dir")
         dl_setting = data.get("setting")
-        results = Searcher().get_search_result_by_id(dl_id)
+        try:
+            results = Searcher().get_search_result_by_id(dl_id)
+        except SearchResultsUnavailable as err:
+            return {"retcode": -1, "retmsg": str(err)}
+        if not results:
+            return {"retcode": -1, "retmsg": "搜索结果已过期，请重新搜索"}
         if current_user.is_authenticated:
             user_name = current_user.username
         else:
-            # Handle case when user is not authenticated
-            user_name = "API"  # Or handle appropriately
-        for res in results:
-            dl_enclosure = res.ENCLOSURE if Sites().get_sites_by_url_domain(res.ENCLOSURE) else Torrent.format_enclosure(res.ENCLOSURE)
-            if not dl_enclosure:
-                return {"retcode": -1, "retmsg": "未发现当前种子下载链接，请前往站点下载"}
-            media = Media().get_media_info(title=res.TORRENT_NAME, subtitle=res.DESCRIPTION)
-            if not media:
-                continue
-            media.set_torrent_info(enclosure=res.ENCLOSURE,
-                                   size=res.SIZE,
-                                   site=res.SITE,
-                                   page_url=res.PAGEURL,
-                                   upload_volume_factor=float(res.UPLOAD_VOLUME_FACTOR) if res.UPLOAD_VOLUME_FACTOR is not None else None,
-                                   download_volume_factor=float(res.DOWNLOAD_VOLUME_FACTOR) if res.DOWNLOAD_VOLUME_FACTOR is not None else None)
-            # 添加下载
-            _, ret, dir, ret_msg = Downloader().download(media_info=media,
-                                                    download_dir=dl_dir,
-                                                    download_setting=dl_setting,
-                                                    in_from=SearchType.WEB,
-                                                    user_name=user_name)
-            if not ret:
-                return {"retcode": -1, "retmsg": ret_msg}
+            user_name = "API"
+        res = results[0]
+        dl_enclosure = res.ENCLOSURE if Sites().get_sites_by_url_domain(res.ENCLOSURE) else Torrent.format_enclosure(res.ENCLOSURE)
+        if not dl_enclosure:
+            return {"retcode": -1, "retmsg": "未发现当前种子下载链接，请前往站点下载"}
+        media = Media().get_media_info(title=res.TORRENT_NAME, subtitle=res.DESCRIPTION)
+        if not media:
+            return {"retcode": -1, "retmsg": "无法识别所选资源"}
+        media.set_torrent_info(enclosure=res.ENCLOSURE,
+                               size=res.SIZE,
+                               site=res.SITE,
+                               page_url=res.PAGEURL,
+                               upload_volume_factor=float(res.UPLOAD_VOLUME_FACTOR) if res.UPLOAD_VOLUME_FACTOR is not None else None,
+                               download_volume_factor=float(res.DOWNLOAD_VOLUME_FACTOR) if res.DOWNLOAD_VOLUME_FACTOR is not None else None)
+        # 添加下载
+        _, ret, _, ret_msg = Downloader().download(media_info=media, download_dir=dl_dir,
+                                                   download_setting=dl_setting, in_from=SearchType.WEB,
+                                                   user_name=user_name)
+        if not ret:
+            return {"retcode": -1, "retmsg": ret_msg}
         return {"retcode": 0, "retmsg": ""}
 
     @staticmethod
@@ -3479,216 +3482,15 @@ class WebAction:
         return {"code": 0, "result": MediaServer().get_activity_log(30)}
 
     def get_search_result(self):
-        """
-        查询所有搜索结果
-        """
-        SearchResults = {}
-        res = Searcher().get_search_results()
-        total = len(res)
-        for item in res:
-            # 质量(来源、效果)、分辨率
-            if item.RES_TYPE:
-                try:
-                    res_mix = json.loads(item.RES_TYPE)
-                except Exception as err:
-                    ExceptionUtils.exception_traceback(err)
-                    continue
-                respix = res_mix.get("respix") or ""
-                video_encode = res_mix.get("video_encode") or ""
-                restype = res_mix.get("restype") or ""
-                reseffect = res_mix.get("reseffect") or ""
-            else:
-                restype = ""
-                respix = ""
-                reseffect = ""
-                video_encode = ""
-            # 分组标识 (来源，分辨率)
-            group_key = re.sub(r"[-.\s@|]", "", f"{respix}_{restype}").lower()
-            # 分组信息
-            group_info = {
-                "respix": respix,
-                "restype": restype,
-            }
-            # 种子唯一标识 （大小，质量(来源、效果)，制作组组成）
-            unique_key = re.sub(r"[-.\s@|]", "",
-                                f"{respix}_{restype}_{video_encode}_{reseffect}_{item.SIZE}_{item.OTHERINFO}").lower()
-            # 标识信息
-            unique_info = {
-                "video_encode": video_encode,
-                "size": item.SIZE,
-                "reseffect": reseffect,
-                "releasegroup": item.OTHERINFO
-            }
-            # 结果
-            title_string = f"{item.TITLE}"
-            if item.YEAR:
-                title_string = f"{title_string} ({item.YEAR})"
-            # 电视剧季集标识
-            mtype = item.TYPE or ""
-            SE_key = item.ES_STRING if item.ES_STRING and mtype != "MOV" else "MOV"
-            media_type = {"MOV": "电影", "TV": "电视剧", "ANI": "动漫"}.get(mtype)
-            # 只需要部分种子标签
-            labels = [label for label in str(item.NOTE).split("|")
-                      if label in ["官方", "官组", "中字", "国语", "特效", "特效字幕"]]
-            # 种子信息
-            torrent_item = {
-                "id": item.ID,
-                "seeders": item.SEEDERS,
-                "enclosure": item.ENCLOSURE,
-                "site": item.SITE,
-                "torrent_name": item.TORRENT_NAME,
-                "description": item.DESCRIPTION,
-                "pageurl": item.PAGEURL,
-                "uploadvalue": item.UPLOAD_VOLUME_FACTOR,
-                "downloadvalue": item.DOWNLOAD_VOLUME_FACTOR,
-                "size": item.SIZE,
-                "respix": respix,
-                "restype": restype,
-                "reseffect": reseffect,
-                "releasegroup": item.OTHERINFO,
-                "video_encode": video_encode,
-                "labels": labels
-            }
-            # 促销
-            free_item = {
-                "value": f"{item.UPLOAD_VOLUME_FACTOR} {item.DOWNLOAD_VOLUME_FACTOR}",
-                "name": MetaBase.get_free_string(item.UPLOAD_VOLUME_FACTOR, item.DOWNLOAD_VOLUME_FACTOR)
-            }
-            #分辨率
-            if respix == "":
-                respix = "未知分辨率"
-            # 制作组、字幕组
-            if item.OTHERINFO is None:
-                releasegroup = "未知"
-            else:
-                releasegroup = item.OTHERINFO
-            # 季
-            filter_season = SE_key.split()[0] if SE_key and SE_key not in [
-                "MOV", "TV"] else None
-            # 合并搜索结果
-            if SearchResults.get(title_string):
-                # 种子列表
-                result_item = SearchResults[title_string]
-                torrent_dict = SearchResults[title_string].get("torrent_dict")
-                SE_dict = torrent_dict.get(SE_key)
-                if SE_dict:
-                    group = SE_dict.get(group_key)
-                    if group:
-                        unique = group.get("group_torrents").get(unique_key)
-                        if unique:
-                            unique["torrent_list"].append(torrent_item)
-                            group["group_total"] += 1
-                        else:
-                            group["group_total"] += 1
-                            group.get("group_torrents")[unique_key] = {
-                                "unique_info": unique_info,
-                                "torrent_list": [torrent_item]
-                            }
-                    else:
-                        SE_dict[group_key] = {
-                            "group_info": group_info,
-                            "group_total": 1,
-                            "group_torrents": {
-                                unique_key: {
-                                    "unique_info": unique_info,
-                                    "torrent_list": [torrent_item]
-                                }
-                            }
-                        }
-                else:
-                    torrent_dict[SE_key] = {
-                        group_key: {
-                            "group_info": group_info,
-                            "group_total": 1,
-                            "group_torrents": {
-                                unique_key: {
-                                    "unique_info": unique_info,
-                                    "torrent_list": [torrent_item]
-                                }
-                            }
-                        }
-                    }
-                # 过滤条件
-                torrent_filter = dict(result_item.get("filter"))
-                if free_item not in torrent_filter.get("free"):
-                    torrent_filter["free"].append(free_item)
-                if releasegroup not in torrent_filter.get("releasegroup"):
-                    torrent_filter["releasegroup"].append(releasegroup)
-                if respix not in torrent_filter.get("respix"):
-                    torrent_filter["respix"].append(respix)
-                if item.SITE not in torrent_filter.get("site"):
-                    torrent_filter["site"].append(item.SITE)
-                if video_encode \
-                        and video_encode not in torrent_filter.get("video"):
-                    torrent_filter["video"].append(video_encode)
-                if filter_season \
-                        and filter_season not in torrent_filter.get("season"):
-                    torrent_filter["season"].append(filter_season)
-            else:
-                fav, rssid = 0, None
-                # 存在标志
-                if item.TMDBID:
-                    fav, rssid, item_url = self.get_media_exists_info(
-                        mtype=mtype,
-                        title=item.TITLE,
-                        year=item.YEAR,
-                        mediaid=item.TMDBID)
-
-                SearchResults[title_string] = {
-                    "key": item.ID,
-                    "title": item.TITLE,
-                    "year": item.YEAR,
-                    "type_key": mtype,
-                    "image": item.IMAGE,
-                    "type": media_type,
-                    "vote": item.VOTE,
-                    "tmdbid": item.TMDBID,
-                    "backdrop": item.IMAGE,
-                    "poster": item.POSTER,
-                    "overview": item.OVERVIEW,
-                    "fav": fav,
-                    "rssid": rssid,
-                    "torrent_dict": {
-                        SE_key: {
-                            group_key: {
-                                "group_info": group_info,
-                                "group_total": 1,
-                                "group_torrents": {
-                                    unique_key: {
-                                        "unique_info": unique_info,
-                                        "torrent_list": [torrent_item]
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "filter": {
-                        "site": [item.SITE],
-                        "free": [free_item],
-                        "releasegroup": [releasegroup],
-                        "respix": [respix],
-                        "video": [video_encode] if video_encode else [],
-                        "season": [filter_season] if filter_season else []
-                    }
-                }
-
-        # 提升整季的顺序到顶层
-        def se_sort(k):
-            k = re.sub(r" +|(?<=s\d)\D*?(?=e)|(?<=s\d\d)\D*?(?=e)",
-                       " ", k[0], flags=re.I).split()
-            return (k[0], k[1]) if len(k) > 1 else ("Z" + k[0], "ZZZ")
-
-        # 开始排序季集顺序
-        for title, item in SearchResults.items():
-            # 排序筛选器 季
-            item["filter"]["season"].sort(reverse=True)
-            # 排序筛选器 制作组、字幕组.  将未知放到最后
-            item["filter"]["releasegroup"] = sorted(item["filter"]["releasegroup"], key=lambda x: (x == "未知", x))
-            # 排序种子列 集
-            item["torrent_dict"] = sorted(item["torrent_dict"].items(),
-                                          key=se_sort,
-                                          reverse=True)
-        return {"code": 0, "total": total, "result": SearchResults}
+        try:
+            page = DbHelper().grouped_search_results()
+        except SearchResultsUnavailable as err:
+            return {"code": -1, "msg": str(err), "total": 0, "result": {}}
+        for item in page["result"].values():
+            if item["tmdbid"]:
+                item["fav"], item["rssid"], _ = self.get_media_exists_info(
+                    mtype=item["type_key"], title=item["title"], year=item["year"], mediaid=item["tmdbid"])
+        return page
 
     @staticmethod
     def search_media_infos(data):

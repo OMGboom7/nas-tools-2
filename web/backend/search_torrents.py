@@ -5,6 +5,7 @@ import subprocess
 import log
 from app.filter import ResourceFilterUnavailable
 from app.downloader import Downloader
+from app.helper.db_helper import SearchResultsUnavailable
 from app.helper import ProgressHelper
 from app.helper.openai_helper import OpenAiHelper
 from app.indexer import Indexer
@@ -214,23 +215,19 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
     except ResourceFilterUnavailable as err:
         _process.end(ProgressKey.Search)
         return -1, str(err)
-    # 清空缓存结果
-    _searcher.delete_all_search_torrents()
-    # 结束进度
-    _process.end(ProgressKey.Search)
-    if len(media_list) == 0:
-        log.info("【Web】%s 未搜索到任何资源" % content)
+    media_list.sort(key=lambda x: "%s%s%s" % (str(x.res_order).rjust(3, '0'),
+                                               str(x.site_order).rjust(3, '0'),
+                                               str(x.seeders).rjust(10, '0')), reverse=True)
+    try:
+        _searcher.replace_search_results(media_list, title=content, ident_flag=ident_flag)
+    except SearchResultsUnavailable as err:
+        return -1, str(err)
+    finally:
+        _process.end(ProgressKey.Search)
+    if not media_list:
         return 1, "%s 未搜索到任何资源" % content
-    else:
-        log.info("【Web】共搜索到 %s 个有效资源" % len(media_list))
-        # 插入数据库
-        media_list = sorted(media_list, key=lambda x: "%s%s%s" % (str(x.res_order).rjust(3, '0'),
-                                                                  str(x.site_order).rjust(3, '0'),
-                                                                  str(x.seeders).rjust(10, '0')), reverse=True)
-        _searcher.insert_search_results(media_items=media_list,
-                                        ident_flag=ident_flag,
-                                        title=content)
-        return 0, ""
+    log.info(f"【Web】共搜索到 {len(media_list)} 个有效资源")
+    return 0, ""
 
 
 def search_media_by_message(started, in_from: SearchType, user_id, user_name=None):
@@ -402,7 +399,7 @@ def __search_media(in_from, media_info, user_id, user_name, scope, choice):
         search_result, no_exists, search_count, download_count = Searcher().search_one_media(
             media_info=media_info, in_from=in_from, no_exists=no_exists,
             sites=media_info.search_sites, user_name=user_name)
-    except ResourceFilterUnavailable as err:
+    except (ResourceFilterUnavailable, SearchResultsUnavailable) as err:
         ProgressHelper().end(ProgressKey.Search)
         Message().send_channel_msg(expected_scope=scope, channel=in_from, title=str(err), user_id=user_id)
         return

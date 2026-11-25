@@ -21,10 +21,18 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/httpserver"
 	"github.com/0xforee/nas-tools/backend/internal/notificationtemplate"
 	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
+	"github.com/0xforee/nas-tools/backend/internal/searchresults"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "search-results" {
+		if err := searchresults.Command(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("search results unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "filter-resources" {
 		if err := filterconfig.ServeResources(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("resource filter unavailable")
