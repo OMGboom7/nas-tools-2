@@ -7,6 +7,8 @@ import (
 )
 
 type Settings struct {
+	Enabled, Once, Notify, Clear bool
+	Cron                         string
 	Token                        string
 	Downloaders, Sites, Excluded []string
 	Success, Failed, Permanent   map[string]bool
@@ -25,6 +27,11 @@ func Read(raw string) (Settings, error) {
 	v, err := Values(raw)
 	if err != nil {
 		return s, err
+	}
+	for k, dst := range map[string]any{"enable": &s.Enabled, "cron": &s.Cron, "onlyonce": &s.Once, "notify": &s.Notify, "clearcache": &s.Clear} {
+		if b := v[k]; b != nil && json.Unmarshal(b, dst) != nil {
+			return s, ErrInput
+		}
 	}
 	for k, dst := range map[string]*[]string{"downloaders": &s.Downloaders, "sites": &s.Sites} {
 		var ids []json.Number

@@ -265,7 +265,7 @@ func TestIYUUSettingsAndAdministratorScope(t *testing.T) {
 	path := "/api/v1/plugins/IYUUAutoSeed"
 	get := f.request("GET", path, nil, 200)
 	var detail struct{ Data pluginConfigDetail }
-	if json.Unmarshal(get.Body.Bytes(), &detail) != nil || len(detail.Data.Fields) != 4 || detail.Data.Meta.Fingerprint == "" {
+	if json.Unmarshal(get.Body.Bytes(), &detail) != nil || len(detail.Data.Fields) != 9 || detail.Data.Meta.Fingerprint == "" {
 		t.Fatal(get.Body.String())
 	}
 	in := map[string]any{"fingerprint": detail.Data.Meta.Fingerprint, "values": map[string]any{"nolabels": "private, films", "sites": []string{"10"}}}

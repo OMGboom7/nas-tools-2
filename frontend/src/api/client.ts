@@ -1793,6 +1793,7 @@ export type IyuuReceipt = { id: string; site: string; state: string };
 export type IyuuOverview = {
   fingerprint: string; requestId: string; matchFingerprint: string;
   latest: IyuuReceipt; downloaders: string[];
+  schedule?: { next?: string; once?: string; last?: string };
 };
 export type IyuuCandidate = {
   downloader: string; downloaderId: string; source: string; sourceId: string; sourceProof: string;

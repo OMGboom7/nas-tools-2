@@ -96,7 +96,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		if item.ID == "IYUUAutoSeed" && service.iyuu != nil {
 			item.ActionsAvailable = administrator
 			item.HasPage = administrator
-			item.Description = "绑定 IYUU 合作站点，匹配已完成的种子并选取候选，暂停添加、校验后开始做种。"
+			item.Description = "绑定 IYUU 合作站点，手动或定时匹配已完成的种子，暂停添加、校验后开始做种。"
 		}
 		if service.nativeArchiveRunner(item.ID) {
 			item.ActionsAvailable = administrator

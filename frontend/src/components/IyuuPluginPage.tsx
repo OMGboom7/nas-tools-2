@@ -92,6 +92,12 @@ export function IyuuPluginPage({ token, onClose, onSessionExpired }: {
     <header><h2>IYUU 自动辅种</h2><button type="button" onClick={onClose} aria-label="关闭">×</button></header>
     {error && <p role="alert">{error}</p>}
     {overview ? <>
+      {overview.schedule && (overview.schedule.next || overview.schedule.once || overview.schedule.last) && <section>
+        <h3>自动辅种</h3>
+        {overview.schedule.once && <p>单次运行时间　{new Date(overview.schedule.once).toLocaleString()}</p>}
+        {overview.schedule.next && <p>下次定时运行　{new Date(overview.schedule.next).toLocaleString()}</p>}
+        {overview.schedule.last && <p>上次结果　{overview.schedule.last}</p>}
+      </section>}
       <section><h3>站点绑定</h3>
         {receipt?.id && <p role="status">{receipt.site} · {states[receipt.state] || "结果待核实"}</p>}
         {!partners && !used && <button type="button" disabled={working} onClick={() => void run(loadPartners)}>读取合作站点</button>}

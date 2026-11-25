@@ -16,7 +16,9 @@ import (
 
 const iyuuGeneration = "go.iyuu.generation"
 
-var iyuuKeys = []string{"UserInstalledPlugins", iyuu.ConfigKey, iyuuGeneration}
+const iyuuControlKey = "GoIYUUAutoSeed"
+
+var iyuuKeys = []string{"UserInstalledPlugins", iyuu.ConfigKey, iyuuGeneration, iyuuControlKey}
 
 type iyuuAPI struct {
 	downloads *downloadService
@@ -25,7 +27,7 @@ type iyuuAPI struct {
 }
 
 func (api *iyuuAPI) plugin() feedPluginDefinition {
-	return feedPluginDefinition{id: iyuu.Plugin, name: "IYUU 自动辅种", keys: iyuuKeys, detail: api.detail, summary: func(context.Context, map[string]string) (bool, bool) { return false, true }, changes: api.changes}
+	return feedPluginDefinition{id: iyuu.Plugin, name: "IYUU 自动辅种", control: iyuuControlKey, keys: iyuuKeys, detail: api.detail, summary: api.scheduleSummary, changes: api.changes}
 }
 
 func (api *iyuuAPI) choices(ctx context.Context) ([]pluginConfigChoice, []pluginConfigChoice, error) {
@@ -58,14 +60,24 @@ func (api *iyuuAPI) detail(ctx context.Context, actor string, raw map[string]str
 		return pluginConfigDetail{}, err
 	}
 	fields := []pluginConfigField{
+		{Key: "enable", Title: "启用自动辅种", Type: "switch"},
+		{Key: "cron", Title: "辅种周期", Type: "text", Placeholder: "0 3 * * *"},
+		{Key: "onlyonce", Title: "保存后运行一次", Type: "switch"},
+		{Key: "notify", Title: "发送结果通知", Type: "switch"},
+		{Key: "clearcache", Title: "清除成功与临时失败缓存", Type: "switch"},
 		{Key: "token", Title: "IYUU Token", Type: "password", WriteOnly: true, Configured: c.Token != "", Options: []pluginConfigChoice{}},
 		{Key: "downloaders", Title: "辅种下载器", Type: "multiselect", Options: ds},
 		{Key: "sites", Title: "辅种站点", Type: "multiselect", Options: ss, Tooltip: "留空时使用全部已配置的匹配站点。"},
 		{Key: "nolabels", Title: "排除标签", Type: "text", Placeholder: "多个标签用英文逗号分隔", Options: []pluginConfigChoice{}},
 	}
-	return pluginConfigDetail{ID: iyuu.Plugin, Name: "IYUU 自动辅种", Fields: fields, Values: map[string]any{"downloaders": append([]string{}, c.Downloaders...), "sites": append([]string{}, c.Sites...), "nolabels": strings.Join(c.Excluded, ",")}, Meta: pluginConfigDetailMeta{Fingerprint: sitelogin.Hash([]any{actor, raw}), HasPage: true}}, nil
+	for i := range fields {
+		if fields[i].Options == nil {
+			fields[i].Options = []pluginConfigChoice{}
+		}
+	}
+	return pluginConfigDetail{ID: iyuu.Plugin, Name: "IYUU 自动辅种", Fields: fields, Values: map[string]any{"enable": c.Enabled, "cron": c.Cron, "notify": c.Notify, "clearcache": c.Clear, "onlyonce": c.Once, "downloaders": append([]string{}, c.Downloaders...), "sites": append([]string{}, c.Sites...), "nolabels": strings.Join(c.Excluded, ",")}, Meta: pluginConfigDetailMeta{Fingerprint: sitelogin.Hash([]any{actor, raw}), HasPage: true}}, nil
 }
-func (api *iyuuAPI) changes(ctx context.Context, _ string, raw map[string]string, in map[string]json.RawMessage, clear []string, _ time.Time) (map[string]string, error) {
+func (api *iyuuAPI) changes(ctx context.Context, actor string, raw map[string]string, in map[string]json.RawMessage, clear []string, now time.Time) (map[string]string, error) {
 	v, err := iyuu.Values(raw[iyuu.ConfigKey])
 	if err != nil {
 		return nil, err
@@ -83,7 +95,7 @@ func (api *iyuuAPI) changes(ctx context.Context, _ string, raw map[string]string
 			if json.Unmarshal(b, &token) != nil || !iyuu.ValidToken(token) {
 				return nil, iyuu.ErrInput
 			}
-		case "downloaders", "sites", "nolabels":
+		case "downloaders", "sites", "nolabels", "enable", "cron", "notify", "onlyonce", "clearcache":
 		default:
 			return nil, iyuu.ErrInput
 		}
@@ -115,7 +127,7 @@ func (api *iyuuAPI) changes(ctx context.Context, _ string, raw map[string]string
 			}
 		}
 	}
-	return map[string]string{iyuu.ConfigKey: string(b)}, nil
+	return api.configureSchedule(ctx, actor, raw, v, c, now)
 }
 
 type iyuuScope struct {

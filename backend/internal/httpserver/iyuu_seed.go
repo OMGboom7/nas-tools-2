@@ -28,6 +28,7 @@ type iyuuSeedClient interface {
 }
 type iyuuJob struct {
 	Receipt, Actor, Account, Scope, Directory string
+	Batch                                     string `json:",omitempty"`
 	Match                                     iyuuMatch
 	Meta                                      torrentmeta.TransferMetadata
 	TargetProof                               string
@@ -190,21 +191,34 @@ func (api *iyuuAPI) submitSeed(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, 409, "候选或设置已变化，请重新匹配")
 		return
 	}
+	result, err := api.submitCandidate(ctx, s, sel, m, "")
+	if err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, errIyuuStore) {
+			status = http.StatusServiceUnavailable
+		}
+		writeAPIError(w, status, status, "未确认添加，请核对候选、站点取种、源文件和辅种记录")
+		return
+	}
+	signinJSON(w, result)
+}
+
+var errIyuuStore = errors.New("IYUU seed records unavailable")
+
+func (api *iyuuAPI) submitCandidate(ctx context.Context, s iyuuScope, sel iyuuSelection, m iyuuMatch, batch string) (iyuuSeedView, error) {
+	var empty iyuuSeedView
 	c, err := api.seedScope(ctx, s, m)
 	if err != nil {
-		writeAPIError(w, 409, 409, "所选下载器或站点已变化")
-		return
+		return empty, err
 	}
 	g, err := api.transfer.organizer.jobs.AcquireJob(ctx, torrentLabelGuard(c.d.ID, m.Hash))
 	if err != nil {
-		writeAPIError(w, 409, 409, "下载器正在处理此任务")
-		return
+		return empty, err
 	}
 	defer g.Close()
 	db, err := api.seedDB(ctx)
 	if err != nil {
-		writeAPIError(w, 503, 503, "辅种记录不可用")
-		return
+		return empty, errors.Join(errIyuuStore, err)
 	}
 	defer db.Close()
 	receiver := torrenttransfer.Hash(c.client.Address())
@@ -213,24 +227,19 @@ func (api *iyuuAPI) submitSeed(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var j iyuuJob
 		if json.Unmarshal([]byte(raw), &j) != nil || j.Account != s.account() || j.Scope != c.proof || j.Match.SourceProof != m.SourceProof {
-			writeAPIError(w, 409, 409, "目标种子已有其他提交记录")
-			return
+			return empty, iyuu.ErrInput
 		}
-		signinJSON(w, j.view(state))
-		return
+		if batch != "" && j.Batch != batch && state != "adding" && state != "unknown" {
+			state = "duplicate"
+		}
+		return j.view(state), nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		writeAPIError(w, 503, 503, "读取辅种记录失败")
-		return
+		return empty, errors.Join(errIyuuStore, err)
 	}
-	result, err := api.addSeed(ctx, db, s, c, sel, m, receiver)
-	if err != nil {
-		writeAPIError(w, 409, 409, "未确认添加，请核对候选、站点取种、源文件和辅种记录")
-		return
-	}
-	signinJSON(w, result)
+	return api.addSeed(ctx, db, s, c, sel, m, receiver, batch)
 }
-func (api *iyuuAPI) addSeed(ctx context.Context, db *sql.DB, s iyuuScope, c iyuuSeedScope, sel iyuuSelection, m iyuuMatch, receiver string) (iyuuSeedView, error) {
+func (api *iyuuAPI) addSeed(ctx context.Context, db *sql.DB, s iyuuScope, c iyuuSeedScope, sel iyuuSelection, m iyuuMatch, receiver, batch string) (iyuuSeedView, error) {
 	var empty iyuuSeedView
 	if s.cfg.Success[m.Hash] {
 		return empty, iyuu.ErrInput
@@ -239,20 +248,23 @@ func (api *iyuuAPI) addSeed(ctx context.Context, db *sql.DB, s iyuuScope, c iyuu
 	if err != nil {
 		return empty, err
 	}
-	j := iyuuJob{Receipt: sitelogin.Hash(receipt), Actor: s.actor, Account: s.account(), Scope: c.proof, Match: m}
+	j := iyuuJob{Batch: batch, Receipt: sitelogin.Hash(receipt), Actor: s.actor, Account: s.account(), Scope: c.proof, Match: m}
 	src, err := api.seedSource(ctx, j, c)
 	if err != nil {
 		return empty, err
 	}
 	j.Match.Name, j.Match.Downloader, j.Match.Site = src.Name, c.d.Name, c.site.Name
-	if _, err = c.client.TransferTask(ctx, m.Hash); !errors.Is(err, torrenttransfer.ErrTaskAbsent) {
+	if _, err = c.client.TransferTask(ctx, m.Hash); batch != "" && err == nil {
+		return j.view("duplicate"), nil
+	} else if !errors.Is(err, torrenttransfer.ErrTaskAbsent) {
 		return empty, iyuu.ErrInput
 	}
 	guard := func(ctx context.Context) error {
-		if err := api.current(ctx, s); err != nil {
-			return err
+		live, err := api.scope(ctx, s.actor)
+		if err != nil || live.raw[iyuuControlKey] != s.raw[iyuuControlKey] || live.cfg.Success[m.Hash] || live.cfg.Failed[m.Hash] || live.cfg.Permanent[m.Hash] {
+			return iyuu.ErrInput
 		}
-		fresh, err := api.selection(ctx, s)
+		fresh, err := api.selection(ctx, live)
 		if err != nil || fresh.proof != sel.proof {
 			return iyuu.ErrInput
 		}
@@ -333,7 +345,7 @@ func (api *iyuuAPI) addSeed(ctx context.Context, db *sql.DB, s iyuuScope, c iyuu
 		state = iyuuAddState(save, ledger, receiver, j)
 	}
 	if err := iyuuSaveStage(save, db, j, "adding", state); err != nil {
-		return empty, err
+		return empty, errors.Join(errIyuuStore, err)
 	}
 	return j.view(state), nil
 }

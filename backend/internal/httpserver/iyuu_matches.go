@@ -131,12 +131,13 @@ func (api *iyuuAPI) matches(w http.ResponseWriter, r *http.Request) {
 }
 
 type iyuuMatcher struct {
-	scope     iyuuScope
-	sites     []siteconfig.Site
-	current   func() error
-	signature string
-	targets   map[string]siteconfig.Site
-	providers map[string]iyuu.Site
+	returned, existing int
+	scope              iyuuScope
+	sites              []siteconfig.Site
+	current            func() error
+	signature          string
+	targets            map[string]siteconfig.Site
+	providers          map[string]iyuu.Site
 }
 
 func (m *iyuuMatcher) prepare(ctx context.Context) error {
@@ -245,11 +246,13 @@ func (m *iyuuMatcher) scan(ctx context.Context, d downloaderconfig.Downloader, c
 		for _, source := range chunk {
 			seen := map[[3]string]bool{}
 			for _, v := range found[source] {
+				m.returned++
 				site, ok := m.targets[v.SiteID.String()]
 				if !ok || cfg.Success[v.Hash] || cfg.Failed[v.Hash] || cfg.Permanent[v.Hash] {
 					continue
 				}
 				if _, exists := names[v.Hash]; exists {
+					m.existing++
 					continue
 				}
 				key := [3]string{v.SiteID.String(), v.TorrentID.String(), v.Hash}
@@ -266,6 +269,7 @@ func (m *iyuuMatcher) scan(ctx context.Context, d downloaderconfig.Downloader, c
 					present[v.Hash] = exists
 				}
 				if exists {
+					m.existing++
 					continue
 				}
 				rows = append(rows, iyuuMatch{Downloader: d.Name, DownloaderID: strconv.FormatInt(d.ID, 10), Source: source, Name: names[source].name, SourceID: names[source].wire, SourceProof: names[source].proof, ProviderID: v.SiteID.String(), Site: site.Name, SiteID: strconv.FormatInt(site.ID, 10), TorrentID: v.TorrentID.String(), Hash: v.Hash})

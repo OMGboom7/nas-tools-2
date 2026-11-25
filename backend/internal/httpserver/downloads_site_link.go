@@ -21,6 +21,10 @@ import (
 
 var errSiteLinkNotAllowed = errors.New("torrent URL is not on the selected site")
 
+type siteTorrentHTTPStatus int
+
+func (s siteTorrentHTTPStatus) Error() string { return "site returned a non-success status" }
+
 func (service downloadService) addSiteLink(response http.ResponseWriter, request *http.Request) {
 	if request.Header.Get("Authorization") == "" {
 		writeAPIError(response, http.StatusUnauthorized, 401, "missing authorization token")
@@ -196,7 +200,7 @@ func (service downloadService) fetchSiteTorrentBound(ctx context.Context, site s
 		}
 	}
 	if result.StatusCode != http.StatusOK {
-		return nil, errors.New("site returned a non-success status")
+		return nil, siteTorrentHTTPStatus(result.StatusCode)
 	}
 	contents, err := io.ReadAll(io.LimitReader(result.Body, (8<<20)+1))
 	if err != nil || len(contents) == 0 || len(contents) > 8<<20 {

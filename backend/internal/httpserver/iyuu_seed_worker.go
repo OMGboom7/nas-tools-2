@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -32,7 +33,23 @@ func startIyuuSeeds(ctx context.Context, api *iyuuAPI) func() {
 			}
 		}
 	}()
-	return func() { <-done }
+	scheduled := make(chan struct{})
+	go func() {
+		defer close(scheduled)
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				if err := api.scheduleTick(ctx, now); err != nil && ctx.Err() == nil {
+					slog.Warn("IYUU 自动辅种状态更新失败")
+				}
+			}
+		}
+	}()
+	return func() { <-done; <-scheduled }
 }
 func (api *iyuuAPI) seedTick(ctx context.Context) {
 	db, err := api.seedDB(ctx)

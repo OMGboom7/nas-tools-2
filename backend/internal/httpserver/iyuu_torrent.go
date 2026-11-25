@@ -3,6 +3,8 @@ package httpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -12,6 +14,26 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/iyuu"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
+
+var errIyuuMissingLink = errors.New("no torrent link in site details")
+
+// Only cache a failure tied to this target. A lost downloader response belongs
+// in its receipt, and a local layout mismatch may depend on the source task.
+func iyuuCacheKey(err error) string {
+	var status siteTorrentHTTPStatus
+	if errors.As(err, &status) {
+		switch int(status) {
+		case http.StatusGone:
+			return "permanent_error_caches"
+		case http.StatusNotFound:
+			return "error_caches"
+		}
+	}
+	if errors.Is(err, errIyuuMissingLink) {
+		return "error_caches"
+	}
+	return ""
+}
 
 // The selected local account supplies the origin. A provider template or
 // detail page may supply a path, but cannot select the recipient of credentials.
@@ -102,7 +124,7 @@ func iyuuExtract(ctx context.Context, body []byte, origin string) (string, error
 			}
 		}
 	}
-	return "", iyuu.ErrResponse
+	return "", errIyuuMissingLink
 }
 func (api *iyuuAPI) seedContent(ctx context.Context, site siteconfig.Site, provider iyuu.Site, id string, guard func(context.Context) error) ([]byte, error) {
 	address := site.SignURL

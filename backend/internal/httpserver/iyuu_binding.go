@@ -85,7 +85,19 @@ func (api *iyuuAPI) overview(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, 409, 409, "读取下载器或站点设置失败，请核对配置")
 		return
 	}
-	signinJSON(w, map[string]any{"fingerprint": s.proof, "requestId": id, "latest": latest, "matchFingerprint": selection.proof, "downloaders": selection.names})
+	st, err := readIyuuSchedule(s.raw[iyuuControlKey])
+	if err != nil {
+		writeAPIError(w, 503, 503, "读取自动辅种记录失败")
+		return
+	}
+	schedule := map[string]string{"last": st.Last}
+	if !st.Next.IsZero() {
+		schedule["next"] = st.Next.Format(time.RFC3339)
+	}
+	if !st.Once.IsZero() {
+		schedule["once"] = st.Once.Format(time.RFC3339)
+	}
+	signinJSON(w, map[string]any{"schedule": schedule, "fingerprint": s.proof, "requestId": id, "latest": latest, "matchFingerprint": selection.proof, "downloaders": selection.names})
 }
 
 func (api *iyuuAPI) partners(w http.ResponseWriter, r *http.Request) {
