@@ -1765,3 +1765,19 @@ export async function reviewTorrentTransfers(token: string, signal: AbortSignal)
   }
   return review;
 }
+
+export async function submitPausedTransfer(token: string, id: string, signal: AbortSignal): Promise<{receipt: string; state: string}> {
+  if (!/^[a-f0-9]{64}$/.test(id)) throw new ApiError("无效的转种回执编号", 400);
+  const response = await fetch("/api/v1/torrent-transfer/records/" + id + "/submit", {
+    method: "POST", headers: { Authorization: token, "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmPaused: true }), signal,
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new ApiError(body?.message || "请查看原转种回执", response.status);
+  const record = body?.result;
+  if (body?.code !== 0 || typeof record?.receipt !== "string" || !/^[a-f0-9]{64}$/.test(record.receipt) ||
+      !["pending", "unknown", "acknowledged", "duplicate"].includes(record.state)) {
+    throw new ApiError("添加结果待核实，请查看原转种回执", 502);
+  }
+  return record;
+}

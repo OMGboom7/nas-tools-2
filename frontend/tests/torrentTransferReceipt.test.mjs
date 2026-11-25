@@ -7,7 +7,7 @@ const client = readFileSync(new URL("../src/api/client.ts", import.meta.url), "u
 const { outputText } = ts.transpileModule(client, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 });
-const { getTorrentTransferReceipt } = await import("data:text/javascript;base64," + Buffer.from(outputText).toString("base64"));
+const { getTorrentTransferReceipt, submitPausedTransfer } = await import("data:text/javascript;base64," + Buffer.from(outputText).toString("base64"));
 const id = "a".repeat(64);
 
 test("receipt lookup reads the exact transfer and preserves an unknown start", async t => {
@@ -24,4 +24,16 @@ test("receipt lookup reads the exact transfer and preserves an unknown start", a
   assert.equal(fetch.mock.callCount(), 1);
   record.receipt = "b".repeat(64);
   await assert.rejects(getTorrentTransferReceipt("test-token", id), { code: 502 });
+});
+
+test("paused submission returns the original receipt for a previous attempt", async t => {
+  const prior = {receipt: "b".repeat(64), state: "unknown"};
+  const fetch = t.mock.method(globalThis, "fetch", async (url, init) => {
+    assert.equal(url, "/api/v1/torrent-transfer/records/" + id + "/submit");
+    assert.equal(init.method, "POST");
+    assert.deepEqual(JSON.parse(init.body), {confirmPaused: true});
+    return Response.json({code: 0, result: prior});
+  });
+  assert.deepEqual(await submitPausedTransfer("fixture", id, new AbortController().signal), prior);
+  assert.equal(fetch.mock.callCount(), 1);
 });

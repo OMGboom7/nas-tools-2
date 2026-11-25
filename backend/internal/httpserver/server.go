@@ -611,6 +611,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	removalAPI := &torrentRemovalAPI{login: nativeSiteLogin, store: nativeTorrentRemovals, organizer: &organizer}
 	rssRunner.torrentRemover = removalAPI
 	transferAPI := torrentTransferAPI{organizer: &organizer, system: nativeSystemConfig, downloaders: nativeDownloaders, database: nativeUserDatabasePath, login: nativeSiteLogin}
+	mux.HandleFunc("POST /api/v1/torrent-transfer/records/{id}/submit", transferAPI.submit)
 	mux.HandleFunc("POST /api/v1/torrent-transfer/review", transferAPI.review)
 	mux.HandleFunc("GET /api/v1/torrent-transfer/records/{id}", transferAPI.record)
 	mux.HandleFunc("GET /api/v1/torrent-remover", removalAPI.serve)
