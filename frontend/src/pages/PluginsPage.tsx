@@ -122,7 +122,7 @@ export function PluginsPage({ session, currentPath, onNavigate, onLogout, onSess
       {data?.items.some(p=>p.id==="MovieLike"&&p.native&&p.actionsAvailable)&&<MovieLikeManager token={session.token} onSessionExpired={onSessionExpired}/>}
       {data?.items.some(p=>p.id==="MediaSyncDel"&&p.native&&p.actionsAvailable)&&<MediaSyncDeleteManager token={session.token} onSessionExpired={onSessionExpired}/>}
 	  {data?.items.some(p=>p.id==="AutoSignIn"&&p.native&&p.installed)&&<SiteSigninManager key={session.token} session={session} onSessionExpired={onSessionExpired}/>}
-      {viewing && <PluginPageViewer session={session} plugin={viewing} onClose={() => setViewing(undefined)} onSessionExpired={onSessionExpired} />}
+      {viewing && <PluginPageViewer key={viewing.id} session={session} plugin={viewing} onClose={() => setViewing(undefined)} onSessionExpired={onSessionExpired} />}
       {editing && <PluginConfigEditor session={session} plugin={editing} onClose={() => setEditing(undefined)} onSaved={() => void configured(editing)} onSessionExpired={onSessionExpired} />}
       {removing && <UninstallDialog plugin={removing} value={confirmation} busy={Boolean(busy[removing.id])} onChange={setConfirmation} onClose={() => setRemoving(undefined)} onConfirm={() => void confirmUninstall()} />}
     </div>
@@ -135,9 +135,9 @@ function PluginCard({ plugin, busy, onView, onConfigure, onInstall, onUninstall 
   return <article className={`plugin-card ${plugin.running ? "is-running" : ""}`}>
     <header><span className="plugin-card__mark">{plugin.name.slice(0, 1).toUpperCase()}</span><div><small>{plugin.version ? `VERSION ${plugin.version}` : "PLUGIN"}</small><h2 title={plugin.name}>{plugin.name}</h2></div><span className={`service-state ${plugin.running ? "is-enabled" : ""}`}>{status}</span></header>
     <p className="plugin-description">{plugin.description || "暂无插件简介。"}</p>
-    <div className="plugin-meta"><span>{plugin.configurable ? "可配置" : "无需配置"}</span>{plugin.hasPage && <span>含只读扩展页</span>}{plugin.actionsAvailable === false && <span>功能尚未迁移</span>}</div>
+    <div className="plugin-meta"><span>{plugin.configurable ? "可配置" : "无需配置"}</span>{plugin.hasPage && <span>{plugin.nativeHistoryPage ? "含订阅历史" : "含只读扩展页"}</span>}{plugin.actionsAvailable === false && <span>{plugin.nativeHistoryPage ? "任务执行待迁移" : "功能尚未迁移"}</span>}</div>
     <footer><div className="plugin-author"><small>作者</small>{plugin.authorUrl ? <a href={plugin.authorUrl} target="_blank" rel="noreferrer">{plugin.author || "查看主页"}</a> : <strong>{plugin.author || "未知"}</strong>}</div>
-      <div className="plugin-card__actions">{plugin.installed && plugin.hasPage && <button className="plugin-action" type="button" disabled={unavailable} onClick={onView}>查看</button>}{plugin.installed && plugin.configurable && <button className="plugin-action" type="button" disabled={unavailable} onClick={onConfigure}>配置</button>}{plugin.installed ? <button className="plugin-action is-danger" type="button" disabled={unavailable} onClick={onUninstall}>{busy ? "处理中…" : "卸载"}</button> : <button className="plugin-action" type="button" disabled={unavailable} onClick={onInstall}>{busy ? "安装中…" : "安装"}</button>}</div></footer>
+      <div className="plugin-card__actions">{plugin.installed && plugin.hasPage && <button className="plugin-action" type="button" disabled={busy || (unavailable && !plugin.nativeHistoryPage)} onClick={onView}>查看</button>}{plugin.installed && plugin.configurable && <button className="plugin-action" type="button" disabled={unavailable} onClick={onConfigure}>配置</button>}{plugin.installed ? <button className="plugin-action is-danger" type="button" disabled={unavailable} onClick={onUninstall}>{busy ? "处理中…" : "卸载"}</button> : <button className="plugin-action" type="button" disabled={unavailable} onClick={onInstall}>{busy ? "安装中…" : "安装"}</button>}</div></footer>
   </article>;
 }
 

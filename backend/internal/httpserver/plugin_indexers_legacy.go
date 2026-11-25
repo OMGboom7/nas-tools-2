@@ -35,7 +35,7 @@ func indexerLegacyFields(detail pluginConfigDetail) []any {
 	return []any{map[string]any{"type": "div", "content": rows}}
 }
 
-func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler {
+func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128<<10))
 		if err != nil {
@@ -49,6 +49,21 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler) http.Handler
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeSubscriptionHistory(id) {
+			if !action {
+				s.subscriptionHistoryPage(w, probe, id, true)
+			} else if probe.PostForm.Get("action") == "delete" {
+				s.removeSubscriptionHistory(w, probe, id, probe.PostForm.Get("record_id"))
+			} else {
+				writeAPIError(w, 400, 400, "不支持的插件扩展页操作")
+			}
+			return
+		}
+		if action {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			fallback.ServeHTTP(w, r)
+			return
+		}
 		if s.nativeTorrentRemover(id) {
 			s.serveTorrentRemoverPlugin(w, probe, "page")
 			return

@@ -17,17 +17,20 @@ export function PluginPageViewer({ session, plugin, onClose, onSessionExpired }:
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
 
+  const [cursors, setCursors] = useState<string[]>([""]);
+  const cursor = cursors[cursors.length - 1];
+
   async function load() {
     setState({ kind: "loading" });
     try {
-      setState({ kind: "ready", data: await getPluginPage(session.token, plugin.id) });
+      setState({ kind: "ready", data: await getPluginPage(session.token, plugin.id, cursor) });
     } catch (error) {
       if (error instanceof ApiError && error.code === 401) return onSessionExpired();
       setState({ kind: "error", message: error instanceof Error ? error.message : "插件扩展页加载失败" });
     }
   }
 
-  useEffect(() => { void load(); }, [plugin.id, session.token]);
+  useEffect(() => { void load(); }, [plugin.id, session.token, cursor]);
 
   async function confirmDelete() {
     if (!pendingDelete) return;
@@ -60,12 +63,16 @@ export function PluginPageViewer({ session, plugin, onClose, onSessionExpired }:
     {state.kind === "ready" && <>
       <div className="plugin-page-badges"><span>结构化内容</span><span>{hasSafeActions ? "专用安全操作" : "只读视图"}</span></div>
       {state.data.actionsOmitted && <div className="data-warning plugin-page-warning">{hasSafeActions ? (deletesArchiveFile ? "旧扩展页脚本不会载入；归档文件只能通过文件名白名单和完整名称确认后删除。" : "旧扩展页脚本不会载入；本页只提供经过白名单校验的历史删除操作。") : "旧扩展页包含操作按钮或脚本，本页仅展示数据；未迁移操作不会开放。"}</div>}
-      {pendingDelete && <div className="plugin-page-confirm" role="alertdialog" aria-label={pendingDelete.confirmation === "typeRecordId" ? "确认删除归档文件" : "确认删除历史记录"}><div><strong>确认删除“{pendingDelete.label}”？</strong>{pendingDelete.confirmation === "typeRecordId" ? <><p>这会从磁盘永久删除该归档记录文件，但不会删除媒体库中的影片。请输入完整文件名确认：</p><input aria-label="输入完整归档文件名" value={confirmationText} onChange={(event) => setConfirmationText(event.target.value)} placeholder={pendingDelete.recordId} autoComplete="off" /></> : <p>这里只会删除插件历史记录，不会删除媒体文件或下载任务。</p>}</div><div><button className="secondary-button" type="button" disabled={deleting} onClick={() => { setPendingDelete(undefined); setConfirmationText(""); }}>取消</button><button className="danger-button" type="button" disabled={deleting || (pendingDelete.confirmation === "typeRecordId" && confirmationText !== pendingDelete.recordId)} onClick={() => void confirmDelete()}>{deleting ? "删除中…" : "确认删除"}</button></div></div>}
+      {pendingDelete && <div className="plugin-page-confirm" role="alertdialog" aria-label={pendingDelete.confirmation === "typeRecordId" ? "确认删除归档文件" : "确认删除历史记录"}><div><strong>确认删除“{pendingDelete.label}”？</strong>{pendingDelete.confirmation === "typeRecordId" ? <><p>这会从磁盘永久删除该归档记录文件，但不会删除媒体库中的影片。请输入完整文件名确认：</p><input aria-label="输入完整归档文件名" value={confirmationText} onChange={(event) => setConfirmationText(event.target.value)} placeholder={pendingDelete.recordId} autoComplete="off" /></> : <p>{plugin.nativeHistoryPage ? "确认后将删除本插件中该媒体编号的历史记录。后续运行时，插件可能再次处理这部媒体。" : "这里只会删除插件历史记录，不会删除媒体文件或下载任务。"}</p>}</div><div><button className="secondary-button" type="button" disabled={deleting} onClick={() => { setPendingDelete(undefined); setConfirmationText(""); }}>取消</button><button className="danger-button" type="button" disabled={deleting || (pendingDelete.confirmation === "typeRecordId" && confirmationText !== pendingDelete.recordId)} onClick={() => void confirmDelete()}>{deleting ? "删除中…" : "确认删除"}</button></div></div>}
       {state.data.sections.length > 0 && <section className="plugin-page-sections" aria-label="扩展页说明">{state.data.sections.map((section, index) => <p key={`${index}-${section}`}>{section}</p>)}</section>}
       {state.data.tables.map((table, tableIndex) => {
         const tableHasActions = table.rowActions.some(Boolean);
         return <section className="plugin-page-table" key={tableIndex} aria-label={`数据表 ${tableIndex + 1}`}><div><table><thead><tr>{table.columns.map((column, index) => <th key={`${index}-${column}`}>{column}</th>)}{tableHasActions && <th>操作</th>}</tr></thead><tbody>{table.rows.length > 0 ? table.rows.map((row, rowIndex) => { const action = table.rowActions[rowIndex]; return <tr key={rowIndex}>{table.columns.map((_, cellIndex) => <td key={cellIndex}>{row[cellIndex] || "—"}</td>)}{tableHasActions && <td className="plugin-page-row-action">{action?.type === "delete" && <button type="button" disabled={deleting} onClick={() => { setNotice(""); setConfirmationText(""); setPendingDelete({ recordId: action.recordId, label: row.find(Boolean) || action.recordId, confirmation: action.confirmation }); }}>删除</button>}</td>}</tr>; }) : <tr><td colSpan={table.columns.length + (tableHasActions ? 1 : 0)}>暂无数据</td></tr>}</tbody></table></div><small>{table.rows.length} 条记录</small></section>;
       })}
+      {(cursors.length > 1 || state.data.nextCursor) && <nav aria-label="历史分页">
+        <button type="button" className="secondary-button" disabled={cursors.length === 1 || deleting || !!pendingDelete} onClick={() => setCursors(cursors.slice(0, -1))}>上一页</button>
+        <button type="button" className="secondary-button" disabled={!state.data.nextCursor || deleting || !!pendingDelete} onClick={() => { if (state.data.nextCursor) setCursors([...cursors, state.data.nextCursor]); }}>下一页</button>
+      </nav>}
       {state.data.sections.length === 0 && state.data.tables.length === 0 && <div className="inline-empty">这个扩展页目前没有可展示的数据。</div>}
     </>}
     <footer><button className="secondary-button" type="button" disabled={deleting} onClick={onClose}>关闭</button></footer>

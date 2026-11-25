@@ -800,6 +800,7 @@ export type PluginSummary = {
   running: boolean;
   configurable: boolean;
 	 hasPage: boolean;
+  nativeHistoryPage?: boolean;
   stateKnown?: boolean;
   native?: boolean;
   actionsAvailable?: boolean;
@@ -854,6 +855,7 @@ export type PluginPageTable = {
 };
 
 export type PluginPageData = {
+  nextCursor?: string;
   title: string;
   sections: string[];
   tables: PluginPageTable[];
@@ -1539,8 +1541,9 @@ export async function savePluginConfig(token: string, id: string, input: PluginC
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "插件配置保存失败", result.code);
 }
 
-export async function getPluginPage(token: string, id: string): Promise<PluginPageData> {
-  const response = await fetch(`/api/v1/plugins/${encodeURIComponent(id)}/page`, { headers: { Authorization: token } });
+export async function getPluginPage(token: string, id: string, after?: string): Promise<PluginPageData> {
+  const query = after ? `?after=${encodeURIComponent(after)}` : "";
+  const response = await fetch(`/api/v1/plugins/${encodeURIComponent(id)}/page${query}`, { headers: { Authorization: token } });
   const result = await readResponse<PluginPageData>(response);
   if (!result.success || result.code !== 0 || !result.data) throw new ApiError(result.message || "插件扩展页加载失败", result.code);
   return result.data;

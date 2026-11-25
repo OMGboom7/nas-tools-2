@@ -39,19 +39,20 @@ type pluginService struct {
 }
 
 type pluginSummary struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	Version          string `json:"version"`
-	Author           string `json:"author"`
-	AuthorURL        string `json:"authorUrl"`
-	Installed        bool   `json:"installed"`
-	Running          bool   `json:"running"`
-	Configurable     bool   `json:"configurable"`
-	HasPage          bool   `json:"hasPage"`
-	StateKnown       bool   `json:"stateKnown"`
-	Native           bool   `json:"native"`
-	ActionsAvailable bool   `json:"actionsAvailable"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	Version           string `json:"version"`
+	Author            string `json:"author"`
+	AuthorURL         string `json:"authorUrl"`
+	Installed         bool   `json:"installed"`
+	Running           bool   `json:"running"`
+	Configurable      bool   `json:"configurable"`
+	NativeHistoryPage bool   `json:"nativeHistoryPage,omitempty"`
+	HasPage           bool   `json:"hasPage"`
+	StateKnown        bool   `json:"stateKnown"`
+	Native            bool   `json:"native"`
+	ActionsAvailable  bool   `json:"actionsAvailable"`
 }
 
 type pluginsData struct {

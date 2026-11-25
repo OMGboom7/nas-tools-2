@@ -31,6 +31,7 @@ type pluginPageTable struct {
 }
 
 type pluginPageData struct {
+	NextCursor         string            `json:"nextCursor,omitempty"`
 	Title              string            `json:"title"`
 	Sections           []string          `json:"sections"`
 	Tables             []pluginPageTable `json:"tables"`
@@ -46,6 +47,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if id := strings.TrimSpace(request.PathValue("id")); service.nativeSubscriptionHistory(id) {
+		service.subscriptionHistoryPage(response, request, id, false)
+		return
+	}
 	if service.nativeTorrentRemover(request.PathValue("id")) {
 		service.serveTorrentRemoverPlugin(response, request, "page")
 		return
@@ -234,6 +239,10 @@ func (service pluginService) deletePageRecord(response http.ResponseWriter, requ
 	}
 	if confirmationMode == "typeRecordId" && input.Confirmation != input.RecordID {
 		writeAPIError(response, http.StatusBadRequest, 400, "plugin page confirmation does not match")
+		return
+	}
+	if service.nativeSubscriptionHistory(id) {
+		service.removeSubscriptionHistory(response, request, id, input.RecordID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
