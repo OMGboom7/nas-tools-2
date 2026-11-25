@@ -165,7 +165,17 @@ func (l *Ledger) ContinuePlan(ctx context.Context, receipt string, resolve Resol
 	intent := run.intent
 	frozen, _, err := intent.target(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := intent.BindTarget(ctx, run.receiver, run.source.Source.Prepared, confirmOwnership); err != nil {
+		settings, _, _, grant, err := resolve(ctx)
+		if err != nil {
+			return "", err
+		}
+		if grant != run.grantDigest || Hash(settings) != run.source.SettingsDigest {
+			return "", ErrState
+		}
+		history := func(tx *sql.Tx) error {
+			return recordHistory(ctx, tx, receipt, settings, run.source.Task.WireID, intent.WireID)
+		}
+		if err := intent.bindTarget(ctx, run.receiver, run.source.Source.Prepared, confirmOwnership, history); err != nil {
 			return "", err
 		}
 		return "bound", nil

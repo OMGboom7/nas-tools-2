@@ -21,6 +21,10 @@ type TargetClient interface {
 // BindTarget requires the caller to establish ownership of this incarnation.
 // A qB acknowledgment alone cannot distinguish a new task from a duplicate.
 func (i AddIntent) BindTarget(ctx context.Context, c TargetClient, m torrentmeta.TransferMetadata, confirmOwnership func(context.Context, AddReceipt, Task) error) error {
+	return i.bindTarget(ctx, c, m, confirmOwnership, nil)
+}
+
+func (i AddIntent) bindTarget(ctx context.Context, c TargetClient, m torrentmeta.TransferMetadata, confirmOwnership func(context.Context, AddReceipt, Task) error, history func(*sql.Tx) error) error {
 	if err := i.checkTarget(ctx, c, m); err != nil {
 		return err
 	}
@@ -47,18 +51,28 @@ func (i AddIntent) BindTarget(ctx context.Context, c TargetClient, m torrentmeta
 	if err := confirmOwnership(ctx, reply, task); err != nil {
 		return err
 	}
-	_, err = i.Ledger.db.ExecContext(ctx, `INSERT INTO GO_TORRENT_TRANSFER_TARGETS(receiver,wire_id,receipt,task,stage) VALUES(?,?,?,?,'bound') ON CONFLICT(receiver,wire_id) DO NOTHING`, i.Receiver, i.WireID, i.Receipt, string(raw))
+	tx, err := i.Ledger.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	frozen, _, err := i.target(ctx)
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO GO_TORRENT_TRANSFER_TARGETS(receiver,wire_id,receipt,task,stage) VALUES(?,?,?,?,'bound') ON CONFLICT(receiver,wire_id) DO NOTHING`, i.Receiver, i.WireID, i.Receipt, string(raw))
+	if err != nil {
+		return err
+	}
+	frozen, _, err := i.readTarget(ctx, tx)
 	if err != nil {
 		return err
 	}
 	if !frozen.SameInstance(task) {
 		return ErrState
 	}
-	return nil
+	if history != nil {
+		if err := history(tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (i AddIntent) checkTarget(ctx context.Context, c TargetClient, m torrentmeta.TransferMetadata) error {
@@ -79,8 +93,12 @@ func (i AddIntent) checkTarget(ctx context.Context, c TargetClient, m torrentmet
 }
 
 func (i AddIntent) target(ctx context.Context) (Task, string, error) {
+	return i.readTarget(ctx, i.Ledger.db)
+}
+
+func (i AddIntent) readTarget(ctx context.Context, q actionReader) (Task, string, error) {
 	var raw, stage string
-	err := i.Ledger.db.QueryRowContext(ctx, `SELECT task,stage FROM GO_TORRENT_TRANSFER_TARGETS WHERE receiver=? AND wire_id=? AND receipt=?`, i.Receiver, i.WireID, i.Receipt).Scan(&raw, &stage)
+	err := q.QueryRowContext(ctx, `SELECT task,stage FROM GO_TORRENT_TRANSFER_TARGETS WHERE receiver=? AND wire_id=? AND receipt=?`, i.Receiver, i.WireID, i.Receipt).Scan(&raw, &stage)
 	if err != nil {
 		return Task{}, "", err
 	}

@@ -84,8 +84,31 @@ func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
 		}
 		return nil
 	}
+	if _, err := db.Exec(`CREATE TABLE PLUGIN_HISTORY(ID INTEGER PRIMARY KEY,PLUGIN_ID TEXT,KEY TEXT,VALUE TEXT,DATE TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	key := settings.From[0] + "-" + id
+	if _, err := db.Exec(`INSERT INTO PLUGIN_HISTORY(PLUGIN_ID,KEY,VALUE) VALUES(?,?,?)`, Plugin, key, "original"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ledger.ContinuePlan(ctx, receipt, resolve, confirm, nil); !errors.Is(err, ErrState) {
+		t.Fatal("existing history overwritten", err)
+	}
+	var original string
+	if err := db.QueryRow(`SELECT VALUE FROM PLUGIN_HISTORY WHERE KEY=?`, key).Scan(&original); err != nil || original != "original" {
+		t.Fatal(original, err)
+	}
+	if _, err := db.Exec("DELETE FROM PLUGIN_HISTORY WHERE KEY=?", key); err != nil {
+		t.Fatal(err)
+	}
 	if stage, err := ledger.ContinuePlan(ctx, receipt, resolve, confirm, nil); err != nil || stage != "bound" {
 		t.Fatal(stage, err)
+	}
+	var to int64
+	var task string
+	var deleted bool
+	if err := db.QueryRow(`SELECT json_extract(VALUE,'$.to_download'),json_extract(VALUE,'$.to_download_id'),json_extract(VALUE,'$.delete_source') FROM PLUGIN_HISTORY WHERE PLUGIN_ID=? AND KEY=?`, Plugin, key).Scan(&to, &task, &deleted); err != nil || to != 2 || task != id || deleted {
+		t.Fatal(to, task, deleted, err)
 	}
 	if _, err := ledger.ContinuePlan(ctx, receipt, resolve, nil, nil); err != nil || dst.checks != 1 || dst.sent != 1 {
 		t.Fatal(err, dst.checks, dst.sent)
