@@ -751,6 +751,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("GET /api/v1/notifications/events", businessMessages.list)
 	mux.HandleFunc("POST /api/v1/notifications/events/{id}/dismiss", businessMessages.dismiss)
 	if nativeNotifications != nil {
+		mux.HandleFunc("GET /api/v1/notifications/center", notifications.center)
 		mux.HandleFunc("POST /api/v1/message/client/info", notifications.serveLegacyInfo)
 		mux.HandleFunc("POST /api/v1/message/client/options", notifications.serveLegacyOptions)
 		mux.HandleFunc("POST /api/v1/message/client/update", notifications.serveLegacyUpdate)

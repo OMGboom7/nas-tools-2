@@ -4,7 +4,6 @@ from threading import Event, Lock, Thread
 
 import log
 from app.helper import DbHelper
-from app.message import MessageCenter
 from jinja2.sandbox import SandboxedEnvironment
 from app.sites.sites import Sites
 from app.utils import StringUtils
@@ -32,9 +31,7 @@ def _serve_refresh(worker, selected=None):
     try:
         for line in worker.stdout:
             item = json.loads(line)
-            if item["kind"] == "center":
-                MessageCenter().insert_system_message(item["title"], item["text"])
-            elif item["kind"] == "render":
+            if item["kind"] == "render":
                 try:
                     template = SandboxedEnvironment().from_string(item["template"])
                     body = template.render(title=item["title"], text=item["text"], image="", url="", user_id="")
@@ -56,7 +53,7 @@ def _serve_refresh(worker, selected=None):
 
 
 class StatisticsScheduler:
-    """Connect the Go scheduler to the running client's message center and notification templates."""
+    """Connect the Go scheduler to the running client's notification templates."""
 
     def __init__(self):
         self._stopped = Event()

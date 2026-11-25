@@ -18,6 +18,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "message-center" {
+		if err := httpserver.MessageCenterCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("system message center unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "site-admission" {
 		if err := httpserver.SiteAdmissionCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdout); err != nil {
 			slog.Error("site admission unavailable")

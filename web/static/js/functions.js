@@ -298,19 +298,17 @@ function render_message(ret) {
     }
   }
   // 下一次处理
-  if (lst_time) {
-    setTimeout(`get_message('${lst_time}')`, 3000);
-  } else if (msgs) {
-    setTimeout(`get_message('')`, 3000);
+  if (msgs) {
+    setTimeout(() => get_message(lst_time || '', ret.cursor || ''), 3000);
   }
 }
 
 //发送拉取消息的请求
-function get_message(lst_time) {
+function get_message(lst_time, cursor) {
   if (!MessageWS) {
     return;
   }
-  MessageWS.send(JSON.stringify({"lst_time": lst_time}));
+  MessageWS.send(JSON.stringify({"lst_time": lst_time, "cursor": cursor}));
 }
 
 //注销

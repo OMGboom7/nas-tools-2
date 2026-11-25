@@ -136,6 +136,14 @@ func emitBusiness(ctx context.Context, tx *sql.Tx, kind, key, reference, title, 
 		}
 		return nil
 	}
+	// Interactive replies use their own recipient-scoped path. These events
+	// correspond to the shared system notices shown by the original client.
+	switch kind {
+	case "site_message", "ptrefresh_date_message", "site_signin", "rss_added", "rss_finished", "transfer_finished", "download_start", "download_fail", "mediaserver_message", "plugin_message":
+		if err := notificationconfig.AppendSystemMessage(ctx, tx, title, body, time.Now()); err != nil {
+			return err
+		}
+	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='MESSAGE_CLIENT' AND type='table')`).Scan(&exists); err != nil {
 		return err

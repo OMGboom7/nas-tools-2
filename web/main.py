@@ -1,3 +1,4 @@
+from html import escape as escape_message_html
 import base64
 import datetime
 import hashlib
@@ -1876,22 +1877,22 @@ def message_handler(ws):
             ws.send((json.dumps({})))
         else:
             # 拉取消息
-            system_msg = WebAction().get_system_message(lst_time=msgbody.get("lst_time"))
+            system_msg = WebAction().get_system_message(lst_time=msgbody.get("lst_time"), cursor=msgbody.get("cursor"))
             messages = system_msg.get("message")
             lst_time = system_msg.get("lst_time")
             ret_messages = []
             for message in list(reversed(messages)):
-                content = re.sub(r"#+", "<br>",
-                                 re.sub(r"<[^>]+>", "",
-                                        re.sub(r"<br/?>", "####", message.get("content"), flags=re.IGNORECASE)))
+                content = re.sub(r"<br/?>", "\n", message["content"], flags=re.IGNORECASE)
+                content = escape_message_html(re.sub(r"<[^>]+>", "", content)).replace("\n", "<br>")
                 ret_messages.append({
                     "level": "bg-red" if message.get("level") == "ERROR" else "",
-                    "title": message.get("title"),
+                    "title": escape_message_html(message["title"]).replace("\n", "<br>"),
                     "content": content,
                     "time": message.get("time")
                 })
             ws.send((json.dumps({
                 "lst_time": lst_time,
+                "cursor": system_msg["cursor"],
                 "message": ret_messages
             })))
 

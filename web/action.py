@@ -1719,14 +1719,16 @@ class WebAction:
         return {"code": 0, "page": page}
 
     @staticmethod
-    def get_system_message(lst_time):
-        messages = MessageCenter().get_system_messages(lst_time=lst_time)
+    def get_system_message(lst_time, cursor=None):
+        messages = MessageCenter().get_system_messages(lst_time=lst_time, cursor=cursor)
         if messages:
             lst_time = messages[0].get("time")
+            cursor = messages[0]["id"]
         return {
             "code": 0,
             "message": messages,
-            "lst_time": lst_time
+            "lst_time": lst_time,
+            "cursor": cursor
         }
 
     @staticmethod

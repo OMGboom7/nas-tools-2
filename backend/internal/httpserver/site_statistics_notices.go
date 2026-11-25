@@ -17,8 +17,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
-// StatisticsRunCommand uses a local pipe for the legacy message center and
-// operator-configured Jinja templates. Go owns recipients, transport and receipts.
+// StatisticsRunCommand uses a local pipe for operator-configured Jinja templates. Go owns recipients, transport and receipts.
 func StatisticsRunCommand(ctx context.Context, path, mode string, in io.Reader, out io.Writer) error {
 	if mode != "refresh" && mode != "summary" {
 		return sitestats.ErrState
@@ -81,9 +80,6 @@ func runStatistics(ctx context.Context, path, mode string, readLine func() ([]by
 		return err
 	}
 	defer db.Close()
-	if err := writeStatsCenter(ctx, db, reference, encoder); err != nil {
-		return err
-	}
 	render := func(template, title, message string) ([]byte, error) {
 		if err := encoder.Encode(map[string]string{"kind": "render", "template": template, "title": title, "text": message}); err != nil {
 			return nil, io.ErrClosedPipe
@@ -125,26 +121,4 @@ func runStatistics(ctx context.Context, path, mode string, readLine func() ([]by
 		}
 	}
 	return encoder.Encode(map[string]any{"kind": "done", "failed": failed})
-}
-
-func writeStatsCenter(ctx context.Context, db *sql.DB, reference string, out *json.Encoder) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='GO_BUSINESS_EVENTS' AND type='table')").Scan(&exists); err != nil || !exists {
-		return err
-	}
-	rows, err := db.QueryContext(ctx, "SELECT TITLE,BODY FROM GO_BUSINESS_EVENTS WHERE REFERENCE=? ORDER BY CREATED,ID", reference)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var title, body string
-		if err = rows.Scan(&title, &body); err != nil {
-			return err
-		}
-		if err = out.Encode(map[string]string{"kind": "center", "title": title, "text": body}); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
 }

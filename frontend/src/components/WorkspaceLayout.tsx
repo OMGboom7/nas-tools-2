@@ -26,7 +26,7 @@ export function WorkspaceLayout({ user, currentPath, section, page, onNavigate, 
       <main className="workspace__main">
         <header className="topbar">
           <div><span className="topbar__section">{section}</span><span className="topbar__separator">/</span><span className="topbar__page">{page}</span></div>
-          <div className="account"><span>{user.username}</span><button className="text-button" type="button" onClick={handleLogout} disabled={loggingOut}>{loggingOut ? "退出中…" : "退出"}</button></div>
+          <div className="account"><button className="text-button" type="button" onClick={() => onNavigate("/messages")}>系统消息</button><span>{user.username}</span><button className="text-button" type="button" onClick={handleLogout} disabled={loggingOut}>{loggingOut ? "退出中…" : "退出"}</button></div>
         </header>
         {children}
       </main>

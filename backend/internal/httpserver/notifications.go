@@ -528,6 +528,10 @@ func (service notificationService) deliverCustomMessage(response http.ResponseWr
 			return
 		}
 	}
+	if err := service.store.AddSystemMessage(ctx, input.Title, input.Text); err != nil {
+		writeAPIError(response, 503, 503, "系统消息写入失败")
+		return
+	}
 	for _, id := range ids {
 		record := objectValue(records[id])
 		sent, err := service.sendNativeNotification(ctx, text(record["type"]), objectValue(record["config"]), input.Title, input.Text, input.Image, "")

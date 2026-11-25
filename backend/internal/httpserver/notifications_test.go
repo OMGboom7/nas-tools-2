@@ -14,7 +14,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
 )
 
 const legacyNotificationList = `{"code":0,"detail":{"12":{"id":12,"name":"家庭通知","type":"telegram","config":{"token":"bot-secret","chat_id":"123456","interactive":1},"switchs":["download_start","transfer_finished"],"interactive":1,"enabled":1},"15":{"id":15,"name":"备用推送","type":"bark","config":{"server":"https://push.example","apikey":"device-secret","interactive":0},"switchs":"[\"download_fail\"]","interactive":0,"enabled":0}}}`
@@ -1262,5 +1264,44 @@ func TestCustomMessageRejectsInvalidImageURL(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestSystemMessageCenterShowsCommittedNoticesToLoggedInUsers(t *testing.T) {
+	handler, token, dbPath := nativeServicesFixture(t, "", nil, nil)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := 0; i < 2; i++ {
+		tx, err := db.BeginTx(t.Context(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = bus.Emit(t.Context(), tx, "site_message", "one", "internal-source", "Fixture", "One notice"); err != nil {
+			t.Fatal(err)
+		}
+		if err = tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, auth := range []string{"", "invalid", token} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/notifications/center", nil)
+		req.Header.Set("Authorization", auth)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if auth != token {
+			if w.Code != 401 || strings.Contains(w.Body.String(), "One notice") {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			continue
+		}
+		var data struct {
+			Data []notificationconfig.SystemMessage
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &data) != nil || len(data.Data) != 1 || data.Data[0].Content != "One notice" || strings.Contains(w.Body.String(), "internal-source") {
+			t.Fatal(w.Code, w.Body.String())
+		}
 	}
 }
