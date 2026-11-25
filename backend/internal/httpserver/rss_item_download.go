@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/rsstaskconfig"
@@ -205,6 +206,16 @@ func rssOptionsSupported(kind string, options downloadAddOptions) bool {
 }
 
 func (api rssItemDownloadAPI) fetchTorrent(ctx context.Context, taskNote string, article rssDownloadArticle, sites []siteconfig.Site, configuration map[string]any) ([]byte, error) {
+	var note map[string]any
+	_ = json.Unmarshal([]byte(taskNote), &note)
+	useProxy := note["proxy"] == true || note["proxy"] == "Y" || note["proxy"] == "1"
+	if builtinindexer.IsMTeamDownload(article.Enclosure) {
+		site, err := mteamDownloadSite(sites, article.Enclosure)
+		if err != nil {
+			return nil, err
+		}
+		return api.service.fetchMTeamSiteLink(ctx, article.Enclosure, site, configuration, useProxy)
+	}
 	parsed, _ := url.Parse(article.Enclosure)
 	var site *siteconfig.Site
 	for index := range sites {
@@ -219,10 +230,8 @@ func (api rssItemDownloadAPI) fetchTorrent(ctx context.Context, taskNote string,
 			break
 		}
 	}
-	var note map[string]any
-	_ = json.Unmarshal([]byte(taskNote), &note)
 	transport := api.service.client.Transport
-	if note["proxy"] == true || note["proxy"] == "Y" || note["proxy"] == "1" {
+	if useProxy {
 		var err error
 		transport, err = siteProxyTransport(transport, objectValue(objectValue(configuration["app"])["proxies"]), parsed.Scheme)
 		if err != nil {

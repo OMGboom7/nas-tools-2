@@ -4,6 +4,9 @@ import time
 import re
 import tempfile
 import hashlib
+import json
+import subprocess
+from pathlib import Path
 from urllib.parse import quote, unquote, urlencode, urlparse
 
 import libtorrent
@@ -17,7 +20,7 @@ from app.utils import StringUtils
 from app.utils.mteam_utils import MteamUtils
 from app.utils.http_utils import RequestUtils
 from app.utils.types import MediaType
-from config import Config
+from config import Config, run_go_helper
 
 
 class Torrent:
@@ -64,18 +67,18 @@ class Torrent:
         把种子下载到本地
         :return: 种子保存路径，错误信息
         """
-        if url.find("m-team") != -1:
-            url = MteamUtils.get_mteam_torrent_url(url, ua, referer, proxy)
-            if not url:
-                return None, url, f"mteam 种子链接获取出错，详情地址为 {url}"
-            req = MteamUtils.get_mteam_torrent_req(url, ua, referer, proxy)
-        else:
-            req = RequestUtils(
-                headers=ua,
-                cookies=cookie,
-                referer=referer,
-                proxies=Config().get_proxies() if proxy else None
-            ).get_res(url=url, allow_redirects=False)
+        try:
+            host = (urlparse(url).hostname or "").lower()
+        except ValueError:
+            return None, None, "种子链接无效"
+        if host in ("kp.m-team.info", "api.m-team.info", "m-team.cc", "m-team.io") or host.endswith((".m-team.cc", ".m-team.io")):
+            return self.__download_mteam(url, ua, proxy)
+        req = RequestUtils(
+            headers=ua,
+            cookies=cookie,
+            referer=referer,
+            proxies=Config().get_proxies() if proxy else None
+        ).get_res(url=url, allow_redirects=False)
         while req and req.status_code in [301, 302]:
             url = req.headers['Location']
             if url and url.startswith("magnet:"):
@@ -156,6 +159,27 @@ class Torrent:
             return None, None, "下载种子出错，状态码：%s" % req.status_code
 
         return file_path, file_content, ""
+
+    def __download_mteam(self, url, ua, proxy):
+        try:
+            path = urlparse(url).path
+            key = MteamUtils.get_api_key(url) if path.startswith("/detail/") else None
+            proxy_url = (Config().get_proxies() or {}).get("https") if proxy else None
+            if proxy and not proxy_url:
+                return None, None, "未配置站点代理"
+            query = {"url": url, "key": key, "ua": ua or Config().get_ua(),
+                     "proxy": proxy_url, "directory": os.path.abspath(self._torrent_temp_path)}
+            result = json.loads(run_go_helper("mteam-download", payload=json.dumps(query).encode(), timeout=45))
+            if result.get("magnet"):
+                return None, result["magnet"], "磁力链接"
+            if result.get("status") == 429:
+                return None, None, "触发站点流控，请稍后重试"
+            if "status" in result:
+                return None, None, f"下载种子出错，状态码：{result['status']}"
+            file_path = result["path"]
+            return file_path, Path(file_path).read_bytes(), ""
+        except (KeyError, OSError, ValueError, subprocess.SubprocessError):
+            return None, None, "M-Team 种子下载失败"
 
     @staticmethod
     def get_torrent_files(path):

@@ -14,7 +14,6 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
-	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 )
 
 func mteamBase(domain string) (*url.URL, *url.URL, error) {
@@ -64,7 +63,7 @@ func mteamRequest(ctx context.Context, api *url.URL, endpoint, key, ua, contentT
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return nil, ErrResponse
+		return nil, mteamHTTPStatus(response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil || len(data) > 4<<20 || !utf8.Valid(data) {
@@ -202,60 +201,4 @@ func mteamPage(ctx context.Context, definition indexercatalog.Definition, key, u
 		rows = append(rows, mteamResult{Resource: resource, size: row.Size, seeders: row.Status.Seeders, peers: row.Status.Leechers})
 	}
 	return rows, nil
-}
-
-func DownloadMTeam(ctx context.Context, detail, key, ua string, transport http.RoundTripper) ([]byte, error) {
-	u, err := url.Parse(detail)
-	if err != nil {
-		return nil, ErrConfig
-	}
-	domain := *u
-	domain.Path = "/"
-	_, api, err := mteamBase(domain.String())
-	if err != nil {
-		return nil, err
-	}
-	id := strings.TrimPrefix(u.Path, "/detail/")
-	number, err := strconv.ParseInt(id, 10, 64)
-	if err != nil || number <= 0 || strconv.FormatInt(number, 10) != id {
-		return nil, ErrConfig
-	}
-	data, err := mteamRequest(ctx, api, "/api/torrent/genDlToken", key, ua, "application/x-www-form-urlencoded", []byte(url.Values{"id": {id}}.Encode()), transport)
-	if err != nil {
-		return nil, err
-	}
-	var link string
-	if json.Unmarshal(data, &link) != nil || !externalindexer.ValidDownloadURL(link) {
-		return nil, ErrResponse
-	}
-	download, err := url.Parse(link)
-	if err != nil || !sameOrigin(api, download) {
-		return nil, ErrResponse
-	}
-	request, err := http.NewRequestWithContext(ctx, "GET", link, nil)
-	if err != nil {
-		return nil, ErrResponse
-	}
-	// The signed URL carries its own token. Do not forward API credentials.
-	request.Header.Set("User-Agent", ua)
-	client := &http.Client{Transport: transport, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, ErrResponse
-	}
-	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		return nil, ErrResponse
-	}
-	contents, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
-	if err != nil || len(contents) > 8<<20 {
-		return nil, ErrResponse
-	}
-	if _, err := torrentmeta.Parse(contents); err != nil {
-		return nil, ErrResponse
-	}
-	return contents, nil
 }

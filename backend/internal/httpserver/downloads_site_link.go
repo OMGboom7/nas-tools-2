@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/aria2"
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
@@ -102,6 +103,21 @@ func (service downloadService) fetchSiteTorrentBound(ctx context.Context, site s
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.User != nil || parsed.Fragment != "" || parsed.Hostname() == "" || parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errSiteLinkNotAllowed
+	}
+	// Browser sessions and other guarded callers keep their original origin
+	// checks around every request. A site link uses the selected account only.
+	if guard == nil && builtinindexer.IsMTeamDownload(rawURL) {
+		if !siteMatchesMTeamDownload(site, rawURL) {
+			return nil, errSiteLinkNotAllowed
+		}
+		var configuration map[string]any
+		if service.configStore != nil {
+			configuration, err = service.configStore.Snapshot()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return service.fetchMTeamSiteLink(ctx, rawURL, site, configuration, false)
 	}
 	allowed := false
 	for _, source := range []string{site.SignURL, site.RSSURL} {

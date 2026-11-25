@@ -138,7 +138,7 @@ func (service downloadService) prepareSubscriptionTorrent(ctx context.Context, c
 	if candidate.site == nil || candidate.resource.Browser != nil || validMagnet(candidate.resource.DownloadURL) {
 		return service.prepareNativeSearchTorrent(ctx, candidate.resource)
 	}
-	if !subscriptionSiteOriginAllowed(*candidate.site, candidate.resource.DownloadURL) {
+	if !subscriptionSiteOriginAllowed(*candidate.site, candidate.resource.DownloadURL) && !siteMatchesMTeamDownload(*candidate.site, candidate.resource.DownloadURL) {
 		return "", nil, errSiteLinkNotAllowed
 	}
 	contents, err := service.fetchSiteTorrent(ctx, *candidate.site, candidate.resource.DownloadURL)

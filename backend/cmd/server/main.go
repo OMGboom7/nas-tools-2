@@ -21,6 +21,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "mteam-download" {
+		if err := builtinindexer.MTeamDownloadCommand(context.Background(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("M-Team torrent download failed")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "tnode-resources" || os.Args[1] == "mteam-resources") {
 		if err := builtinindexer.ResourcePageCommand(context.Background(), os.Args[1], os.Stdin, os.Stdout); err != nil {
 			slog.Error("site resource request failed")
