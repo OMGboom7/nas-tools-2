@@ -160,6 +160,13 @@ func (service subscriptionService) applyCompatSubscriptionDefaults(ctx context.C
 	if err != nil || stored == "" {
 		return err
 	}
+	return applyStoredSubscriptionDefaults(stored, input)
+}
+
+func applyStoredSubscriptionDefaults(stored string, input *subscriptionUpsertRequest) error {
+	if stored == "" {
+		return nil
+	}
 	var defaults map[string]any
 	if err := json.Unmarshal([]byte(stored), &defaults); err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/douban"
 	"github.com/0xforee/nas-tools/backend/internal/mediaarchive"
 )
 
@@ -224,6 +225,27 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				detail := syncTimerDetail(claims.Username, settings)
 				running, known := service.syncTimerRunning(request.Context())
 				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
+			if service.nativeDouban(id) {
+				raw, err := service.system.ReadMany(request.Context(), doubanKeys)
+				if err != nil {
+					subscriptionHistoryError(response, err)
+					return
+				}
+				claims, err := service.auth.service.VerifyToken(request.Header.Get("Authorization"))
+				if err != nil {
+					writeAPIError(response, 401, 401, "请重新登录")
+					return
+				}
+				cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
+				if err != nil {
+					subscriptionHistoryError(response, err)
+					return
+				}
+				detail := doubanDetail(claims.Username, raw, cfg)
+				running, known := service.doubanSync.summary(raw)
+				result[id] = map[string]any{"name": detail.Name, "version": catalog[id].Version, "page": id, "state": running, "stateKnown": known, "native": true, "fields": indexerLegacyFields(detail), "config": detail.Values, "fingerprint": detail.Meta.Fingerprint}
 				continue
 			}
 			if service.nativeArchiveRunner(id) {

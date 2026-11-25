@@ -18,25 +18,7 @@ func (service subscriptionService) resolveNativeSubscriptionInput(ctx context.Co
 		if err != nil {
 			return input, err
 		}
-		if year != "" {
-			input.Year = year
-		}
-		if input.Type == "TV" && input.Season == "" {
-			input.Season = "1"
-		}
-		input.Name = original
-		input.MediaID, err = service.resolveNativeSubscriptionMediaID(ctx, input)
-		if err != nil {
-			return input, err
-		}
-		if input.MediaID == "" && localized != "" && localized != original {
-			input.Name = localized
-			input.MediaID, err = service.resolveNativeSubscriptionMediaID(ctx, input)
-			if err != nil {
-				return input, err
-			}
-		}
-		return input, nil
+		return service.resolveDoubanTitles(ctx, input, original, localized, year)
 	}
 	if strings.HasPrefix(input.MediaID, "BG:") {
 		original, localized, year, err := service.fetchNativeBangumiIdentity(ctx, strings.TrimPrefix(input.MediaID, "BG:"))
@@ -108,4 +90,27 @@ func (service subscriptionService) fetchNativeBangumiIdentity(ctx context.Contex
 		}
 	}
 	return strings.TrimSpace(subject.Name), strings.TrimSpace(subject.NameCN), year, nil
+}
+
+func (service subscriptionService) resolveDoubanTitles(ctx context.Context, input subscriptionUpsertRequest, original, localized, year string) (subscriptionUpsertRequest, error) {
+	var err error
+	if year != "" {
+		input.Year = year
+	}
+	if input.Type == "TV" && input.Season == "" {
+		input.Season = "1"
+	}
+	input.Name = original
+	input.MediaID, err = service.resolveNativeSubscriptionMediaID(ctx, input)
+	if err != nil {
+		return input, err
+	}
+	if input.MediaID == "" && localized != "" && localized != original {
+		input.Name = localized
+		input.MediaID, err = service.resolveNativeSubscriptionMediaID(ctx, input)
+		if err != nil {
+			return input, err
+		}
+	}
+	return input, nil
 }

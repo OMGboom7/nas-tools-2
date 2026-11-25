@@ -98,6 +98,21 @@ func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *h
 		table.RowActions = append(table.RowActions, action)
 	}
 	data := pluginPageData{Title: systemconfig.SubscriptionHistoryTitle(id), Sections: []string{}, Tables: []pluginPageTable{table}, ReadOnly: true, CanDeleteRecords: true, DeleteConfirmation: "confirm"}
+	if service.nativeDouban(id) {
+		control, err := service.system.Get(r.Context(), doubanControlKey)
+		if err != nil {
+			subscriptionHistoryError(w, err)
+			return
+		}
+		c, err := doubanState(control)
+		if err != nil {
+			subscriptionHistoryError(w, err)
+			return
+		}
+		if c.Last != "" {
+			data.Sections = append(data.Sections, c.Last)
+		}
+	}
 	if more {
 		data.NextCursor = strconv.FormatInt(records[len(records)-1].RowID, 10)
 	}

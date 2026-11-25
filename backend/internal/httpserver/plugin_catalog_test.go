@@ -131,14 +131,14 @@ func TestGoOnlyCatalogDoesNotAdvertiseUnmigratedActionsAsAvailable(t *testing.T)
 		"ChineseSubFinder": true, "OpenSubtitles": true, "LibraryScraper": true, "LibraryRefresh": true,
 		"Webhook": true, "SpeedLimiter": true, "MediaSyncDel": true, "MovieLike": true,
 		"AutoSignIn": true, "CloudflareSpeedTest": true, "CookieCloud": true, "AutoBackup": true,
-		"MediaLibraryArchive": mediaarchive.Supported, "SyncTimer": true, "TorrentMark": true, "TorrentRemover": true, "TorrentTransfer": true,
+		"DoubanSync": mediaarchive.Supported, "MediaLibraryArchive": mediaarchive.Supported, "SyncTimer": true, "TorrentMark": true, "TorrentRemover": true, "TorrentTransfer": true,
 	}
 	for _, item := range payload.Data.Items {
 		if item.ActionsAvailable != (nativeMetadataPlugin(item.ID) || nativeIndexerPlugin(item.ID) || actions[item.ID]) {
 			t.Fatalf("unsupported Go-only action advertised: %+v", item)
 		}
 		hasHistory := item.ID == "DoubanSync" || item.ID == "DoubanRank" || item.ID == "MovieRandom"
-		if item.NativeHistoryPage != hasHistory || hasHistory && (item.Native || !item.HasPage || item.ActionsAvailable) {
+		if item.NativeHistoryPage != hasHistory || hasHistory && (!item.HasPage || item.Native != actions[item.ID] || item.ActionsAvailable != actions[item.ID]) {
 			t.Fatalf("plugin history and execution capabilities differ: %+v", item)
 		}
 		if (item.ID == "OpenSubtitles" || item.ID == "AutoSignIn") && (!item.Native || !item.HasPage || item.Installed || item.Running || !item.StateKnown) {

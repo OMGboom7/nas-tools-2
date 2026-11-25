@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	doubanSync        *doubanSyncAPI
 	archiveMedia      *mediaSyncAPI
 	archiveConfigPath string
 	archiveContainer  bool
@@ -125,6 +126,14 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 			action = "install"
 		}
 		service.serveSyncTimerPlugin(response, request, action)
+		return
+	}
+	if service.nativeDouban(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.doubanSync.serve(response, request, action)
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {

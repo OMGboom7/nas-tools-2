@@ -1,5 +1,5 @@
 // Package douban reproduces the readonly Frodo protocol already used by the
-// legacy backend. It never accepts user credentials or arbitrary upstream URLs.
+// legacy backend. Metadata requests use fixed endpoints and the project key.
 package douban
 
 import (
@@ -24,7 +24,7 @@ const projectKey = "054022eaeae0b00e0fc068c0c0a2102a"
 const signingKey = "bf7dddc7c9cfe6f7"
 
 type Client struct{ Transport http.RoundTripper }
-type Subject struct{ ID, Title, Original, Year, IMDb, Kind string }
+type Subject struct{ ID, Title, Original, Year, IMDb, Kind, Image, Rating string }
 type Candidate struct{ ID, Title, Year, Kind string }
 type Celebrity struct {
 	ID    json.RawMessage `json:"id"`
@@ -128,11 +128,27 @@ func (c Client) Subject(ctx context.Context, kind, id string) (Subject, error) {
 		Year     json.RawMessage `json:"year"`
 		IMDb     string          `json:"imdb"`
 		Kind     string          `json:"type"`
+		Image    string          `json:"cover_url"`
+		Episodes json.RawMessage `json:"episodes_count"`
+		Rating   struct {
+			Value json.RawMessage `json:"value"`
+		} `json:"rating"`
 	}
 	if c.get(ctx, "/"+kind+"/"+id, nil, &p) != nil || ID(p.ID) != id || strings.TrimSpace(p.Title) == "" || p.Kind != "" && p.Kind != kind {
 		return s, ErrResponse
 	}
 	s = Subject{ID: id, Title: strings.TrimSpace(p.Title), Original: strings.TrimSpace(p.Original), Year: year(p.Year), IMDb: p.IMDb, Kind: kind}
+	s.Image = p.Image
+	var episodes json.Number
+	if json.Unmarshal(p.Episodes, &episodes) == nil && episodes.String() != "" && episodes.String() != "0" {
+		s.Kind = "tv"
+	}
+	if len(p.Rating.Value) > 0 {
+		var value json.Number
+		if json.Unmarshal(p.Rating.Value, &value) == nil {
+			s.Rating = value.String()
+		}
+	}
 	if s.Original == "" {
 		s.Original = s.Title
 	}
