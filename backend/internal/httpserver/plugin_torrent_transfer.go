@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
@@ -95,7 +96,8 @@ func (s pluginService) serveTorrentTransferPlugin(w http.ResponseWriter, r *http
 		signinJSON(w, st.detail)
 		return
 	case "status":
-		writeJSON(w, 200, map[string]any{"code": 0, "state": false, "stateKnown": true})
+		running, known := s.torrentTransfer.scheduleSummary(ctx)
+		writeJSON(w, 200, map[string]any{"code": 0, "state": running, "stateKnown": known})
 		return
 	case "install", "uninstall":
 		list := slices.DeleteFunc(st.installed, func(id string) bool { return id == torrenttransfer.Plugin })
@@ -160,9 +162,20 @@ func (s pluginService) serveTorrentTransferPlugin(w http.ResponseWriter, r *http
 		writeAPIError(w, 404, 404, "未找到转种操作")
 		return
 	}
-	err = s.system.UpdateMany(ctx, []string{"UserInstalledPlugins", torrenttransfer.ConfigKey}, func(current map[string]string) (map[string]string, error) {
+	err = s.system.UpdateMany(ctx, transferScheduleKeys, func(current map[string]string) (map[string]string, error) {
 		if current["UserInstalledPlugins"] != st.installedRaw || current[torrenttransfer.ConfigKey] != st.raw {
 			return nil, torrenttransfer.ErrState
+		}
+		if current[transferScheduleKey] != "" {
+			epoch := sitelogin.Random()
+			if !torrenttransfer.Hex(epoch, 64) {
+				return nil, torrenttransfer.ErrState
+			}
+			idle, err := json.Marshal(transferSchedule{Epoch: epoch})
+			if err != nil {
+				return nil, err
+			}
+			changes[transferScheduleKey] = string(idle)
 		}
 		return changes, nil
 	})

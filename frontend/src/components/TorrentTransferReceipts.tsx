@@ -3,6 +3,7 @@ import { ApiError, getTorrentTransferReceipt, type TorrentTransferReceipt } from
 
 import { TorrentTransferReview } from "./TorrentTransferReview";
 import { TorrentTransferTarget } from "./TorrentTransferTarget";
+import { TorrentTransferSchedule } from "./TorrentTransferSchedule";
 
 const stages = { bound: "已关联目标任务", checking: "已观察到校验", verified: "已核实文件完整" };
 const actions = { add: "暂停添加", verify: "请求校验", start: "请求启动", "remove-source": "移除源任务" };
@@ -38,6 +39,7 @@ export function TorrentTransferReceipts({ token, onSessionExpired }: { token: st
 
   return <details>
     <summary>自动转种计划与回执</summary>
+    <TorrentTransferSchedule token={token} expired={onSessionExpired} />
     <TorrentTransferReview token={token} onSessionExpired={onSessionExpired} select={value => void lookup(value)} />
     <form className="download-magnet-form" onSubmit={event => { event.preventDefault(); void lookup(id); }}>
       <label>回执编号<input value={id} required pattern="[a-fA-F0-9]{64}" placeholder="64 位回执编号"

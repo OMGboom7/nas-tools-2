@@ -111,7 +111,8 @@ func (service pluginService) metadataLegacyListRoute(fallback http.Handler) http
 					writeAPIError(response, 409, 409, "无法读取转种配置")
 					return
 				}
-				result[id] = map[string]any{"name": st.detail.Name, "version": "1.0", "config": st.detail.Values, "fields": indexerLegacyFields(st.detail), "state": false, "stateKnown": true, "native": true, "fingerprint": st.detail.Meta.Fingerprint}
+				running, known := service.torrentTransfer.scheduleSummary(request.Context())
+				result[id] = map[string]any{"name": st.detail.Name, "version": "1.0", "config": st.detail.Values, "fields": indexerLegacyFields(st.detail), "state": running, "stateKnown": known, "native": true, "fingerprint": st.detail.Meta.Fingerprint}
 				continue
 			}
 			if service.nativeTorrentRemover(id) {

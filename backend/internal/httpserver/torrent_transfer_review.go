@@ -14,6 +14,8 @@ import (
 )
 
 type transferReviewScope struct {
+	raw, installedRaw     string
+	digest                func(string) string
 	settings              torrenttransfer.Settings
 	source                torrenttransfer.ProtectedSource
 	target                torrenttransfer.ReceiverClient
@@ -75,7 +77,11 @@ func (api torrentTransferAPI) reviewScope(ctx context.Context, actor string) (tr
 		return scope, torrenttransfer.ErrState
 	}
 	scope.from, scope.to = from.Name, to.Name
-	scope.fingerprint = torrenttransfer.Hash([]string{"transfer-review-v1", actor, authority, raw, removalDownloaderDigest(from), removalDownloaderDigest(to)})
+	scope.raw, scope.installedRaw = raw, values["UserInstalledPlugins"]
+	scope.digest = func(raw string) string {
+		return torrenttransfer.Hash([]string{"transfer-review-v1", actor, authority, raw, removalDownloaderDigest(from), removalDownloaderDigest(to)})
+	}
+	scope.fingerprint = scope.digest(raw)
 	return scope, nil
 }
 

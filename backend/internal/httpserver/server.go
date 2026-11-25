@@ -98,6 +98,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitStatistics := startSiteStatisticsWorker(workerContext, runner.siteStatistics)
 		waitTorrentRemover := startTorrentRemovalWorker(workerContext, runner.torrentRemover)
 		waitTorrentMark := startTorrentMarkWorker(workerContext, runner.torrentMark)
+		waitTransferSchedule := startTransferScheduler(workerContext, runner.torrentTransfer)
 		waitCookieCloud := startCookieCloudWorker(workerContext, runner.cookieCloud)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
 		wait = func() {
@@ -123,6 +124,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitStatistics()
 			waitTorrentRemover()
 			waitTorrentMark()
+			waitTransferSchedule()
 			waitCookieCloud()
 			waitAutoBackup()
 		}
@@ -612,6 +614,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	rssRunner.torrentRemover = removalAPI
 	transferAPI := torrentTransferAPI{organizer: &organizer, system: nativeSystemConfig, downloaders: nativeDownloaders, database: nativeUserDatabasePath, login: nativeSiteLogin}
 	mux.HandleFunc("POST /api/v1/torrent-transfer/records/{id}/{action}", transferAPI.transferAction)
+	rssRunner.torrentTransfer = &transferAPI
+	mux.HandleFunc("GET /api/v1/torrent-transfer/schedule", transferAPI.schedule)
+	mux.HandleFunc("POST /api/v1/torrent-transfer/schedule/{control}", transferAPI.schedule)
 	mux.HandleFunc("POST /api/v1/torrent-transfer/review", transferAPI.review)
 	mux.HandleFunc("GET /api/v1/torrent-transfer/records/{id}", transferAPI.record)
 	mux.HandleFunc("GET /api/v1/torrent-remover", removalAPI.serve)

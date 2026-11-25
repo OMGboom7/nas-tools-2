@@ -130,8 +130,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
 			if service.nativeTorrentTransfer(item.ID) {
-				item.Running = false
-				item.StateKnown = true
+				item.Running, item.StateKnown = service.torrentTransfer.scheduleSummary(ctx)
 				data.Items = append(data.Items, item)
 				continue
 			}
