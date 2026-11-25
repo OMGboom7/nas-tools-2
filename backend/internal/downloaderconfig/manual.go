@@ -16,6 +16,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/downloadhistory"
+	"github.com/0xforee/nas-tools/backend/internal/torrentfiles"
 )
 
 var ErrManualPending = errors.New("manual submission is pending or conflicts with its original scope")
@@ -241,10 +242,33 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 // ClassicAcknowledgement contains private history fields for the original table.
 // They never enter the public receipt or the notification data.
 type ClassicAcknowledgement struct {
+	Files                    []torrentfiles.File `json:"files,omitempty"`
+	Paused                   bool                `json:"paused,omitempty"`
+	Directory                string              `json:"directory,omitempty"`
 	V1Hash, V2Hash           string
 	Media                    downloadhistory.Media
 	Path                     *string
 	Title, Text, Image, Link string
+}
+
+// Pending classic subsets can be addressed by either the canonical hash or
+// qBittorrent's shortened v2 task ID. Other starts must wait for verification.
+func (s *Store) PendingClassicFiles(ctx context.Context, downloader int64, hash string) (*ClassicAcknowledgement, error) {
+	var exists bool
+	if err := s.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_CLASSIC_PENDING_HISTORY')`).Scan(&exists); err != nil || !exists {
+		return nil, err
+	}
+	var raw string
+	err := s.database.QueryRowContext(ctx, `SELECT h.DOCUMENT FROM GO_CLASSIC_PENDING_HISTORY h JOIN GO_MANUAL_DOWNLOAD_SUBMISSIONS m ON m.ID=h.SUBMISSION_ID WHERE m.STATE='pending' AND json_extract(m.DOCUMENT,'$.DownloaderID')=? AND (json_extract(m.DOCUMENT,'$.InfoHash')=? OR substr(json_extract(h.DOCUMENT,'$.V2Hash'),1,40)=?) AND json_array_length(h.DOCUMENT,'$.files')>0 LIMIT 1`, downloader, hash, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var h ClassicAcknowledgement
+	err = json.Unmarshal([]byte(raw), &h)
+	return &h, err
 }
 
 func (s *Store) ClassicPendingHistory(ctx context.Context, id string) (ClassicAcknowledgement, error) {

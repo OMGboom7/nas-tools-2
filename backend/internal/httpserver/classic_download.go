@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
+	"github.com/0xforee/nas-tools/backend/internal/batchdownload"
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
@@ -24,6 +25,7 @@ import (
 // The local caller resolves its user, media and directory using the original
 // entry point. The Go process reads the actual client endpoint from the volume.
 type classicRequest struct {
+	Batch                                             *batchdownload.Proof
 	UploadLimitKB, DownloadLimitKB, SeedingTimeLimit  int
 	RatioLimit                                        float64
 	Category, ClientType                              string
@@ -117,9 +119,44 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		defer guards.Close()
 		service.manualGuards = &guards
 	}
+	// Selection evidence is derived exclusively from the submitted bytes.
+	q.History.Files = nil
+	q.History.Directory = ""
+	q.History.Paused = false
 	q.History.Title, q.History.Text = q.Notice.Render()
 	result := classicDownloadResult{history: q.History}
 	options := downloadAddOptions{SavePath: q.Directory, Paused: q.Paused, UploadLimitKB: q.UploadLimitKB, DownloadLimitKB: q.DownloadLimitKB, Tags: q.Tags, Category: q.Category, RatioLimit: q.RatioLimit, SeedingTimeLimit: q.SeedingTimeLimit, ApplyTransmissionLimits: item.Type == "transmission"}
+	if q.Batch != nil {
+		files, units, err := batchdownload.Files(q.Torrent, *q.Batch)
+		if err != nil {
+			return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
+		}
+		label := batchdownload.EpisodeLabel(units)
+		if media := result.history.Media; media != nil {
+			media["SE"] = &label
+			name := *media["TITLE"]
+			if year := media["YEAR"]; year != nil && *year != "" {
+				name += " (" + *year + ")"
+			}
+			notice := q.Notice
+			notice.Title = name + " " + label
+			result.history.Title, result.history.Text = notice.Render()
+		} else {
+			result.history.Text += "\n已选剧集：" + label
+		}
+		if batchdownload.RequiresSelection(*q.Batch, files, units) {
+			if item.Type != "qbittorrent" && item.Type != "transmission" {
+				return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
+			}
+			result.history.Files = files
+			result.history.Paused = options.Paused
+			result.history.Directory = options.SavePath
+			options.ClassicFiles = bus.Hash(files)
+			if item.Type == "transmission" {
+				options.Tags = append(options.Tags, "NASTOOL-FILES-"+options.ClassicFiles[:24])
+			}
+		}
+	}
 	actor := "classic:" + bus.Hash([]string{q.Channel, q.Sender})
 	task, handled, err := service.submitWithReceipt(ctx, actor, q.Magnet, q.Torrent, &item, options, q.Title, q.Source, nil, nil, &result)
 	reply := map[string]any{}

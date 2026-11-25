@@ -402,7 +402,8 @@ def __search_media(in_from, media_info, user_id, user_name, scope, choice):
     try:
         search_result, no_exists, search_count, download_count = Searcher().search_one_media(
             media_info=media_info, in_from=in_from, no_exists=no_exists,
-            sites=media_info.search_sites, user_name=user_name)
+            sites=media_info.search_sites, user_name=user_name,
+            receipt_sender=json.dumps([str(scope), str(user_id)]))
     except (ResourceFilterUnavailable, SearchResultsUnavailable) as err:
         ProgressHelper().end(ProgressKey.Search)
         Message().send_channel_msg(expected_scope=scope, channel=in_from, title=str(err), user_id=user_id)

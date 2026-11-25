@@ -110,6 +110,7 @@ func downloadDefinitelyNotSubmitted(handled bool, err error) bool {
 }
 
 type downloadAddOptions struct {
+	ClassicFiles            string                   `json:"classicFiles,omitempty"`
 	Seeding                 *sourceSeedingConstraint `json:"seeding,omitempty"`
 	ApplyTransmissionLimits bool                     `json:"applyTransmissionLimits,omitempty"`
 	SavePath                string
@@ -230,7 +231,13 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 			if json.Unmarshal([]byte(item.DownloadDir), &dirs) != nil {
 				return "", true, qbittorrent.ErrConfiguration
 			}
+			if options.ClassicFiles != "" {
+				addOptions.Paused = true
+			}
 			id, err := client.AddClassic(ctx, magnet, torrent, addOptions, text(configuration["torrent_management"]), dirs, service.classic.receipt, torrentmeta.TransferMetadata{V1Hash: service.classic.history.V1Hash, V2Hash: service.classic.history.V2Hash})
+			if err == nil && options.ClassicFiles != "" {
+				err = service.applyClassicSelection(ctx, item, id, "NT"+service.classic.receipt, true)
+			}
 			return id, true, err
 		}
 		if torrent != nil {

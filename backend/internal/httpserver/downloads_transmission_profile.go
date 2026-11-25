@@ -11,6 +11,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/torrentfiles"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
 )
@@ -109,6 +110,12 @@ func (service downloadService) submitTransmissionProfile(ctx context.Context, it
 		if err != nil || !p.Ready(s) {
 			return "", downloaderconfig.ErrProfilePending
 		}
+		if o.ClassicFiles != "" {
+			st, e := service.classicSelectionState(ctx, item, hash, p.Marker(), service.classic.history)
+			if e != nil || st.Paused != o.Paused || !torrentfiles.Wanted(service.classic.history.Files, st.Files) {
+				return "", downloaderconfig.ErrProfilePending
+			}
+		}
 		return hash, nil
 	}
 	options := d.Options
@@ -162,6 +169,11 @@ func (service downloadService) submitTransmissionProfile(ctx context.Context, it
 	}
 	if advance("configured") != nil {
 		return "", downloaderconfig.ErrProfilePending
+	}
+	if o.ClassicFiles != "" {
+		if err := service.applyClassicSelection(ctx, item, hash, p.Marker(), false); err != nil {
+			return "", downloaderconfig.ErrProfilePending
+		}
 	}
 	if applySubscriptionFileHook(ctx) != nil {
 		return "", downloaderconfig.ErrProfilePending

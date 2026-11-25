@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
+	"github.com/0xforee/nas-tools/backend/internal/batchdownload"
 	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/database"
@@ -28,6 +29,20 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "batch-intersection" {
+		if batchdownload.Intersect(os.Stdin, os.Stdout) != nil {
+			slog.Error("invalid missing episodes")
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "batch-download" {
+		if batchdownload.Command(os.Stdin, os.Stdout) != nil {
+			slog.Error("invalid batch download")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "classic-download" {
 		if err := httpserver.ClassicDownloadCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("classic download unavailable")

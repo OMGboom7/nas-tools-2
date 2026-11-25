@@ -707,11 +707,11 @@ class Subscribe:
                     rss_no_exists = Torrent.get_intersection_episodes(target=rss_no_exists,
                                                                       source=library_no_exists,
                                                                       title=media_info.tmdb_id)
-                    if rss_no_exists.get(media_info.tmdb_id):
-                        log.info("【Subscribe】%s 订阅缺失季集：%s" % (
-                            media_info.get_title_string(),
-                            rss_no_exists.get(media_info.tmdb_id)
-                        ))
+                    if not rss_no_exists.get(media_info.tmdb_id):
+                        self.finish_rss_subscribe(rssid=rssid, media=media_info)
+                        continue
+                    log.info("【Subscribe】%s 订阅缺失季集：%s" % (
+                        media_info.get_title_string(), rss_no_exists[media_info.tmdb_id]))
                 else:
                     # 把洗版标志加入检索
                     media_info.over_edition = over_edition

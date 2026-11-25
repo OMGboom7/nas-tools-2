@@ -14,6 +14,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/pikpak"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
+	"github.com/0xforee/nas-tools/backend/internal/torrentfiles"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
 )
@@ -373,6 +374,19 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 	default:
 		writeAPIError(w, 501, 501, "pending task identity reconciliation for this downloader is not migrated; no retry or release")
 		return
+	}
+	if err == nil && found && classic != nil && len(classic.Files) > 0 {
+		marker := "NT" + receipt.ID
+		if item.Type == "transmission" {
+			profile, e := service.downloaders.FindTransmissionProfile(ctx, item.ID, taskID)
+			if e != nil {
+				writeAPIError(w, 409, 409, "original file selection profile unavailable")
+				return
+			}
+			marker = profile.Marker()
+		}
+		st, e := service.classicSelectionState(ctx, item, taskID, marker, *classic)
+		found = e == nil && st.Paused == classic.Paused && torrentfiles.Wanted(classic.Files, st.Files)
 	}
 	if err != nil || !found {
 		writeAPIError(w, 409, 409, "positive exact-task presence not established; pending receipt retained")

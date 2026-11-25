@@ -241,18 +241,18 @@ class Rss:
                                     )
                                     if exist_flag is None:
                                         continue
-                                    rss_no_exists[media_info.tmdb_id] = [
+                                    subscribed = {media_info.tmdb_id: [
                                         {"season": season, "episodes": episodes, "total_episodes": total_ep}
-                                    ]
+                                    ]}
                                     # 取交集做为缺失集
-                                    rss_no_exists = Torrent.get_intersection_episodes(target=rss_no_exists,
-                                                                                      source=library_no_exists,
-                                                                                      title=media_info.tmdb_id)
-                                    if rss_no_exists.get(media_info.tmdb_id):
-                                        log.info("【Rss】%s 订阅缺失季集：%s" % (
-                                            media_info.get_title_string(),
-                                            rss_no_exists.get(media_info.tmdb_id)
-                                        ))
+                                    gaps = Torrent.get_intersection_episodes(subscribed, library_no_exists, media_info.tmdb_id)
+                                    if not gaps:
+                                        continue
+                                    existing = rss_no_exists.setdefault(media_info.tmdb_id, [])
+                                    existing[:] = [row for row in existing if row["season"] != season]
+                                    existing.extend(gaps[media_info.tmdb_id])
+                                    log.info("【Rss】%s 订阅缺失季集：%s" % (
+                                        media_info.get_title_string(), existing))
                                 # 本地已存在
                                 if exist_flag is not False:
                                     continue
@@ -295,8 +295,6 @@ class Rss:
                         # 设置下载参数
                         media_info.set_download_info(download_setting=match_info.get("download_setting"),
                                                      save_path=match_info.get("save_path"))
-                        # 插入数据库历史记录
-                        self.rsshelper.insert_rss_torrents(media_info)
                         # 加入下载列表
                         if media_info not in rss_download_torrents:
                             rss_download_torrents.append(media_info)
@@ -561,12 +559,15 @@ class Rss:
                 if item.over_edition:
                     # 更新洗版订阅
                     __update_over_edition(item)
-                elif not left_medias or not left_medias.get(item.tmdb_id):
+                elif not any(row["season"] in item.get_season_list() for row in (left_medias or {}).get(item.tmdb_id, [])):
                     # 删除电视剧订阅
                     __finish_rss(item)
                 else:
                     # 更新电视剧缺失剧集
                     __update_tv_rss(item, left_medias.get(item.tmdb_id))
+            for item in download_items:
+                if not self.rsshelper.is_rssd_by_enclosure(item.enclosure):
+                    self.rsshelper.insert_rss_torrents(item)
             log.info("【Rss】实际下载了 %s 个资源" % len(download_items))
         else:
             log.info("【Rss】未下载到任何资源")

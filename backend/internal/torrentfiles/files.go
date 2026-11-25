@@ -200,15 +200,24 @@ func video(name string) bool {
 // Plan selects only indivisible files wholly within the requested episodes.
 // The caller has already verified the torrent's media identity and fixed season.
 func Plan(files []File, season, total int, target []int) ([]File, []int, error) {
-	return plan(files, season, total, target, false)
+	return plan(files, season, total, target, false, video)
 }
 
 // PlanExactSeason never assigns an unqualified E01 to several seasons of a
 // mixed pack. A filename or its nearest season directory must identify it.
 func PlanExactSeason(files []File, season, total int, target []int) ([]File, []int, error) {
-	return plan(files, season, total, target, true)
+	return plan(files, season, total, target, true, video)
 }
-func plan(files []File, season, total int, target []int, requireSeason bool) ([]File, []int, error) {
+
+// PlanClassic includes the additional media extensions used by the original
+// RSS downloader. Other file selection paths keep their configured types.
+func PlanClassic(files []File, season, total int, target []int, mixed bool) ([]File, []int, error) {
+	return plan(files, season, total, target, mixed, ClassicVideo)
+}
+func ClassicVideo(name string) bool {
+	return video(name) || slices.Contains([]string{".3gp", ".asf", ".strm", ".tp", ".f4v"}, strings.ToLower(path.Ext(name)))
+}
+func plan(files []File, season, total int, target []int, requireSeason bool, isVideo func(string) bool) ([]File, []int, error) {
 	out, err := Normalize(files)
 	if err != nil || season < 0 || season > 1000 || total < 1 || total > 10000 || len(target) == 0 || len(target) > total {
 		return nil, nil, ErrManifest
@@ -225,7 +234,7 @@ func plan(files []File, season, total int, target []int, requireSeason bool) ([]
 	for i := range out {
 		f := &out[i]
 		f.Selected = false
-		if f.Padding || f.Size == 0 || !video(f.Path) {
+		if f.Padding || f.Size == 0 || !isVideo(f.Path) {
 			continue
 		}
 		base := path.Base(f.Path)

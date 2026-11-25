@@ -261,9 +261,9 @@ func (s downloadService) selectionSnapshot(ctx context.Context, item downloaderc
 	}
 	return state, nil
 }
-func selectedRemoteFiles(d downloaderconfig.FileSelectionDefinition, state torrentfiles.Snapshot) []torrentfiles.File {
+func selectedRemoteFiles(files []torrentfiles.File, state torrentfiles.Snapshot) []torrentfiles.File {
 	wanted := map[string]bool{}
-	for _, f := range d.Files {
+	for _, f := range files {
 		wanted[f.Path] = f.Selected
 	}
 	out := append([]torrentfiles.File{}, state.Files...)
@@ -272,8 +272,8 @@ func selectedRemoteFiles(d downloaderconfig.FileSelectionDefinition, state torre
 	}
 	return out
 }
-func unwantedMatch(d downloaderconfig.FileSelectionDefinition, state torrentfiles.Snapshot) bool {
-	desired := selectedRemoteFiles(d, state)
+func unwantedMatch(files []torrentfiles.File, state torrentfiles.Snapshot) bool {
+	desired := selectedRemoteFiles(files, state)
 	for i, f := range desired {
 		if !f.Selected && state.Files[i].Selected {
 			return false
@@ -306,7 +306,7 @@ func (api *subscriptionSearchRunner) writeSubscriptionFiles(ctx context.Context,
 		return downloaderconfig.ErrFileSelectionPending
 	}
 	download := api.planner.runner.download.service
-	desired := selectedRemoteFiles(p.Definition, state)
+	desired := selectedRemoteFiles(p.Definition.Files, state)
 	wanted, unwanted := torrentfiles.IDs(desired, true), torrentfiles.IDs(desired, false)
 	if len(wanted) == 0 {
 		return downloaderconfig.ErrFileSelectionPending
@@ -325,7 +325,7 @@ func (api *subscriptionSearchRunner) writeSubscriptionFiles(ctx context.Context,
 					return downloaderconfig.ErrFileSelectionPending
 				}
 				state, err = download.selectionSnapshot(ctx, item, p.Definition)
-				if err != nil || !state.Paused || !unwantedMatch(p.Definition, state) {
+				if err != nil || !state.Paused || !unwantedMatch(p.Definition.Files, state) {
 					return downloaderconfig.ErrFileSelectionPending
 				}
 			}
@@ -492,6 +492,9 @@ func (s downloadService) verifySelectedFiles(ctx context.Context, item downloade
 	return nil
 }
 func (s downloadService) guardSelectedStart(ctx context.Context, item downloaderconfig.Downloader, hash string) error {
+	if h, err := s.downloaders.PendingClassicFiles(ctx, item.ID, hash); err != nil || h != nil {
+		return downloaderconfig.ErrFileSelectionPending
+	}
 	p, err := s.downloaders.FindFileSelection(ctx, item.ID, hash)
 	if err != nil {
 		return err
@@ -509,6 +512,22 @@ func (s downloadService) guardSelectedStart(ctx context.Context, item downloader
 	return nil
 }
 func (s downloadService) guardSelectionPresetRecovery(ctx context.Context, itemID int64, hash string) error {
+	if h, err := s.downloaders.PendingClassicFiles(ctx, itemID, hash); err != nil {
+		return err
+	} else if h != nil {
+		item, err := s.downloaders.Get(ctx, itemID)
+		if err != nil || item.Type != "transmission" {
+			return downloaderconfig.ErrFileSelectionPending
+		}
+		profile, err := s.downloaders.FindTransmissionProfile(ctx, itemID, hash)
+		if err != nil || profile.Definition.ConfigDigest != bus.Hash(item) {
+			return downloaderconfig.ErrFileSelectionPending
+		}
+		st, err := s.classicSelectionState(ctx, item, hash, profile.Marker(), *h)
+		if err != nil || !torrentfiles.Wanted(h.Files, st.Files) {
+			return downloaderconfig.ErrFileSelectionPending
+		}
+	}
 	p, err := s.downloaders.FindFileSelection(ctx, itemID, hash)
 	if err != nil {
 		return err

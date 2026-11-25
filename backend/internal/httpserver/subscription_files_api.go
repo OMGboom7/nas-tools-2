@@ -141,12 +141,12 @@ func (api *subscriptionSearchRunner) reviewSubscriptionFiles(ctx context.Context
 			r.Next = "select"
 		}
 	case "unwanting":
-		if !state.Paused || !unwantedMatch(p.Definition, state) {
+		if !state.Paused || !unwantedMatch(p.Definition.Files, state) {
 			return r, downloaderconfig.ErrFileSelectionPending
 		}
 		r.Next = "adopt-unwanted"
 	case "unwanted":
-		if !state.Paused || !unwantedMatch(p.Definition, state) {
+		if !state.Paused || !unwantedMatch(p.Definition.Files, state) {
 			return r, downloaderconfig.ErrFileSelectionPending
 		}
 		r.Next = "select"

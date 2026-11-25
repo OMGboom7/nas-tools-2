@@ -71,7 +71,7 @@ class Searcher:
                          no_exists: dict,
                          sites: list = None,
                          filters: dict = None,
-                         user_name=None):
+                         user_name=None, receipt_sender=None):
         """
         只搜索和下载一个资源，用于精确搜索下载，由微信、Telegram或豆瓣调用
         :param media_info: 已识别的媒体信息
@@ -177,7 +177,8 @@ class Searcher:
             download_items, left_medias = self.downloader.batch_download(in_from=in_from,
                                                                          media_list=media_list,
                                                                          need_tvs=no_exists,
-                                                                         user_name=user_name)
+                                                                         user_name=user_name,
+                                                                         receipt_sender=receipt_sender or (f"rss:{media_info.rssid}" if media_info.rssid else None))
             # 统计下载情况，下全了返回True，没下全返回False
             if not download_items:
                 log.info("【Searcher】%s 未下载到资源" % media_info.title)
