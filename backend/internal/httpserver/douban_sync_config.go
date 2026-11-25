@@ -50,7 +50,7 @@ func (api *doubanSyncAPI) available() bool {
 	return api != nil && api.plugins.system != nil && api.login.pureGo && api.login.guards != nil && *api.login.guards != nil
 }
 func (s pluginService) nativeDouban(id string) bool {
-	return id == douban.SyncPlugin && s.doubanSync.available()
+	return (id == douban.SyncPlugin || id == douban.RankPlugin) && s.doubanSync.available()
 }
 func (api *doubanSyncAPI) scope(ctx context.Context, actor string, raw map[string]string) (string, error) {
 	auth, cfg, err := api.login.authority(actor)
@@ -191,7 +191,8 @@ func (api *doubanSyncAPI) changes(ctx context.Context, actor string, raw map[str
 	return map[string]string{doubanSettingsKey: string(b), doubanControlKey: string(control)}, err
 }
 
-func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action string) {
+func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, id, action string) {
+	p := api.plugin(id)
 	if !api.plugins.historyReader(w, r) {
 		return
 	}
@@ -201,7 +202,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 		return
 	}
 	ctx := r.Context()
-	raw, err := api.plugins.system.ReadMany(ctx, doubanKeys)
+	raw, err := api.plugins.system.ReadMany(ctx, p.keys)
 	if err != nil {
 		subscriptionHistoryError(w, err)
 		return
@@ -211,17 +212,17 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 		subscriptionHistoryError(w, err)
 		return
 	}
-	installed := slices.Contains(ids, douban.SyncPlugin)
+	installed := slices.Contains(ids, p.id)
 	changes := map[string]string{}
 	switch action {
 	case "install", "uninstall":
 		if action == "install" && !installed {
-			ids = append(ids, douban.SyncPlugin)
-			changes[doubanControlKey] = "{}"
+			ids = append(ids, p.id)
+			changes[p.control] = "{}"
 		}
 		if action == "uninstall" {
-			ids = slices.DeleteFunc(ids, func(id string) bool { return id == douban.SyncPlugin })
-			changes[doubanControlKey] = "{}"
+			ids = slices.DeleteFunc(ids, func(id string) bool { return id == p.id })
+			changes[p.control] = "{}"
 		}
 		b, err := json.Marshal(ids)
 		if err != nil || len(ids) > 1024 {
@@ -231,20 +232,20 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 		changes["UserInstalledPlugins"] = string(b)
 	default:
 		if !installed {
-			writeAPIError(w, 404, 404, "未安装豆瓣同步插件")
+			writeAPIError(w, 404, 404, "未安装该订阅插件")
 			return
 		}
 		switch action {
 		case "get":
-			cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
+			detail, err := p.detail(claims.Username, raw)
 			if err != nil {
 				writeAPIError(w, 409, 409, "原豆瓣设置无效")
 				return
 			}
-			signinJSON(w, doubanDetail(claims.Username, raw, cfg))
+			signinJSON(w, detail)
 			return
 		case "status":
-			running, known := api.summary(ctx, raw)
+			running, known := p.summary(ctx, raw)
 			writeJSON(w, 200, map[string]any{"code": 0, "state": running, "stateKnown": known})
 			return
 		case "save", "legacy-save":
@@ -270,9 +271,9 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 				writeAPIError(w, 409, 409, "设置已变化，请刷新")
 				return
 			}
-			changes, err = api.changes(ctx, claims.Username, raw, in.Values, in.ClearConfig, time.Now())
+			changes, err = p.changes(ctx, claims.Username, raw, in.Values, in.ClearConfig, time.Now())
 			if err != nil {
-				writeAPIError(w, 400, 400, "请核对豆瓣同步账号、标记和间隔")
+				writeAPIError(w, 400, 400, "请核对插件设置、来源和执行周期")
 				return
 			}
 		default:
@@ -280,7 +281,7 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 			return
 		}
 	}
-	err = api.plugins.system.UpdateMany(ctx, doubanKeys, func(current map[string]string) (map[string]string, error) {
+	err = api.plugins.system.UpdateMany(ctx, p.keys, func(current map[string]string) (map[string]string, error) {
 		if !maps.Equal(current, raw) {
 			return nil, douban.ErrSettings
 		}
@@ -290,5 +291,5 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 		writeAPIError(w, 409, 409, "豆瓣设置未保存，请刷新核对")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": "豆瓣同步设置已保存"})
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "message": p.name + "设置已保存"})
 }

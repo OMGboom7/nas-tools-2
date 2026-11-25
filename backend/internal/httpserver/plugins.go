@@ -133,7 +133,7 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 		if install {
 			action = "install"
 		}
-		service.doubanSync.serve(response, request, action)
+		service.doubanSync.serve(response, request, request.PathValue("id"), action)
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {

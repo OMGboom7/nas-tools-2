@@ -87,6 +87,10 @@ func (service subscriptionService) fetchNativeSubscriptionMetadata(ctx context.C
 	if err != nil || len(contents) > 2<<20 {
 		return nil, errors.New("TMDB response is unavailable or too large")
 	}
+	return subscriptionMetadataFromJSON(input, contents, app)
+}
+
+func subscriptionMetadataFromJSON(input subscriptionUpsertRequest, contents []byte, app map[string]any) (*nativeSubscriptionMetadata, error) {
 	var detail struct {
 		ID           int64   `json:"id"`
 		Title        string  `json:"title"`

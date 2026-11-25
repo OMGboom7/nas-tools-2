@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/0xforee/nas-tools/backend/internal/douban"
 	"github.com/0xforee/nas-tools/backend/internal/mediaarchive"
 )
 
@@ -228,7 +227,8 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				continue
 			}
 			if service.nativeDouban(id) {
-				raw, err := service.system.ReadMany(request.Context(), doubanKeys)
+				p := service.doubanSync.plugin(id)
+				raw, err := service.system.ReadMany(request.Context(), p.keys)
 				if err != nil {
 					subscriptionHistoryError(response, err)
 					return
@@ -238,13 +238,13 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 					writeAPIError(response, 401, 401, "请重新登录")
 					return
 				}
-				cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
+				detail, err := p.detail(claims.Username, raw)
 				if err != nil {
 					subscriptionHistoryError(response, err)
 					return
 				}
-				detail := doubanDetail(claims.Username, raw, cfg)
-				running, known := service.doubanSync.summary(request.Context(), raw)
+
+				running, known := p.summary(request.Context(), raw)
 				result[id] = map[string]any{"name": detail.Name, "version": catalog[id].Version, "page": id, "state": running, "stateKnown": known, "native": true, "fields": indexerLegacyFields(detail), "config": detail.Values, "fingerprint": detail.Meta.Fingerprint}
 				continue
 			}

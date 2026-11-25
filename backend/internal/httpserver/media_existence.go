@@ -12,16 +12,16 @@ import (
 
 var errLocalMediaUnavailable = errors.New("local media directories are not configured")
 
-func (service subscriptionService) nativeMediaExistence(ctx context.Context, meta mediameta.Metadata, detail tmdbMediaDetails, kind string, category ...string) (mediaserver.Coverage, error) {
+func (service subscriptionService) nativeMediaInventory(ctx context.Context, meta mediameta.Metadata, detail tmdbMediaDetails, kind string, category ...string) (mediaserver.Inventory, error) {
 	if err := ctx.Err(); err != nil {
-		return mediaserver.Coverage{}, err
+		return mediaserver.Inventory{}, err
 	}
 	if service.configStore == nil || service.client == nil || detail.ID <= 0 || kind != "movie" && kind != "tv" {
-		return mediaserver.Coverage{}, mediaserver.ErrConfiguration
+		return mediaserver.Inventory{}, mediaserver.ErrConfiguration
 	}
 	snapshot, err := service.configStore.Snapshot()
 	if err != nil {
-		return mediaserver.Coverage{}, err
+		return mediaserver.Inventory{}, err
 	}
 	serverKind := strings.ToLower(strings.TrimSpace(text(objectValue(snapshot["media"])["media_server"])))
 	config := objectValue(snapshot[serverKind])
@@ -50,23 +50,31 @@ func (service subscriptionService) nativeMediaExistence(ctx context.Context, met
 			// A cancelled request must not start another lookup. An empty but
 			// valid server inventory is authoritative and does not fall back.
 			if contextErr := ctx.Err(); contextErr != nil {
-				return mediaserver.Coverage{}, contextErr
+				return mediaserver.Inventory{}, contextErr
 			}
 			serverErr := err
 			inventory, err = service.nativeLocalMediaInventory(ctx, objectValue(snapshot["media"]), meta, detail, identity, category)
 			if errors.Is(err, errLocalMediaUnavailable) {
-				return mediaserver.Coverage{}, serverErr
+				return mediaserver.Inventory{}, serverErr
 			}
 			if err != nil {
-				return mediaserver.Coverage{}, errors.Join(serverErr, err)
+				return mediaserver.Inventory{}, errors.Join(serverErr, err)
 			}
 		}
 	}
 	if err != nil {
+		return mediaserver.Inventory{}, err
+	}
+	return inventory, nil
+}
+
+func (service subscriptionService) nativeMediaExistence(ctx context.Context, meta mediameta.Metadata, detail tmdbMediaDetails, kind string, category ...string) (mediaserver.Coverage, error) {
+	inventory, err := service.nativeMediaInventory(ctx, meta, detail, kind, category...)
+	if err != nil {
 		return mediaserver.Coverage{}, err
 	}
-	selection := mediaserver.CoverageSelection{TV: identity.TV, SeasonTotals: map[int]int{}}
-	if identity.TV {
+	selection := mediaserver.CoverageSelection{TV: kind == "tv", SeasonTotals: map[int]int{}}
+	if selection.TV {
 		for _, season := range detail.Seasons {
 			if season.Episodes != nil {
 				if _, duplicate := selection.SeasonTotals[season.Number]; duplicate {

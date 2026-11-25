@@ -67,7 +67,7 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 		return
 	}
 	if service.nativeDouban(request.PathValue("id")) {
-		service.doubanSync.serve(response, request, "get")
+		service.doubanSync.serve(response, request, request.PathValue("id"), "get")
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {
@@ -175,7 +175,7 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 		return
 	}
 	if service.nativeDouban(request.PathValue("id")) {
-		service.doubanSync.serve(response, request, "save")
+		service.doubanSync.serve(response, request, request.PathValue("id"), "save")
 		return
 	}
 	if service.nativeArchiveRunner(request.PathValue("id")) {

@@ -46,6 +46,10 @@ func (l InterestList) Valid() bool {
 }
 
 func (c Client) web(ctx context.Context, u url.URL, cookie string) ([]byte, error) {
+	return c.readWeb(ctx, u, cookie, func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse })
+}
+
+func (c Client) readWeb(ctx context.Context, u url.URL, cookie string, redirect func(*http.Request, []*http.Request) error) ([]byte, error) {
 	r, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, ErrResponse
@@ -54,7 +58,7 @@ func (c Client) web(ctx context.Context, u url.URL, cookie string) ([]byte, erro
 	if cookie != "" && u.Host == "movie.douban.com" {
 		r.Header.Set("Cookie", cookie)
 	}
-	client := http.Client{Transport: c.Transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := http.Client{Transport: c.Transport, Timeout: 15 * time.Second, CheckRedirect: redirect}
 	resp, err := client.Do(r)
 	if err != nil {
 		return nil, ErrResponse

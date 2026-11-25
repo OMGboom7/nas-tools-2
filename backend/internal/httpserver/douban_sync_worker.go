@@ -30,7 +30,7 @@ func waitDouban(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func startDoubanSyncWorker(ctx context.Context, api *doubanSyncAPI) func() {
+func startDoubanWorker(ctx context.Context, api *doubanSyncAPI, name string, tick func(context.Context, time.Time) error) func() {
 	if !api.available() {
 		return func() {}
 	}
@@ -40,8 +40,8 @@ func startDoubanSyncWorker(ctx context.Context, api *doubanSyncAPI) func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		for {
-			if err := api.tick(ctx, time.Now()); err != nil && ctx.Err() == nil {
-				slog.Warn("豆瓣同步状态更新失败")
+			if err := tick(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				slog.Warn(name + "状态更新失败")
 			}
 			select {
 			case <-ctx.Done():
@@ -221,12 +221,12 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 	return save(c)
 }
 
-func readDoubanHistory(ctx context.Context, tx *sql.Tx, id string) (string, int64, error) {
+func readDoubanPluginHistory(ctx context.Context, tx *sql.Tx, plugin, id string) (string, int64, error) {
 	var exists bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PLUGIN_HISTORY' COLLATE NOCASE)").Scan(&exists); err != nil || !exists {
 		return "", 0, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT CASE WHEN length(CAST(VALUE AS BLOB))<=1048576 THEN VALUE END FROM PLUGIN_HISTORY WHERE PLUGIN_ID=? AND KEY=?", douban.SyncPlugin, id)
+	rows, err := tx.QueryContext(ctx, "SELECT CASE WHEN length(CAST(VALUE AS BLOB))<=1048576 THEN VALUE END FROM PLUGIN_HISTORY WHERE PLUGIN_ID=? AND KEY=?", plugin, id)
 	if err != nil {
 		return "", 0, err
 	}
@@ -252,7 +252,11 @@ func readDoubanHistory(ctx context.Context, tx *sql.Tx, id string) (string, int6
 }
 func (api *doubanSyncAPI) historyState(ctx context.Context, id string) (string, error) {
 	var state string
-	err := api.plugins.system.Transaction(ctx, func(tx *sql.Tx) error { var err error; state, _, err = readDoubanHistory(ctx, tx, id); return err })
+	err := api.plugins.system.Transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		state, _, err = readDoubanPluginHistory(ctx, tx, douban.SyncPlugin, id)
+		return err
+	})
 	return state, err
 }
 
@@ -336,12 +340,12 @@ func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, cf
 		}); err != nil {
 			return err
 		}
-		state, n, err := readDoubanHistory(ctx, tx, s.ID)
+		state, n, err := readDoubanPluginHistory(ctx, tx, douban.SyncPlugin, s.ID)
 		if err != nil || state != "" && (state != "NEW" || target == "NEW") {
 			return err
 		}
 		if target == "RSS" {
-			if err := insertDoubanSubscription(ctx, tx, input, metadata, cfg.Search); err != nil {
+			if _, err := ensureDoubanSubscription(ctx, tx, input, metadata, cfg.Search); err != nil {
 				return err
 			}
 		}
@@ -358,38 +362,17 @@ func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, cf
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS PLUGIN_HISTORY (ID INTEGER PRIMARY KEY,PLUGIN_ID TEXT,KEY TEXT,VALUE TEXT,DATE TEXT)"); err != nil {
+		if err := saveDoubanPluginHistory(ctx, tx, douban.SyncPlugin, s.ID, target, date, b, n); err != nil {
 			return err
-		}
-		if _, err = tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS GO_PLUGIN_HISTORY_PLUGIN_KEY ON PLUGIN_HISTORY(PLUGIN_ID,KEY)"); err != nil {
-			return err
-		}
-		var result sql.Result
-		if n == 0 {
-			result, err = tx.ExecContext(ctx, "INSERT INTO PLUGIN_HISTORY(PLUGIN_ID,KEY,VALUE,DATE) VALUES(?,?,?,?)", douban.SyncPlugin, s.ID, string(b), date)
-			n = 1
-		} else {
-			result, err = tx.ExecContext(ctx, "UPDATE PLUGIN_HISTORY SET VALUE=json_patch(VALUE,?) WHERE PLUGIN_ID=? AND KEY=?", string(b), douban.SyncPlugin, s.ID)
-		}
-		if err != nil {
-			return err
-		}
-		written, err := result.RowsAffected()
-		if err != nil || written != n {
-			return systemconfig.ErrHistoryConflict
-		}
-		stored, count, err := readDoubanHistory(ctx, tx, s.ID)
-		if err != nil || stored != target || count != n {
-			return systemconfig.ErrHistoryConflict
 		}
 		changed = true
 		return nil
 	})
 	return changed && err == nil, err
 }
-func insertDoubanSubscription(ctx context.Context, tx *sql.Tx, input subscriptionUpsertRequest, m *nativeSubscriptionMetadata, search bool) error {
+func ensureDoubanSubscription(ctx context.Context, tx *sql.Tx, input subscriptionUpsertRequest, m *nativeSubscriptionMetadata, search bool) (bool, error) {
 	if _, err := tx.ExecContext(ctx, nativeSubscriptionSchema(input.Type)); err != nil {
-		return err
+		return false, err
 	}
 	table := "RSS_MOVIES"
 	where := "TMDBID=?"
@@ -401,26 +384,55 @@ func insertDoubanSubscription(ctx context.Context, tx *sql.Tx, input subscriptio
 	}
 	var exists bool
 	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+" WHERE "+where+")", args...).Scan(&exists); err != nil || exists {
-		return err
+		return false, err
 	}
 	id, err := upsertNativeSubscriptionTx(ctx, tx, input, m)
 	if errors.Is(err, errSubscriptionAlreadyExists) {
 		// A matching title/year can belong to a different TMDB subject.
 		// The verified same-ID/season case was handled above.
-		return systemconfig.ErrHistoryConflict
+		return false, systemconfig.ErrHistoryConflict
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	want := "D"
 	if !search {
 		want = "R"
 		if _, err = tx.ExecContext(ctx, "UPDATE "+table+" SET STATE='R' WHERE ID=?", id); err != nil {
-			return err
+			return false, err
 		}
 	}
 	var state, tmdb string
 	if err = tx.QueryRowContext(ctx, "SELECT STATE,TMDBID FROM "+table+" WHERE ID=?", id).Scan(&state, &tmdb); err != nil || state != want || tmdb != m.ID {
+		return false, systemconfig.ErrHistoryConflict
+	}
+	return true, nil
+}
+
+func saveDoubanPluginHistory(ctx context.Context, tx *sql.Tx, plugin, id, target, date string, payload []byte, n int64) error {
+	if _, err := tx.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS PLUGIN_HISTORY (ID INTEGER PRIMARY KEY,PLUGIN_ID TEXT,KEY TEXT,VALUE TEXT,DATE TEXT)"); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "CREATE INDEX IF NOT EXISTS GO_PLUGIN_HISTORY_PLUGIN_KEY ON PLUGIN_HISTORY(PLUGIN_ID,KEY)"); err != nil {
+		return err
+	}
+	var result sql.Result
+	var err error
+	if n == 0 {
+		result, err = tx.ExecContext(ctx, "INSERT INTO PLUGIN_HISTORY(PLUGIN_ID,KEY,VALUE,DATE) VALUES(?,?,?,?)", plugin, id, string(payload), date)
+		n = 1
+	} else {
+		result, err = tx.ExecContext(ctx, "UPDATE PLUGIN_HISTORY SET VALUE=json_patch(VALUE,?) WHERE PLUGIN_ID=? AND KEY=?", string(payload), plugin, id)
+	}
+	if err != nil {
+		return err
+	}
+	written, err := result.RowsAffected()
+	if err != nil || written != n {
+		return systemconfig.ErrHistoryConflict
+	}
+	stored, count, err := readDoubanPluginHistory(ctx, tx, plugin, id)
+	if err != nil || stored != target || count != n {
 		return systemconfig.ErrHistoryConflict
 	}
 	return nil

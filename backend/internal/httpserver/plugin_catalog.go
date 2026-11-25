@@ -165,9 +165,10 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		item.AuthorURL = safePluginURL(item.AuthorURL)
 		if item.Installed && item.Native && readState {
 			if service.nativeDouban(item.ID) {
-				raw, err := service.system.ReadMany(ctx, doubanKeys)
+				p := service.doubanSync.plugin(item.ID)
+				raw, err := service.system.ReadMany(ctx, p.keys)
 				if err == nil {
-					item.Running, item.StateKnown = service.doubanSync.summary(ctx, raw)
+					item.Running, item.StateKnown = p.summary(ctx, raw)
 				} else {
 					item.StateKnown = false
 				}
