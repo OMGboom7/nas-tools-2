@@ -34,6 +34,12 @@ type tmdbTitleChoice struct {
 }
 
 func SearchTitlesCommand(ctx context.Context, configPath, provider string, in io.Reader, out io.Writer) error {
+	if provider == "subject" {
+		return sourceSubjectCommand(ctx, in, out)
+	}
+	if provider == "match" {
+		return titleMatchCommand(ctx, configPath, in, out)
+	}
 	if provider == "criteria" {
 		return chatTitleCriteria(in, out)
 	}

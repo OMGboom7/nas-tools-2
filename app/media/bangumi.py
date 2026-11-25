@@ -1,7 +1,11 @@
 from datetime import datetime
 from functools import lru_cache
 
+import json
+import subprocess
+
 import requests
+from config import run_go_helper
 
 from app.utils import RequestUtils
 from app.utils.types import MediaType
@@ -14,7 +18,6 @@ class Bangumi(object):
 
     _urls = {
         "calendar": "calendar",
-        "detail": "v0/subjects/%s",
     }
     _base_url = "https://api.bgm.tv/"
     _req = RequestUtils(session=requests.Session())
@@ -39,11 +42,20 @@ class Bangumi(object):
         """
         return self.__invoke(self._urls["calendar"], _ts=datetime.strftime(datetime.now(), '%Y%m%d'))
 
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def _subject_bytes(bid, day):
+        query = {"provider": "bangumi", "kind": "tv", "id": str(bid)}
+        return run_go_helper("search-titles", "subject", payload=json.dumps(query).encode(), timeout=20)
+
     def detail(self, bid):
         """
         获取番剧详情
         """
-        return self.__invoke(self._urls["detail"] % bid, _ts=datetime.strftime(datetime.now(), '%Y%m%d'))
+        try:
+            return json.loads(self._subject_bytes(bid, datetime.now().date()))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
 
     @staticmethod
     def __dict_item(item, weekday):

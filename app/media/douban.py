@@ -9,6 +9,7 @@ import zhconv
 import log
 from app.media.doubanapi import DoubanApi, DoubanWeb
 from app.media.meta import MetaInfo
+from app.media.doubanapi.apiv2 import douban_subject
 from app.utils import ExceptionUtils, StringUtils
 from app.utils import RequestUtils
 from app.utils.commons import singleton
@@ -17,6 +18,47 @@ from config import run_go_helper
 
 lock = Lock()
 prefer_webp = True
+
+
+def get_douban_detail(doubanid, mtype=None, wait=False):
+    if wait:
+        sleep(round(random.uniform(10, 60), 1))
+    if mtype:
+        return douban_subject("movie" if mtype == MediaType.MOVIE else "tv", doubanid) or None
+    return douban_subject("movie", doubanid) or douban_subject("tv", doubanid) or None
+
+
+def search_douban_medias(keyword, mtype: MediaType = None, season=None, episode=None, page=1):
+    if not keyword or mtype not in (None, MediaType.MOVIE, MediaType.TV):
+        return []
+    kind = "movie" if mtype == MediaType.MOVIE else "tv" if mtype else ""
+    query = {"title": keyword, "kind": kind, "page": int(page)}
+    try:
+        rows = json.loads(run_go_helper("search-titles", "douban", payload=json.dumps(query).encode(), timeout=40))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        log.warn("【Douban】豆瓣词条搜索暂不可用")
+        return []
+    medias = []
+    for row in rows:
+        media = MetaInfo(title=row["title"])
+        media.title = row["title"]
+        media.type = MediaType.MOVIE if row["kind"] == "movie" else MediaType.TV
+        if (season or episode) and media.type != MediaType.TV:
+            continue
+        if season and season != 1 and media.begin_season != season:
+            continue
+        if episode and str(episode).isdigit():
+            media.begin_episode = int(episode)
+            media.title = f"{media.title} 第{episode}集"
+        media.year = row["year"]
+        media.tmdb_id = f"DB:{row['id']}"
+        media.douban_id = row["id"]
+        media.overview = row["overview"]
+        media.poster_path = row["image"]
+        media.vote_average = row["vote"]
+        medias.append(media)
+    return medias
+
 
 @singleton
 class DouBan:
@@ -41,36 +83,7 @@ class DouBan:
             ExceptionUtils.exception_traceback(err)
             log.warn(f"【Douban】获取cookie失败：{format(err)}")
 
-    def get_douban_detail(self, doubanid, mtype=None, wait=False):
-        """
-        根据豆瓣ID返回豆瓣详情，带休眠
-        """
-        log.info("【Douban】正在通过API查询豆瓣详情：%s" % doubanid)
-        # 随机休眠
-        if wait:
-            time = round(random.uniform(10, 60), 1)
-            log.info("【Douban】随机休眠：%s 秒" % time)
-            sleep(time)
-        if mtype == MediaType.MOVIE:
-            douban_info = self.doubanapi.movie_detail(doubanid)
-        elif mtype:
-            douban_info = self.doubanapi.tv_detail(doubanid)
-        else:
-            douban_info = self.doubanapi.movie_detail(doubanid)
-            if not douban_info:
-                douban_info = self.doubanapi.tv_detail(doubanid)
-        if not douban_info:
-            log.warn("【Douban】%s 未找到豆瓣详细信息" % doubanid)
-            return None
-        if douban_info.get("localized_message"):
-            log.warn("【Douban】查询豆瓣详情错误：%s" % douban_info.get("localized_message"))
-            return None
-        if not douban_info.get("title"):
-            return None
-        if douban_info.get("title") == "未知电影" or douban_info.get("title") == "未知电视剧":
-            return None
-        log.info("【Douban】查询到数据：%s" % douban_info.get("title"))
-        return douban_info
+    get_douban_detail = staticmethod(get_douban_detail)
 
     def __search_douban_id(self, metainfo):
         """
@@ -178,37 +191,7 @@ class DouBan:
             sleep(time)
         return self.doubanweb.user(cookie=self.cookie, userid=userid)
 
-    @staticmethod
-    def search_douban_medias(keyword, mtype: MediaType = None, season=None, episode=None, page=1):
-        if not keyword or mtype not in (None, MediaType.MOVIE, MediaType.TV):
-            return []
-        kind = "movie" if mtype == MediaType.MOVIE else "tv" if mtype else ""
-        query = {"title": keyword, "kind": kind, "page": int(page)}
-        try:
-            rows = json.loads(run_go_helper("search-titles", "douban", payload=json.dumps(query).encode(), timeout=40))
-        except (OSError, ValueError, subprocess.SubprocessError):
-            log.warn("【Douban】豆瓣词条搜索暂不可用")
-            return []
-        medias = []
-        for row in rows:
-            media = MetaInfo(title=row["title"])
-            media.title = row["title"]
-            media.type = MediaType.MOVIE if row["kind"] == "movie" else MediaType.TV
-            if (season or episode) and media.type != MediaType.TV:
-                continue
-            if season and season != 1 and media.begin_season != season:
-                continue
-            if episode and str(episode).isdigit():
-                media.begin_episode = int(episode)
-                media.title = f"{media.title} 第{episode}集"
-            media.year = row["year"]
-            media.tmdb_id = f"DB:{row['id']}"
-            media.douban_id = row["id"]
-            media.overview = row["overview"]
-            media.poster_path = row["image"]
-            media.vote_average = row["vote"]
-            medias.append(media)
-        return medias
+    search_douban_medias = staticmethod(search_douban_medias)
 
     def get_media_detail_from_web(self, doubanid):
         """

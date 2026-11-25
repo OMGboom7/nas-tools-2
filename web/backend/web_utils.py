@@ -2,7 +2,8 @@ from functools import lru_cache
 
 import cn2an
 
-from app.media import Media, Bangumi, DouBan
+from app.media import Media, Bangumi
+from app.media.douban import get_douban_detail, search_douban_medias
 from app.media.meta import MetaInfo
 from app.utils import StringUtils, ExceptionUtils, SystemUtils, RequestUtils, IpUtils
 from app.utils.types import MediaType
@@ -77,55 +78,39 @@ class WebUtils:
         """
         if not mediaid:
             return None
-        media_info = None
-        if str(mediaid).startswith("DB:"):
-            # 豆瓣
-            doubanid = mediaid[3:]
-            info = DouBan().get_douban_detail(doubanid=doubanid, mtype=mtype, wait=wait)
+        selector = str(mediaid)
+        if selector.startswith("DB:"):
+            info = get_douban_detail(selector[3:], mtype=mtype, wait=wait)
             if not info:
                 return None
-            title = info.get("title")
-            original_title = info.get("original_title")
-            year = info.get("year")
-            # 支持自动识别类型
+            titles = (info.get("original_title"), info.get("title"))
+            year = info.get("year") or ""
             if not mtype:
-                mtype = MediaType.TV if info.get("episodes_count") else MediaType.MOVIE
-            if original_title:
-                media_info = Media().get_media_info(title=f"{original_title} {year}",
-                                                    mtype=mtype,
-                                                    append_to_response="all")
-            if not media_info or not media_info.tmdb_info:
-                media_info = Media().get_media_info(title=f"{title} {year}",
-                                                    mtype=mtype,
-                                                    append_to_response="all")
-            media_info.douban_id = doubanid
-        elif str(mediaid).startswith("BG:"):
-            # BANGUMI
-            bangumiid = str(mediaid)[3:]
-            info = Bangumi().detail(bid=bangumiid)
+                mtype = MediaType.TV if info.get("episodes_count") or info.get("type") == "tv" else MediaType.MOVIE
+        elif selector.startswith("BG:"):
+            info = Bangumi().detail(bid=selector[3:])
             if not info:
                 return None
-            title = info.get("name")
-            title_cn = info.get("name_cn")
-            year = info.get("date")[:4] if info.get("date") else ""
-            media_info = Media().get_media_info(title=f"{title} {year}",
-                                                mtype=MediaType.TV,
-                                                append_to_response="all")
-            if not media_info or not media_info.tmdb_info:
-                media_info = Media().get_media_info(title=f"{title_cn} {year}",
-                                                    mtype=MediaType.TV,
-                                                    append_to_response="all")
+            titles = (info.get("name"), info.get("name_cn"))
+            year = (info.get("date") or "")[:4]
+            mtype = MediaType.TV
         else:
-            # TMDB
-            info = Media().get_tmdb_info(tmdbid=mediaid,
-                                         mtype=mtype,
-                                         append_to_response="all")
+            info = Media().get_tmdb_info(tmdbid=mediaid, mtype=mtype, append_to_response="all")
             if not info:
                 return None
-            media_info = MetaInfo(title=info.get("title") if mtype == MediaType.MOVIE else info.get("name"))
-            media_info.set_tmdb_info(info)
+            media = MetaInfo(title=info.get("title") if mtype == MediaType.MOVIE else info.get("name"))
+            media.set_tmdb_info(info)
+            return media
 
-        return media_info
+        resolver = Media()
+        for title in dict.fromkeys(titles):
+            if title:
+                media = resolver.get_media_info(title=f"{title} {year}".strip(), mtype=mtype, append_to_response="all")
+                if media and media.tmdb_info:
+                    if selector.startswith("DB:"):
+                        media.douban_id = selector[3:]
+                    return media
+        return None
 
     @staticmethod
     def search_media_infos(keyword, source=None, page=1):
@@ -146,8 +131,8 @@ class WebUtils:
         else:
             use_douban_titles = Config().get_config("laboratory").get("use_douban_titles")
         if use_douban_titles:
-            medias = DouBan.search_douban_medias(keyword=key_word, mtype=mtype, season=season_num,
-                                                 episode=episode_num, page=page)
+            medias = search_douban_medias(keyword=key_word, mtype=mtype, season=season_num,
+                                          episode=episode_num, page=page)
         else:
             meta_info = MetaInfo(title=content)
             tmdbinfos = Media().get_tmdb_infos(title=meta_info.get_name(),

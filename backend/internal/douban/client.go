@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -116,10 +117,35 @@ func (c Client) get(ctx context.Context, resource string, q url.Values, out any)
 	}
 	return nil
 }
+
+var legacyImageHost = regexp.MustCompile(`qnmob[0-9]+`)
+
+// SubjectDocument retains provider fields used by the original detail and plugin APIs.
+func (c Client) SubjectDocument(ctx context.Context, kind, id string) (json.RawMessage, error) {
+	if !valid(kind, id) {
+		return nil, ErrResponse
+	}
+	var raw json.RawMessage
+	if c.get(ctx, "/"+kind+"/"+id, nil, &raw) != nil {
+		return nil, ErrResponse
+	}
+	var identity struct {
+		ID    json.RawMessage
+		Title string
+		Type  string
+	}
+	if json.Unmarshal(raw, &identity) != nil || ID(identity.ID) != id || strings.TrimSpace(identity.Title) == "" ||
+		identity.Title == "未知电影" || identity.Title == "未知电视剧" || identity.Type != "" && identity.Type != kind {
+		return nil, ErrResponse
+	}
+	return legacyImageHost.ReplaceAll(raw, []byte("img1")), nil
+}
+
 func (c Client) Subject(ctx context.Context, kind, id string) (Subject, error) {
 	s := Subject{}
-	if !valid(kind, id) {
-		return s, ErrResponse
+	raw, err := c.SubjectDocument(ctx, kind, id)
+	if err != nil {
+		return s, err
 	}
 	var p struct {
 		ID       json.RawMessage `json:"id"`
@@ -134,7 +160,7 @@ func (c Client) Subject(ctx context.Context, kind, id string) (Subject, error) {
 			Value json.RawMessage `json:"value"`
 		} `json:"rating"`
 	}
-	if c.get(ctx, "/"+kind+"/"+id, nil, &p) != nil || ID(p.ID) != id || strings.TrimSpace(p.Title) == "" || p.Kind != "" && p.Kind != kind {
+	if json.Unmarshal(raw, &p) != nil {
 		return s, ErrResponse
 	}
 	s = Subject{ID: id, Title: strings.TrimSpace(p.Title), Original: strings.TrimSpace(p.Original), Year: year(p.Year), IMDb: p.IMDb, Kind: kind}

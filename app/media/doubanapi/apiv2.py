@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import hmac
+import subprocess
 from datetime import datetime
 from functools import lru_cache
 from random import choice
@@ -14,6 +15,20 @@ import requests
 from app.utils import RequestUtils, StringUtils
 from app.utils.commons import singleton
 from app.utils.commons import ttl_lru
+from config import run_go_helper
+
+
+@lru_cache(maxsize=256)
+def _subject_bytes(kind, subject_id):
+    query = {"provider": "douban", "kind": kind, "id": str(subject_id)}
+    return run_go_helper("search-titles", "subject", payload=json.dumps(query).encode(), timeout=20)
+
+
+def douban_subject(kind, subject_id):
+    try:
+        return json.loads(_subject_bytes(kind, subject_id))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
 
 
 @singleton
@@ -103,7 +118,6 @@ class DoubanApi(object):
         "tv_rank_list": "/tv/rank_list",
 
         # movie info
-        "movie_detail": "/movie/",
         "movie_rating": "/movie/%s/rating",
         "movie_photos": "/movie/%s/photos",
         "movie_trailers": "/movie/%s/trailers",
@@ -113,7 +127,6 @@ class DoubanApi(object):
         "movie_celebrities": "/movie/%s/celebrities",
 
         # tv info
-        "tv_detail": "/tv/",
         "tv_rating": "/tv/%s/rating",
         "tv_photos": "/tv/%s/photos",
         "tv_trailers": "/tv/%s/trailers",
@@ -265,13 +278,13 @@ class DoubanApi(object):
         return self.__safe_invoke(self._urls["show_hot"], start=start, count=count, _ts=ts)
 
     def movie_detail(self, subject_id):
-        return self.__safe_invoke(self._urls["movie_detail"] + subject_id)
+        return douban_subject("movie", subject_id)
 
     def movie_celebrities(self, subject_id):
         return self.__safe_invoke(self._urls["movie_celebrities"] % subject_id)
 
     def tv_detail(self, subject_id):
-        return self.__safe_invoke(self._urls["tv_detail"] + subject_id)
+        return douban_subject("tv", subject_id)
 
     def tv_celebrities(self, subject_id):
         return self.__safe_invoke(self._urls["tv_celebrities"] % subject_id)
