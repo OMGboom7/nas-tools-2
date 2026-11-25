@@ -903,7 +903,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		mux.Handle("POST /api/v1/plugin/page", plugins.nativePluginPageRoute(legacyFallback, false))
 		mux.Handle("POST /api/v1/plugin/page/action", plugins.nativePluginPageRoute(legacyFallback, true))
 	}
-	mux.HandleFunc("/do", legacyCommandRoutes(pluginReads, plugins.iyuu, nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
+	mux.HandleFunc("/do", plugins.legacyCommandRoutes(pluginReads, nativeSiteLogin.legacyAction(nativeStats.legacyAction(nativeSubtitles.legacyAction(nativeLibrary.serveLegacyScrape)))))
 	mux.HandleFunc("GET /api/v1/plugins", plugins.serveList)
 	mux.HandleFunc("POST /api/v1/plugins/{id}/install", plugins.install)
 	mux.HandleFunc("GET /api/v1/plugins/{id}/page", plugins.servePage)

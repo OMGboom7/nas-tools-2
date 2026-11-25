@@ -102,6 +102,9 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 			return
 		}
 		if action {
+			if s.unavailablePlugin(w, probe, id) {
+				return
+			}
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			fallback.ServeHTTP(w, r)
 			return
@@ -175,6 +178,9 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 		if s.nativeIndexer(id) {
 			probe.SetPathValue("id", id)
 			s.serveIndexerPlugin(w, probe, "page")
+			return
+		}
+		if s.unavailablePlugin(w, probe, id) {
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))

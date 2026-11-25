@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -33,7 +34,7 @@ func (service pluginService) serveNativeLegacyPluginApps(response http.ResponseW
 	writeJSON(response, 200, map[string]any{"code": 0, "result": result, "statistic": map[string]any{}})
 }
 
-func legacyCommandRoutes(reads map[string]http.HandlerFunc, iyuu *iyuuAPI, next http.HandlerFunc) http.HandlerFunc {
+func (s pluginService) legacyCommandRoutes(reads map[string]http.HandlerFunc, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			next(w, r)
@@ -52,7 +53,10 @@ func legacyCommandRoutes(reads map[string]http.HandlerFunc, iyuu *iyuuAPI, next 
 			writeAPIError(w, 410, 410, "旧文件名恢复入口已迁移，请在服务页上传 ZIP 并按提示离线恢复")
 			return
 		}
-		if iyuu != nil && envelope.Cmd == "run_plugin_method" && iyuu.legacyBind(w, r, envelope.Data) {
+		if s.iyuu != nil && envelope.Cmd == "run_plugin_method" && s.iyuu.legacyBind(w, r, envelope.Data) {
+			return
+		}
+		if s.pluginCommand(w, r, envelope.Cmd, envelope.Data) {
 			return
 		}
 		if read := reads[envelope.Cmd]; read != nil {
@@ -66,4 +70,63 @@ func legacyCommandRoutes(reads map[string]http.HandlerFunc, iyuu *iyuuAPI, next 
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 		next(w, r)
 	}
+}
+
+// The old settings page posts JSON commands. Keep the original complete-config
+// semantics and use the same local handlers as old form clients.
+func (s pluginService) pluginCommand(w http.ResponseWriter, r *http.Request, cmd string, raw json.RawMessage) bool {
+	var action string
+	switch cmd {
+	case "install_plugin":
+		action = "install"
+	case "uninstall_plugin":
+		action = "uninstall"
+	case "get_plugin_state":
+		action = "status"
+	case "update_plugin_config":
+		action = "config"
+	default:
+		return false
+	}
+	if s.system == nil {
+		writeAPIError(w, 503, 503, "插件管理需要挂载应用配置和数据库")
+		return true
+	}
+	var in struct {
+		ID, Plugin, Fingerprint string
+		Config                  json.RawMessage
+	}
+	if json.Unmarshal(raw, &in) != nil {
+		writeAPIError(w, 400, 400, "插件操作格式无效")
+		return true
+	}
+	id := in.ID
+	form := url.Values{}
+	if action == "config" {
+		id = in.Plugin
+		if len(in.Config) == 0 || in.Config[0] != '{' {
+			writeAPIError(w, 400, 400, "插件配置应为对象")
+			return true
+		}
+		form.Set("config", string(in.Config))
+		form.Set("fingerprint", in.Fingerprint)
+	}
+	id = strings.TrimSpace(id)
+	if !pluginIDPattern.MatchString(id) {
+		writeAPIError(w, 400, 400, "插件编号无效")
+		return true
+	}
+	form.Set("id", id)
+	req := r.Clone(r.Context())
+	req.URL.Path = "/api/v1/plugin/" + action
+	req.URL.RawQuery = ""
+	req.Form, req.PostForm = form, form
+	req.Body = http.NoBody
+	req.ContentLength = 0
+	if !s.dispatchPlugin(w, req, id, action) && !s.unavailablePlugin(w, req, id) {
+		if _, ok := s.catalogReader(w, req); ok {
+			writeAPIError(w, 501, 501, "当前部署尚未接管此插件命令")
+		}
+	}
+	return true
 }

@@ -35,6 +35,10 @@ make python-exit-status
 
 ## 当前基线
 
+2026-11-25 Go 已接管原 `/do` 中的 `install_plugin`、`uninstall_plugin`、`update_plugin_config` 和 `get_plugin_state`。使用 Go 登录令牌的客户端可以沿用原 JSON 命令。React、旧表单接口和这四条命令现在共用各插件的安装、配置、状态和权限处理。完整配置仍按对应插件的旧语义保存。Go-only 下管理员可以识别缺少 Go 实现的已安装扩展；原安装记录与配置保留。普通账户查询目录外的编号得到 404。[插件分派](../../backend/internal/httpserver/plugin_dispatch.go)和[兼容测试](../../backend/internal/httpserver/plugin_dispatch_test.go)
+
+隔离 Go 服务使用临时账户和数据库保存制作组配置并安装插件，React 使用的目录接口显示其已运行。实际停止服务并重新启动后，用旧命令再次读取状态、卸载，目录随即更新。本批通过 1014 项 HTTP 测试、其余 Go 包的测试或编译、Go 静态检查、Linux amd64 静态构建、361 项前端测试和生产构建。过渡部署仍有 6 个实际 Flask 调用点，分别涉及目录、已安装列表、安装／卸载、保存配置、扩展页和页面操作；通用代理、第三方插件的实际运行、候选镜像和存量生产切换仍待处理。
+
 2026-11-25 AutoSub 的 faster-whisper 模式已改用本机 CTranslate2 C++ 程序。Go 使用 FFmpeg 提取选中音轨，原生程序按 16 kHz、30 秒窗口、CPU INT8 和五路束搜索识别，自动检测多语言模型的音轨语言，通过词对齐恢复时间。英文按原逻辑合并为句，其他语言按段输出。语音留在本机。Go 从服务进程的 PATH 查找 `nastool-ct2-whisper`，也可用 `NASTOOL_CT2_WHISPER` 指向已安装的原生程序。候选镜像使用固定的 CTranslate2 4.6.3 源码和 Ruy 构建；宿主机也可从同一 [CMake 目标](../../backend/native/ct2-whisper/CMakeLists.txt) 编译。React 沿用原模型名称、模型目录及单次运行开关。[识别与字幕写回](../../backend/internal/autosub/ct2.go)和[原生识别程序](../../backend/native/ct2-whisper/main.cc)
 
 可读取 Systran 和 guillaumekln 两种旧模型缓存、Hugging Face 默认缓存和本机解压目录。缓存缺失时，Go 从十个原模型选项对应的固定版本下载所需文件，按 Git blob 或 LFS 摘要校验，单文件完成后发布。传输中断后可从已写入位置继续；服务端忽略范围请求时重新接收。原目录和缓存中的其他文件保留。whisper.cpp 同时支持旧版的时间偏移、处理时长、识别提示和额外输出选项，临时识别产物写入本次任务的私有目录。[模型版本](../../backend/internal/autosub/ct2_models.json)和[缓存回归](../../backend/internal/autosub/ct2_test.go)

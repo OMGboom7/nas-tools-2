@@ -133,6 +133,9 @@ func (service pluginService) servePage(response http.ResponseWriter, request *ht
 		service.serveIndexerPlugin(response, request, "page")
 		return
 	}
+	if service.unavailablePluginRoute(response, request) {
+		return
+	}
 	token, ok := requireServiceToken(response, request)
 	if !ok {
 		return
@@ -273,6 +276,9 @@ func (service pluginService) deletePageRecord(response http.ResponseWriter, requ
 	}
 	if service.nativeSubscriptionHistory(id) {
 		service.removeSubscriptionHistory(response, request, id, input.RecordID)
+		return
+	}
+	if service.unavailablePlugin(response, request, id) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)

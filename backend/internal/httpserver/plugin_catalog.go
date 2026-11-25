@@ -303,7 +303,7 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 			if _, known := catalog[id]; known {
 				continue
 			}
-			data.Items = append(data.Items, pluginSummary{ID: id, Name: id, Description: "已安装，但不在当前内置插件目录中。", Installed: true})
+			data.Items = append(data.Items, pluginSummary{ID: id, Name: id, Description: "已保留原安装记录和配置。此扩展需要对应的 Go 实现才能运行。", Installed: true})
 		}
 	}
 	for _, item := range data.Items {
@@ -331,7 +331,5 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 }
 
 func (service pluginService) ownsPlugin(id string) bool {
-	return service.nativeFeedPlugin(id) || service.nativeArchiveRunner(id) || nativeMetadataPlugin(id) || service.nativeHosts(id) || service.nativeIndexer(id) || service.nativeSubtitle(id) || service.nativeOpenSubtitles(id) || service.nativeLibrary(id) || service.nativeMediaRefresh(id) || service.nativeEventWebhook(id) || service.nativeSpeedLimiter(id) || service.nativeMovieLike(id) || service.nativeMediaSyncDelete(id) ||
-		service.nativeSignin(id) ||
-		service.nativeCloudflare(id) || service.nativeCookieCloud(id) || service.nativeAutoBackup(id) || service.nativeSyncTimer(id) || service.nativeTorrentMark(id) || service.nativeTorrentRemover(id) || service.nativeTorrentTransfer(id)
+	return service.pluginHandler(id) != nil
 }

@@ -101,168 +101,14 @@ func (service pluginService) uninstall(response http.ResponseWriter, request *ht
 }
 
 func (service pluginService) mutate(response http.ResponseWriter, request *http.Request, install bool) {
-	if service.nativeTorrentTransfer(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveTorrentTransferPlugin(response, request, action)
+	action := "uninstall"
+	if install {
+		action = "install"
+	}
+	if service.dispatchPlugin(response, request, strings.TrimSpace(request.PathValue("id")), action) {
 		return
 	}
-	if service.nativeTorrentRemover(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveTorrentRemoverPlugin(response, request, action)
-		return
-	}
-	if service.nativeTorrentMark(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveTorrentMarkPlugin(response, request, action)
-		return
-	}
-	if service.nativeSyncTimer(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveSyncTimerPlugin(response, request, action)
-		return
-	}
-	if service.nativeFeedPlugin(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveFeedPlugin(response, request, request.PathValue("id"), action)
-		return
-	}
-	if service.nativeArchiveRunner(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveArchivePlugin(response, request, action)
-		return
-	}
-	if service.nativeAutoBackup(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveAutoBackupPlugin(response, request, action)
-		return
-	}
-	if service.nativeCookieCloud(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveCookieCloudPlugin(response, request, action)
-		return
-	}
-	if service.nativeCloudflare(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveCloudflarePlugin(response, request, action)
-		return
-	}
-	if service.nativeSignin(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveSigninPlugin(response, request, action)
-		return
-	}
-	if service.nativeMovieLike(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveMovieLikePlugin(response, request, action)
-		return
-	}
-	if service.nativeMediaSyncDelete(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveMediaSyncDeletePlugin(response, request, action)
-		return
-	}
-	if service.nativeSpeedLimiter(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveSpeedLimiterPlugin(response, request, action)
-		return
-	}
-	if service.nativeEventWebhook(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveEventWebhookPlugin(response, request, action)
-		return
-	}
-	if service.nativeMediaRefresh(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveMediaRefreshPlugin(response, request, action)
-		return
-	}
-	if service.nativeLibrary(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveLibraryPlugin(response, request, action)
-		return
-	}
-	if service.nativeSubtitle(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveSubtitlePlugin(response, request, action)
-		return
-	}
-	if service.nativeOpenSubtitles(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveOpenSubtitlePlugin(response, request, action)
-		return
-	}
-	if service.nativeIndexer(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveIndexerPlugin(response, request, action)
-		return
-	}
-	if service.nativeHosts(request.PathValue("id")) {
-		action := "uninstall"
-		if install {
-			action = "install"
-		}
-		service.serveHostsPlugin(response, request, action)
-		return
-	}
-	if service.system != nil && nativeMetadataPlugin(strings.TrimSpace(request.PathValue("id"))) {
-		service.mutateNativeMetadataPlugin(response, request, install)
+	if service.unavailablePluginRoute(response, request) {
 		return
 	}
 	token, ok := requireServiceToken(response, request)
@@ -295,10 +141,6 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 	if service.legacyURL == "" {
 		writeAPIError(response, 501, 501, "此插件的安装和卸载仍需要旧后端")
 		return
-	}
-	action := "install"
-	if !install {
-		action = "uninstall"
 	}
 	result, err := postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/"+action, token, url.Values{"id": {id}})
 	if !handlePluginResult(response, result, err, "plugin operation failed") {

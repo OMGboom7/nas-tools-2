@@ -50,88 +50,10 @@ type pluginConfigRequest struct {
 }
 
 func (service pluginService) serveConfig(response http.ResponseWriter, request *http.Request) {
-	if service.nativeTorrentTransfer(request.PathValue("id")) {
-		service.serveTorrentTransferPlugin(response, request, "get")
+	if service.dispatchPlugin(response, request, strings.TrimSpace(request.PathValue("id")), "get") {
 		return
 	}
-	if service.nativeTorrentRemover(request.PathValue("id")) {
-		service.serveTorrentRemoverPlugin(response, request, "get")
-		return
-	}
-	if service.nativeTorrentMark(request.PathValue("id")) {
-		service.serveTorrentMarkPlugin(response, request, "get")
-		return
-	}
-	if service.nativeSyncTimer(request.PathValue("id")) {
-		service.serveSyncTimerPlugin(response, request, "get")
-		return
-	}
-	if service.nativeFeedPlugin(request.PathValue("id")) {
-		service.serveFeedPlugin(response, request, request.PathValue("id"), "get")
-		return
-	}
-	if service.nativeArchiveRunner(request.PathValue("id")) {
-		service.serveArchivePlugin(response, request, "get")
-		return
-	}
-	if service.nativeAutoBackup(request.PathValue("id")) {
-		service.serveAutoBackupPlugin(response, request, "get")
-		return
-	}
-	if service.nativeCookieCloud(request.PathValue("id")) {
-		service.serveCookieCloudPlugin(response, request, "get")
-		return
-	}
-	if service.nativeCloudflare(request.PathValue("id")) {
-		service.serveCloudflarePlugin(response, request, "get")
-		return
-	}
-	if service.nativeSignin(request.PathValue("id")) {
-		service.serveSigninPlugin(response, request, "get")
-		return
-	}
-	if service.nativeMovieLike(request.PathValue("id")) {
-		service.serveMovieLikePlugin(response, request, "get")
-		return
-	}
-	if service.nativeMediaSyncDelete(request.PathValue("id")) {
-		service.serveMediaSyncDeletePlugin(response, request, "get")
-		return
-	}
-	if service.nativeSpeedLimiter(request.PathValue("id")) {
-		service.serveSpeedLimiterPlugin(response, request, "get")
-		return
-	}
-	if service.nativeEventWebhook(request.PathValue("id")) {
-		service.serveEventWebhookPlugin(response, request, "get")
-		return
-	}
-	if service.nativeMediaRefresh(request.PathValue("id")) {
-		service.serveMediaRefreshPlugin(response, request, "get")
-		return
-	}
-	if service.nativeLibrary(request.PathValue("id")) {
-		service.serveLibraryPlugin(response, request, "get")
-		return
-	}
-	if service.nativeSubtitle(request.PathValue("id")) {
-		service.serveSubtitlePlugin(response, request, "get")
-		return
-	}
-	if service.nativeOpenSubtitles(request.PathValue("id")) {
-		service.serveOpenSubtitlePlugin(response, request, "get")
-		return
-	}
-	if service.nativeIndexer(request.PathValue("id")) {
-		service.serveIndexerPlugin(response, request, "get")
-		return
-	}
-	if service.nativeHosts(request.PathValue("id")) {
-		service.serveHostsPlugin(response, request, "get")
-		return
-	}
-	if service.system != nil && nativeMetadataPlugin(strings.TrimSpace(request.PathValue("id"))) {
-		service.serveNativeMetadataConfig(response, request)
+	if service.unavailablePluginRoute(response, request) {
 		return
 	}
 	token, ok := requireServiceToken(response, request)
@@ -158,88 +80,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 }
 
 func (service pluginService) updateConfig(response http.ResponseWriter, request *http.Request) {
-	if service.nativeTorrentTransfer(request.PathValue("id")) {
-		service.serveTorrentTransferPlugin(response, request, "save")
+	if service.dispatchPlugin(response, request, strings.TrimSpace(request.PathValue("id")), "save") {
 		return
 	}
-	if service.nativeTorrentRemover(request.PathValue("id")) {
-		service.serveTorrentRemoverPlugin(response, request, "save")
-		return
-	}
-	if service.nativeTorrentMark(request.PathValue("id")) {
-		service.serveTorrentMarkPlugin(response, request, "save")
-		return
-	}
-	if service.nativeSyncTimer(request.PathValue("id")) {
-		service.serveSyncTimerPlugin(response, request, "save")
-		return
-	}
-	if service.nativeFeedPlugin(request.PathValue("id")) {
-		service.serveFeedPlugin(response, request, request.PathValue("id"), "save")
-		return
-	}
-	if service.nativeArchiveRunner(request.PathValue("id")) {
-		service.serveArchivePlugin(response, request, "save")
-		return
-	}
-	if service.nativeAutoBackup(request.PathValue("id")) {
-		service.serveAutoBackupPlugin(response, request, "save")
-		return
-	}
-	if service.nativeCookieCloud(request.PathValue("id")) {
-		service.serveCookieCloudPlugin(response, request, "save")
-		return
-	}
-	if service.nativeCloudflare(request.PathValue("id")) {
-		service.serveCloudflarePlugin(response, request, "save")
-		return
-	}
-	if service.nativeSignin(request.PathValue("id")) {
-		service.serveSigninPlugin(response, request, "save")
-		return
-	}
-	if service.nativeMovieLike(request.PathValue("id")) {
-		service.serveMovieLikePlugin(response, request, "save")
-		return
-	}
-	if service.nativeMediaSyncDelete(request.PathValue("id")) {
-		service.serveMediaSyncDeletePlugin(response, request, "save")
-		return
-	}
-	if service.nativeSpeedLimiter(request.PathValue("id")) {
-		service.serveSpeedLimiterPlugin(response, request, "save")
-		return
-	}
-	if service.nativeEventWebhook(request.PathValue("id")) {
-		service.serveEventWebhookPlugin(response, request, "save")
-		return
-	}
-	if service.nativeMediaRefresh(request.PathValue("id")) {
-		service.serveMediaRefreshPlugin(response, request, "save")
-		return
-	}
-	if service.nativeLibrary(request.PathValue("id")) {
-		service.serveLibraryPlugin(response, request, "save")
-		return
-	}
-	if service.nativeSubtitle(request.PathValue("id")) {
-		service.serveSubtitlePlugin(response, request, "save")
-		return
-	}
-	if service.nativeOpenSubtitles(request.PathValue("id")) {
-		service.serveOpenSubtitlePlugin(response, request, "save")
-		return
-	}
-	if service.nativeIndexer(request.PathValue("id")) {
-		service.serveIndexerPlugin(response, request, "save")
-		return
-	}
-	if service.nativeHosts(request.PathValue("id")) {
-		service.serveHostsPlugin(response, request, "save")
-		return
-	}
-	if service.system != nil && nativeMetadataPlugin(strings.TrimSpace(request.PathValue("id"))) {
-		service.serveNativeMetadataConfig(response, request)
+	if service.unavailablePluginRoute(response, request) {
 		return
 	}
 	token, ok := requireServiceToken(response, request)
