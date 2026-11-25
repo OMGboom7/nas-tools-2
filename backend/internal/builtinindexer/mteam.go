@@ -29,6 +29,10 @@ func mteamBase(domain string) (*url.URL, *url.URL, error) {
 			suffix = candidate
 		}
 	}
+	// The shipped catalog also contains this specific front end.
+	if host == "kp.m-team.info" {
+		suffix = "m-team.info"
+	}
 	if suffix == "" {
 		return nil, nil, ErrConfig
 	}
@@ -100,7 +104,28 @@ func mteamInteger(raw json.RawMessage, required bool) (*int64, error) {
 }
 
 func SearchMTeam(ctx context.Context, definition indexercatalog.Definition, key, ua, keyword string, page int, transport http.RoundTripper) ([]externalindexer.Resource, error) {
-	if definition.Parser != "MTeamSpider" || definition.ID == "" || keyword == "" || len(keyword) > 1024 || page < 0 || page > 10000 {
+	if keyword == "" {
+		return nil, ErrConfig
+	}
+	rows, err := mteamPage(ctx, definition, key, ua, &keyword, page, transport)
+	if err != nil {
+		return nil, err
+	}
+	resources := make([]externalindexer.Resource, len(rows))
+	for i, row := range rows {
+		resources[i] = row.Resource
+	}
+	return resources, nil
+}
+
+type mteamResult struct {
+	externalindexer.Resource
+	// The original site API returns some counters as decimal strings.
+	size, seeders, peers json.RawMessage
+}
+
+func mteamPage(ctx context.Context, definition indexercatalog.Definition, key, ua string, keyword *string, page int, transport http.RoundTripper) ([]mteamResult, error) {
+	if definition.Parser != "MTeamSpider" || definition.ID == "" || (keyword != nil && len(*keyword) > 1024) || page < 0 || page > 10000 {
 		return nil, ErrConfig
 	}
 	front, api, err := mteamBase(definition.Domain)
@@ -131,7 +156,7 @@ func SearchMTeam(ctx context.Context, definition indexercatalog.Definition, key,
 	if json.Unmarshal(data, &result) != nil || result.Data == nil || len(result.Data) > 100 {
 		return nil, ErrResponse
 	}
-	resources := []externalindexer.Resource{}
+	rows := make([]mteamResult, 0, len(result.Data))
 	seen := map[int64]bool{}
 	for _, row := range result.Data {
 		if err := ctx.Err(); err != nil {
@@ -174,9 +199,9 @@ func SearchMTeam(ctx context.Context, definition indexercatalog.Definition, key,
 			resource.DownloadFactor = &down
 			resource.Freeleech = &free
 		}
-		resources = append(resources, resource)
+		rows = append(rows, mteamResult{Resource: resource, size: row.Size, seeders: row.Status.Seeders, peers: row.Status.Leechers})
 	}
-	return resources, nil
+	return rows, nil
 }
 
 func DownloadMTeam(ctx context.Context, detail, key, ua string, transport http.RoundTripper) ([]byte, error) {

@@ -385,6 +385,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		}
 	}
 	mux.HandleFunc("POST /api/v1/search/resources", search.serveHTTP)
+	if search.native != nil && nativeAuth != nil && nativeSites != nil && cfg.SiteCatalogPath != "" {
+		mux.Handle("POST /api/v1/site/resources", search.native.siteResourcePage(legacyFallback))
+	}
 	var organizationJobs *organization.Store
 	downloads := downloadService{
 		manualGuards: &organizationJobs,

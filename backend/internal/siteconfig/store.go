@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -48,6 +49,7 @@ func Open(path string) (*Store, error) {
 	for _, statement := range []string{
 		"PRAGMA busy_timeout = 5000",
 		"CREATE TABLE IF NOT EXISTS CONFIG_SITE (ID INTEGER PRIMARY KEY AUTOINCREMENT, NAME TEXT, PRI TEXT, RSSURL TEXT, SIGNURL TEXT, COOKIE TEXT, APIKEY TEXT, INCLUDE TEXT, EXCLUDE TEXT, SIZE TEXT, NOTE TEXT)",
+		"CREATE TABLE IF NOT EXISTS INDEXER_STATISTICS (ID INTEGER NOT NULL PRIMARY KEY, INDEXER TEXT, TYPE TEXT, SECONDS INTEGER, RESULT TEXT, DATE TEXT)",
 	} {
 		if _, err := database.Exec(statement); err != nil {
 			_ = database.Close()
@@ -55,6 +57,18 @@ func Open(path string) (*Store, error) {
 		}
 	}
 	return &Store{database: database}, nil
+}
+
+// RecordBuiltinRequest keeps the original indexer history for resource browsing.
+func (store *Store) RecordBuiltinRequest(ctx context.Context, name string, start time.Time, success bool) error {
+	result := "N"
+	if success {
+		result = "Y"
+	}
+	now := time.Now()
+	_, err := store.database.ExecContext(ctx, "INSERT INTO INDEXER_STATISTICS (INDEXER, TYPE, SECONDS, RESULT, DATE) VALUES (?, 'builtin', ?, ?, ?)",
+		name, int64(now.Sub(start)/time.Second), result, now.Format(time.DateTime))
+	return err
 }
 
 func (store *Store) List(ctx context.Context) ([]Site, error) {

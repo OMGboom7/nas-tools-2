@@ -467,7 +467,11 @@ class SiteResources(ClientResource):
         """
         查询站点资源列表
         """
-        return WebAction().api_action(cmd='list_site_resources', data=self.parser.parse_args())
+        data = self.parser.parse_args()
+        selector = data.get("id")
+        definition = ProUser().get_site_config(siteid=selector, domain=selector)
+        data["site"] = definition.get("domain") if definition else None
+        return WebAction().api_action(cmd='list_site_resources', data=data)
 
 
 @site.route('/list')

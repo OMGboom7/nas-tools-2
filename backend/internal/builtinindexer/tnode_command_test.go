@@ -49,7 +49,7 @@ func TestTNodeCommandBrowsesResourcePage(t *testing.T) {
 	defer func() { http.DefaultTransport = original; transport.CloseIdleConnections() }()
 	var output bytes.Buffer
 	request := `{"id":"fixture","domain":"https://example.com/","cookie":"session=fixture","ua":"fixture-agent","page":2,"limit":150}`
-	if err := TNodeCommand(context.Background(), strings.NewReader(request), &output); err != nil {
+	if err := ResourcePageCommand(context.Background(), "tnode-resources", strings.NewReader(request), &output); err != nil {
 		t.Fatal(err)
 	}
 	var rows []map[string]any
@@ -62,7 +62,7 @@ func TestTNodeCommandBrowsesResourcePage(t *testing.T) {
 	}
 	for _, invalid := range []string{request + "{}", strings.Replace(request, `"limit":150`, `"proxy":"broken","limit":150`, 1)} {
 		output.Reset()
-		if err := TNodeCommand(context.Background(), strings.NewReader(invalid), &output); err != ErrConfig || output.Len() != 0 {
+		if err := ResourcePageCommand(context.Background(), "tnode-resources", strings.NewReader(invalid), &output); err != ErrConfig || output.Len() != 0 {
 			t.Fatal(err, output.String())
 		}
 	}

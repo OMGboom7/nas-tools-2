@@ -14,9 +14,8 @@ from app.indexer.client._spider import TorrentSpider
 from app.indexer.client._spider_new import DefaultSpider
 from app.indexer.client._torrentleech import TorrentLeech
 from app.indexer.client._plugins import PluginsSpider
-from app.indexer.client._mteam import MTeamSpider
 from app.sites import Sites
-from app.utils import StringUtils
+from app.utils import MteamUtils, StringUtils
 from app.utils.types import SearchType, IndexerType, ProgressKey, SystemConfigKey, MediaType
 from config import Config, run_go_helper
 from web.backend.pro_user import ProUser
@@ -186,16 +185,17 @@ class BuiltinIndexer(_IIndexClient):
         # 开始索引
         result_array = []
         try:
-            if indexer.parser == "TNodeSpider":
-                error_flag, result_array = self.__tnode_resources(indexer, search_word)
+            if indexer.parser in ("TNodeSpider", "MTeamSpider"):
+                if indexer.parser == "MTeamSpider" and not search_word:
+                    error_flag = True
+                else:
+                    error_flag, result_array = self.__site_resources(indexer, search_word)
             elif indexer.parser == "RenderSpider":
                 error_flag, result_array = RenderSpider(indexer).search(
                     keyword=search_word,
                     mtype=match_media.type if match_media and match_media.tmdb_info else None)
             elif indexer.parser == "TorrentLeech":
                 error_flag, result_array = TorrentLeech(indexer).search(keyword=search_word)
-            elif indexer.parser == "MTeamSpider":
-                error_flag, result_array = MTeamSpider(indexer=indexer).search(keyword=search_word)
             elif indexer.parser == "HaiDanSpider":
                 error_flag, result_array = self.__spider_search(
                     spider=HaiDanSpider(),
@@ -288,13 +288,11 @@ class BuiltinIndexer(_IIndexClient):
         if indexer.parser == "RenderSpider":
             error_flag, result_array = RenderSpider(indexer).search(keyword=keyword,
                                                                     page=page)
-        elif indexer.parser == "TNodeSpider":
-            error_flag, result_array = self.__tnode_resources(indexer, keyword, page)
+        elif indexer.parser in ("TNodeSpider", "MTeamSpider"):
+            error_flag, result_array = self.__site_resources(indexer, keyword, page)
         elif indexer.parser == "TorrentLeech":
             error_flag, result_array = TorrentLeech(indexer).search(keyword=keyword,
                                                             page=page)
-        elif indexer.parser == "MTeamSpider":
-            error_flag, result_array = MTeamSpider(indexer=indexer).inner_search(keyword=keyword, page=page)
         elif indexer.parser == "HaiDanSpider":
             error_flag, result_array = self.__spider_search(spider=HaiDanSpider(),
                                                             indexer=indexer,
@@ -327,18 +325,24 @@ class BuiltinIndexer(_IIndexClient):
         return result_array
 
     @staticmethod
-    def __tnode_resources(indexer, keyword, page=0):
+    def __site_resources(indexer, keyword, page=0):
         try:
             proxy = (Config().get_proxies() or {}).get("https") if indexer.proxy else None
             if indexer.proxy and not proxy:
                 raise ValueError("站点代理未配置")
             query = {
                 "id": indexer.id, "domain": indexer.domain, "name": indexer.name,
-                "cookie": indexer.cookie, "ua": indexer.ua or Config().get_ua(),
-                "keyword": keyword or "", "page": int(page or 0), "proxy": proxy,
-                "limit": int(Config().get_config("pt").get("site_search_result_num") or 100),
+                "ua": indexer.ua or Config().get_ua(),
+                "keyword": keyword, "page": int(page or 0), "proxy": proxy,
             }
-            rows = run_go_helper("tnode-resources", payload=json.dumps(query).encode(), timeout=65)
+            if indexer.parser == "MTeamSpider":
+                command = "mteam-resources"
+                query["apiKey"] = MteamUtils.get_api_key(indexer.domain)
+            else:
+                command = "tnode-resources"
+                query["cookie"] = indexer.cookie
+                query["limit"] = int(Config().get_config("pt").get("site_search_result_num") or 100)
+            rows = run_go_helper(command, payload=json.dumps(query).encode(), timeout=65)
             return False, json.loads(rows)
         except (OSError, ValueError, TypeError, subprocess.SubprocessError):
             log.warn(f"【INDEXER】{indexer.name} 获取站点资源失败")

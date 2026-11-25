@@ -282,7 +282,7 @@ func isMigratedProtectedPath(path string) bool {
 	if path == "/api/v1/dashboard/image" || path == "/api/v1/user/login" {
 		return false
 	}
-	for _, exact := range []string{"/api/v1/site/list", "/api/v1/site/info", "/api/v1/site/update", "/api/v1/site/delete", "/api/v1/site/test", "/api/v1/site/indexers", "/api/v1/message/client/info", "/api/v1/message/client/options", "/api/v1/message/client/update", "/api/v1/message/client/status", "/api/v1/message/client/delete", "/api/v1/message/client/test", "/api/v1/message/custom/send", "/api/v1/subscribe/movie/list", "/api/v1/subscribe/tv/list", "/api/v1/subscribe/history", "/api/v1/library/space", "/api/v1/library/mediaserver/statistics", "/api/v1/library/mediaserver/latest", "/api/v1/library/mediaserver/resume"} {
+	for _, exact := range []string{"/api/v1/site/list", "/api/v1/site/info", "/api/v1/site/update", "/api/v1/site/delete", "/api/v1/site/test", "/api/v1/site/indexers", "/api/v1/site/resources", "/api/v1/message/client/info", "/api/v1/message/client/options", "/api/v1/message/client/update", "/api/v1/message/client/status", "/api/v1/message/client/delete", "/api/v1/message/client/test", "/api/v1/message/custom/send", "/api/v1/subscribe/movie/list", "/api/v1/subscribe/tv/list", "/api/v1/subscribe/history", "/api/v1/library/space", "/api/v1/library/mediaserver/statistics", "/api/v1/library/mediaserver/latest", "/api/v1/library/mediaserver/resume"} {
 		if path == exact {
 			return true
 		}

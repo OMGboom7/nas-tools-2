@@ -39,27 +39,13 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 			continue
 		}
 		seen[definition.ID] = true
-		cookie, note, key := "", "", ""
-		configured := false
-		var siteID int64
-		var originalSite siteconfig.Site
-		for _, site := range sites {
-			address := site.SignURL
-			if address == "" {
-				address = site.RSSURL
-			}
-			if indexercatalog.Domain(address) != indexercatalog.Domain(definition.Domain) {
-				continue
-			}
-			if configured {
-				return nil, errors.New("multiple configured sites match selected indexer")
-			}
-			configured = true
-			siteID = site.ID
-			originalSite = site
-			cookie, note = site.Cookie, site.Note
-			key = site.APIKey
-			definition.Name = site.Name
+		originalSite, configured, err := configuredIndexerSite(definition, sites)
+		if err != nil {
+			return nil, err
+		}
+		cookie, key, siteID := originalSite.Cookie, originalSite.APIKey, originalSite.ID
+		if configured {
+			definition.Name = originalSite.Name
 		}
 		authenticated := cookie != ""
 		if definition.Parser == "MTeamSpider" {
@@ -68,20 +54,9 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		if (!definition.Public || !public) && (!configured || !authenticated) {
 			return nil, errors.New("selected tracker requires a configured session")
 		}
-		var options map[string]any
-		if note != "" && (len(note) > 64<<10 || json.Unmarshal([]byte(note), &options) != nil) {
-			return nil, errors.New("invalid tracker request settings")
-		}
-		ua := text(app["user_agent"])
-		if value, exists := options["ua"]; exists {
-			var ok bool
-			ua, ok = value.(string)
-			if !ok {
-				return nil, builtinindexer.ErrConfig
-			}
-		}
-		if ua == "" {
-			ua = "Mozilla/5.0 (compatible; NAS-Tools-Go)"
+		options, ua, err := indexerSiteSettings(originalSite.Note, app)
+		if err != nil {
+			return nil, err
 		}
 		if definition.Parser == "MTeamSpider" || definition.Parser == "TNodeSpider" {
 			transport := service.transport
@@ -185,4 +160,42 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 		return nil, errors.New("selected builtin indexer is unavailable")
 	}
 	return results, nil
+}
+
+func configuredIndexerSite(definition indexercatalog.Definition, sites []siteconfig.Site) (siteconfig.Site, bool, error) {
+	domain := indexercatalog.Domain(definition.Domain)
+	var matched siteconfig.Site
+	for _, site := range sites {
+		address := site.SignURL
+		if address == "" {
+			address = site.RSSURL
+		}
+		if indexercatalog.Domain(address) != domain {
+			continue
+		}
+		if matched.ID != 0 {
+			return siteconfig.Site{}, false, errors.New("multiple configured sites match selected indexer")
+		}
+		matched = site
+	}
+	return matched, matched.ID != 0, nil
+}
+
+func indexerSiteSettings(note string, app map[string]any) (map[string]any, string, error) {
+	var options map[string]any
+	if note != "" && (len(note) > 64<<10 || json.Unmarshal([]byte(note), &options) != nil) {
+		return nil, "", errors.New("invalid tracker request settings")
+	}
+	ua := text(app["user_agent"])
+	if value, exists := options["ua"]; exists {
+		var ok bool
+		ua, ok = value.(string)
+		if !ok {
+			return nil, "", builtinindexer.ErrConfig
+		}
+	}
+	if ua == "" {
+		ua = "Mozilla/5.0 (compatible; NAS-Tools-Go)"
+	}
+	return options, ua, nil
 }
