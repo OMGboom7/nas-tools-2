@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +20,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
-func TestStatisticsNoticesCommitRecipientsAndResumeUnsentTemplate(t *testing.T) {
+func TestStatisticsNoticesRenderAndCommitWithoutHostCallbacks(t *testing.T) {
 	dir := t.TempDir()
 	path, dbPath := filepath.Join(dir, "config.yaml"), filepath.Join(dir, "user.db")
 	if err := os.WriteFile(path, []byte("app: {user_agent: fixture}\n"), 0600); err != nil {
@@ -49,7 +48,8 @@ func TestStatisticsNoticesCommitRecipientsAndResumeUnsentTemplate(t *testing.T) 
 	var sends atomic.Int32
 	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		if err != nil || string(body) != `{"custom":"fixture"}` || r.Header.Get("Authorization") != "fixture-token" {
+		var message map[string]string
+		if err != nil || json.Unmarshal(body, &message) != nil || !strings.Contains(message["custom"], "1 条新消息") || r.Header.Get("Authorization") != "fixture-token" {
 			t.Errorf("invalid rendered notification")
 		}
 		sends.Add(1)
@@ -81,22 +81,18 @@ func TestStatisticsNoticesCommitRecipientsAndResumeUnsentTemplate(t *testing.T) 
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	run := func(reply string) (string, error) {
+	run := func() (string, error) {
 		var out bytes.Buffer
-		err := StatisticsRunCommand(ctx, path, "refresh", strings.NewReader("[]\n"+reply), &out)
+		err := StatisticsRunCommand(ctx, path, "refresh", strings.NewReader("[]\n"), &out)
 		if strings.Contains(out.String(), "fixture-token") || strings.Contains(out.String(), webhook.URL) {
 			t.Fatal("recipient data leaked to template renderer")
 		}
 		return out.String(), err
 	}
-	if data, err := run(""); !errors.Is(err, io.ErrUnexpectedEOF) || sends.Load() != 0 || !strings.Contains(data, `"kind":"render"`) {
+	if data, err := run(); err != nil || sends.Load() != 1 || !strings.Contains(data, `"kind":"done"`) || strings.Contains(data, `"kind":"render"`) {
 		t.Fatal(data, err)
 	}
-	reply := `{"body":"{\"custom\":\"fixture\"}"}` + "\n"
-	if data, err := run(reply); err != nil || sends.Load() != 1 || !strings.Contains(data, `"kind":"done"`) {
-		t.Fatal(data, err)
-	}
-	if _, err := run(""); err != nil || sends.Load() != 1 {
+	if _, err := run(); err != nil || sends.Load() != 1 {
 		t.Fatal("replayed receipt", err)
 	}
 	var pending, sent int

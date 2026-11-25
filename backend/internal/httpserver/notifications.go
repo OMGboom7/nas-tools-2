@@ -396,7 +396,7 @@ func (service notificationService) test(response http.ResponseWriter, request *h
 	if !handleNotificationDetailResult(response, detail, result, err) {
 		return
 	}
-	if !nativeNotificationDeliveryEligible(text(detail["type"]), objectValue(detail["config"])) {
+	if !nativeNotificationDeliverySupported(text(detail["type"])) {
 		writeAPIError(response, http.StatusNotImplemented, 501, "notification channel test is not migrated")
 		return
 	}
@@ -521,11 +521,21 @@ func (service notificationService) deliverCustomMessage(response http.ResponseWr
 		}
 	}
 	records := objectValue(legacyPayload(result)["detail"])
+	bodies := map[string][]byte{}
 	for _, id := range ids {
 		record := objectValue(records[id])
-		if !nativeNotificationDeliveryEligible(text(record["type"]), objectValue(record["config"])) {
+		if !nativeNotificationDeliverySupported(text(record["type"])) {
 			writeAPIError(response, http.StatusNotImplemented, 501, "notification channel delivery is not migrated")
 			return
+		}
+		cfg := objectValue(record["config"])
+		if text(record["type"]) == "webhook" && text(cfg["json_tpl"]) != "" {
+			body, err := webhookMessageBody(ctx, cfg, input.Title, input.Text, input.Image, "")
+			if err != nil {
+				writeAPIError(response, 400, 400, "Webhook 消息模板无法渲染")
+				return
+			}
+			bodies[id] = body
 		}
 	}
 	if err := service.store.AddSystemMessage(ctx, input.Title, input.Text); err != nil {
@@ -534,7 +544,14 @@ func (service notificationService) deliverCustomMessage(response http.ResponseWr
 	}
 	for _, id := range ids {
 		record := objectValue(records[id])
-		sent, err := service.sendNativeNotification(ctx, text(record["type"]), objectValue(record["config"]), input.Title, input.Text, input.Image, "")
+		var sent bool
+		var err error
+		cfg := objectValue(record["config"])
+		if body, ok := bodies[id]; ok {
+			sent, err = service.sendWebhookBody(ctx, cfg, body)
+		} else {
+			sent, err = service.sendNativeNotification(ctx, text(record["type"]), cfg, input.Title, input.Text, input.Image, "")
+		}
 		if err != nil || !sent {
 			writeAPIError(response, http.StatusBadGateway, 502, "custom message could not be sent")
 			return

@@ -2,6 +2,12 @@
 
 2026-11-03：Go 统计采集、兼容统计表、后台执行与 React 面板已接通，并完成集中测试和隔离页面验收。全项目 Python 退出尚未完成，原 Python 生产入口暂保留。
 
+## Webhook 通知模板
+
+2026-11-26：统计通知直接使用 Go 投递。旧单条及媒体列表客户端将配置和消息数据交给本地 Go 程序。服务中的模板渲染在独立进程中执行，仅接收模板与消息字段。React 自定义消息选中多个渠道时，先渲染全部 Webhook 模板，再开始发送。发送请求沿用 Go 的重定向限制。
+
+两个发行程序均与原 Jinja 对照了 23 组固定样本，覆盖中文及特殊字符、JSON 缩进、循环、条件、宏和空白处理，输出逐字节一致。临时数据库和本机接收端验证了旧单条及列表入口、请求方法、查询参数、凭据、错误模板下的多渠道零投递，以及实际 Chrome 中的测试发送。旧统计页和定时入口另行验证了未读提醒、汇总、事务回滚、应答丢失和重启后避免重复发送。尚待用存量用户模板验收少见语法及扩展；实际通知服务和生产镜像也待验收。
+
 ## 实现范围
 
 原实现为 `app/sites/site_userinfo.py` 及 `app/sites/siteuserinfo/`。`backend/internal/sitestats` 保留识别优先级及 12 类协议：Gazelle、Mteam、NexusRabbit、Discuz、Unit3d、NexusProject、SmallHorse、Ipt、TorrentLeech、FileList、TNode、NexusPhp。覆盖账户资料、上传／下载、积分、做种明细和分页；M-Team 包含最后一页，Nexus 无 ID 详情页保留内嵌做种表和汇总回退。只有汇总时保留原做种明细，不将未知明细清空。

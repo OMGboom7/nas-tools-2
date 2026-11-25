@@ -140,8 +140,7 @@ func (s statsTimer) runDue(ctx context.Context, path, cron string, schedule sign
 }
 
 // StatisticsSchedulerCommand owns the timer in standalone and paired legacy
-// deployments. The original process supplies its shared site limiter and UI
-// callbacks over the pipe. EOF cancels waiting, collection and delivery.
+// deployments. The original process refreshes its icon cache after each run. EOF cancels waiting, collection and delivery.
 func StatisticsSchedulerCommand(parent context.Context, path string, in io.Reader, out io.Writer) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()

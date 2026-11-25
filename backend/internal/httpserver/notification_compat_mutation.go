@@ -155,7 +155,7 @@ func (service notificationService) serveLegacyTest(response http.ResponseWriter,
 		writeAPIError(response, http.StatusBadRequest, 400, "invalid notification configuration")
 		return
 	}
-	if !nativeNotificationDeliveryEligible(ctype, parsed) {
+	if !nativeNotificationDeliverySupported(ctype) {
 		writeAPIError(response, http.StatusNotImplemented, 501, "notification channel test is not migrated")
 		return
 	}

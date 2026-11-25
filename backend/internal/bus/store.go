@@ -309,8 +309,7 @@ func (s *Store) Claim(ctx context.Context, expected Delivery) (Event, notificati
 	return e, c, nil
 }
 
-// ReturnUnsent releases a claim when the local template renderer disconnects
-// before the sender has constructed a request.
+// ReturnUnsent releases a claim interrupted during local rendering, before HTTP.
 func (s *Store) ReturnUnsent(ctx context.Context, id string) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE GO_NOTIFICATION_DELIVERIES SET STATE='pending',UPDATED=? WHERE ID=? AND STATE='sending'`, time.Now().UTC().Format(time.RFC3339Nano), id)
 	if err != nil {

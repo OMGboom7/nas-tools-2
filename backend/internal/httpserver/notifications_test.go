@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,7 +18,19 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/notificationconfig"
+	"github.com/0xforee/nas-tools/backend/internal/notificationtemplate"
 )
+
+// Native deliveries spawn the same executable in isolated template mode.
+func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == "render-notification" {
+		if err := notificationtemplate.Command(os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 const legacyNotificationList = `{"code":0,"detail":{"12":{"id":12,"name":"家庭通知","type":"telegram","config":{"token":"bot-secret","chat_id":"123456","interactive":1},"switchs":["download_start","transfer_finished"],"interactive":1,"enabled":1},"15":{"id":15,"name":"备用推送","type":"bark","config":{"server":"https://push.example","apikey":"device-secret","interactive":0},"switchs":"[\"download_fail\"]","interactive":0,"enabled":0}}}`
 
@@ -264,7 +277,7 @@ func TestLegacyNotificationTestUsesGoDelivery(t *testing.T) {
 		t.Fatalf("native old test = %d, requests = %d: %s", result.Code, requests, result.Body.String())
 	}
 	unsupported := call(token, url.Values{"type": {"webhook"}, "config": {`{"url":"https://example.org/hook","json_tpl":"{{ title }}"}`}})
-	if unsupported.Code != http.StatusNotImplemented || requests != 1 {
+	if unsupported.Code != http.StatusOK || !strings.Contains(unsupported.Body.String(), `"code":1`) || requests != 1 {
 		t.Fatalf("templated webhook = %d, requests = %d: %s", unsupported.Code, requests, unsupported.Body.String())
 	}
 	unauthorized := call("invalid", url.Values{"type": {"serverchan"}, "config": {`{"sckey":"SCT_SECRET_123"}`}})
@@ -668,6 +681,13 @@ func TestNativeWebhookDeliveryAndExplicitTemplateGap(t *testing.T) {
 			return jsonResponse(request, `{"code":0}`), nil
 		}
 		nativeRequests++
+		if request.Method == http.MethodPost && request.URL.Host == "hook.example" && request.URL.Path == "/notify" {
+			var body map[string]string
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body["message"] == "" || len(body) != 1 {
+				t.Fatal("wrong template body", body, err)
+			}
+			return jsonResponse(request, `{}`), nil
+		}
 		if request.Method != http.MethodPatch || request.URL.Host != "hook.example" || request.URL.Path != "/notify" || request.URL.Query().Get("existing") != "yes" || request.URL.Query().Get("env") != "prod" || len(request.URL.Query()["multi"]) != 2 || request.Header.Get("Authorization") != "hook-secret" {
 			t.Errorf("unexpected Webhook request: %s %s", request.Method, request.URL.String())
 		}
@@ -689,6 +709,7 @@ func TestNativeWebhookDeliveryAndExplicitTemplateGap(t *testing.T) {
 	}{
 		{80, `{"url":"https://hook.example/notify?existing=yes","method":"PATCH","token":"hook-secret","query_params":"{\"env\":\"prod\",\"multi\":[\"a\",\"b\"]}"}`},
 		{81, `{"url":"https://hook.example/notify","method":"POST","json_tpl":"{\"message\": {{ title|tojson }} }"}`},
+		{82, `{"url":"https://hook.example/notify","method":"POST","json_tpl":"{{ text|missing_filter }}"}`},
 	} {
 		if _, err := database.Exec(`INSERT INTO MESSAGE_CLIENT (ID, NAME, TYPE, CONFIG, SWITCHS, INTERACTIVE, ENABLED) VALUES (?, 'Webhook', 'webhook', ?, '[]', 0, 1)`, item.id, item.config); err != nil {
 			t.Fatal(err)
@@ -700,9 +721,10 @@ func TestNativeWebhookDeliveryAndExplicitTemplateGap(t *testing.T) {
 	}{
 		{"/api/v1/notifications/80/test", "", http.StatusOK},
 		{"/api/v1/notifications/custom-message", `{"title":"普通通知","text":"内容","channelIds":["80"]}`, http.StatusOK},
-		{"/api/v1/notifications/81/test", "", http.StatusNotImplemented},
-		{"/api/v1/notifications/custom-message", `{"title":"模板通知","text":"内容","channelIds":["81"]}`, http.StatusNotImplemented},
-		{"/api/v1/notifications/custom-message", `{"title":"混合通知","text":"内容","channelIds":["80","81"]}`, http.StatusNotImplemented},
+		{"/api/v1/notifications/81/test", "", http.StatusOK},
+		{"/api/v1/notifications/custom-message", `{"title":"模板通知","text":"内容","channelIds":["81"]}`, http.StatusOK},
+		{"/api/v1/notifications/custom-message", `{"title":"混合通知","text":"内容","channelIds":["80","81"]}`, http.StatusOK},
+		{"/api/v1/notifications/custom-message", `{"title":"失败","text":"内容","channelIds":["80","82"]}`, http.StatusBadRequest},
 	} {
 		request := httptest.NewRequest(http.MethodPost, testCase.path, strings.NewReader(testCase.body))
 		request.Header.Set("Authorization", token)
@@ -712,7 +734,7 @@ func TestNativeWebhookDeliveryAndExplicitTemplateGap(t *testing.T) {
 			t.Fatalf("%s: status = %d: %s", testCase.path, response.Code, response.Body.String())
 		}
 	}
-	if nativeRequests != 2 || legacyRequests != 0 {
+	if nativeRequests != 6 || legacyRequests != 0 {
 		t.Fatalf("unexpected Webhook routing: native=%d legacy=%d", nativeRequests, legacyRequests)
 	}
 }

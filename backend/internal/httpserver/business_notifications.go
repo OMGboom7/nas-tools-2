@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/mediaserver"
 	"github.com/0xforee/nas-tools/backend/internal/mediasyncdel"
+	"github.com/0xforee/nas-tools/backend/internal/notificationtemplate"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 )
 
@@ -91,12 +91,10 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return api.dispatch(ctx, pending, nil)
+	return api.dispatch(ctx, pending)
 }
 
-type statsTemplateRenderer func(template, title, message string) ([]byte, error)
-
-func (api *businessNotifications) dispatch(ctx context.Context, pending []bus.Delivery, render statsTemplateRenderer) error {
+func (api *businessNotifications) dispatch(ctx context.Context, pending []bus.Delivery) error {
 	for _, d := range pending {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -147,27 +145,21 @@ func (api *businessNotifications) dispatch(ctx context.Context, pending []bus.De
 					state, reason = "sent", ""
 				}
 			}
-		} else if err == nil && render != nil && c.Type == "webhook" && text(objectValue(record["config"])["json_tpl"]) != "" {
-			cfg := objectValue(record["config"])
-			body, renderErr := render(text(cfg["json_tpl"]), e.Title, e.Text)
-			if errors.Is(renderErr, io.ErrUnexpectedEOF) || errors.Is(renderErr, io.ErrClosedPipe) {
-				// No request has been sent: the local renderer is gone.
-				if err := api.queue.ReturnUnsent(ctx, d.ID); err != nil {
-					return err
-				}
-				return renderErr
-			}
-			if renderErr == nil {
-				sent, sendErr := api.service.sendWebhookBody(ctx, cfg, body)
-				state, reason = "uncertain", "notification response not positively acknowledged; do not retry automatically"
-				if sendErr == nil && sent {
-					state, reason = "sent", ""
-				}
-			}
-		} else if err == nil && nativeNotificationDeliveryEligible(c.Type, objectValue(record["config"])) {
+		} else if err == nil && nativeNotificationDeliverySupported(c.Type) {
 			sent, sendErr := api.service.sendNativeNotification(ctx, c.Type, objectValue(record["config"]), e.Title, e.Text, image, link)
 			state, reason = "uncertain", "notification response not positively acknowledged; do not retry automatically"
-			if sendErr == nil && sent {
+			if errors.Is(sendErr, notificationtemplate.ErrRender) && ctx.Err() != nil {
+				book, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				err := api.queue.ReturnUnsent(book, d.ID)
+				cancel()
+				if err != nil {
+					return err
+				}
+				return ctx.Err()
+			}
+			if errors.Is(sendErr, notificationtemplate.ErrRender) {
+				state, reason = "blocked", "Webhook 消息模板无法渲染，未发起投递"
+			} else if sendErr == nil && sent {
 				state, reason = "sent", ""
 			}
 		}

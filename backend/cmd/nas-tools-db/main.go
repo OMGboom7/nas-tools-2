@@ -13,11 +13,25 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/dbinit"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/httpserver"
+	"github.com/0xforee/nas-tools/backend/internal/notificationtemplate"
 	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "render-notification" {
+		if err := notificationtemplate.Command(os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "send-webhook" {
+		if err := httpserver.SendWebhookCommand(context.Background(), os.Args[2], os.Stdin); err != nil {
+			slog.Error("webhook notification failed")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "message-center" {
 		if err := httpserver.MessageCenterCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("system message center unavailable")

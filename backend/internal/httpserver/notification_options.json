@@ -612,8 +612,8 @@
           "title": "单条消息模板",
           "type": "textarea",
           "required": false,
-          "tooltip": "Jinja2 JSON模板，用于单条消息。可用变量：title, text, image, url, user_id。字符串变量默认会进行 tojson 过滤以保证生成的JSON格式正确，如需使用原始字符串请使用 |safe 过滤器，如：{{ text|safe }}",
-          "placeholder": "{\n  \"title\": \"{{ title }}\",\n  \"text\": \"{{ text }}\",\n  \"image\": \"{{ image }}\",\n  \"url\": \"{{ url }}\",\n  \"user_id\": \"{{ user_id }}\"\n}",
+          "tooltip": "Jinja2 JSON模板，用于单条消息。可用变量：title, text, image, url, user_id。在 JSON 值的位置使用 {{ text|tojson }}，可保留引号、换行和中文。",
+          "placeholder": "{\n  \"title\": {{ title|tojson }},\n  \"text\": {{ text|tojson }},\n  \"image\": {{ image|tojson }},\n  \"url\": {{ url|tojson }},\n  \"user_id\": {{ user_id|tojson }}\n}",
           "default": null,
           "options": [],
           "writeOnly": true
@@ -623,8 +623,8 @@
           "title": "列表消息模板",
           "type": "textarea",
           "required": false,
-          "tooltip": "Jinja2 JSON模板，用于列表消息。可用变量：title, user_id, medias（数组，每项包含：title, url, type, vote）。字符串变量默认会进行 tojson 过滤以保证生成的JSON格式正确，如需使用原始字符串请使用 |safe 过滤器，如：{{ media.title|safe }}",
-          "placeholder": "{\n  \"title\": \"{{ title }}\",\n  \"user_id\": \"{{ user_id }}\",\n  \"items\": [\n    {% for media in medias %}\n    {\n      \"title\": \"{{ media.title }}\",\n      \"url\": \"{{ media.url }}\",\n      \"type\": \"{{ media.type }}\",\n      \"vote\": \"{{ media.vote }}\"\n    }{% if not loop.last %},{% endif %}\n    {% endfor %}\n  ]\n}",
+          "tooltip": "Jinja2 JSON模板，用于列表消息。可用变量：title, user_id, medias（数组，每项包含：title, url, type, vote）。在 JSON 值的位置使用 {{ media.title|tojson }}，可保留引号、换行和中文。",
+          "placeholder": "{\n  \"title\": {{ title|tojson }},\n  \"user_id\": {{ user_id|tojson }},\n  \"items\": [\n    {% for media in medias %}\n    {\n      \"title\": {{ media.title|tojson }},\n      \"url\": {{ media.url|tojson }},\n      \"type\": {{ media.type|tojson }},\n      \"vote\": {{ media.vote|tojson }}\n    }{% if not loop.last %},{% endif %}\n    {% endfor %}\n  ]\n}",
           "default": null,
           "options": [],
           "writeOnly": true

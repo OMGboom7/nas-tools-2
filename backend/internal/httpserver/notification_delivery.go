@@ -13,21 +13,16 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/0xforee/nas-tools/backend/internal/notificationtemplate"
 )
 
 func nativeNotificationDeliverySupported(channelType string) bool {
 	switch strings.ToLower(channelType) {
-	case "serverchan", "ntfy", "gotify", "bark", "chanify", "iyuu", "pushplus", "pushdeer", "telegram", "synologychat", "wechat", "slack":
+	case "webhook", "serverchan", "ntfy", "gotify", "bark", "chanify", "iyuu", "pushplus", "pushdeer", "telegram", "synologychat", "wechat", "slack":
 		return true
 	}
 	return false
-}
-
-func nativeNotificationDeliveryEligible(channelType string, config map[string]any) bool {
-	if strings.EqualFold(channelType, "webhook") {
-		return text(config["json_tpl"]) == ""
-	}
-	return nativeNotificationDeliverySupported(channelType)
 }
 
 func (service notificationService) sendNativeNotification(ctx context.Context, channelType string, config map[string]any, title, message, image, clickURL string) (bool, error) {
@@ -451,16 +446,59 @@ func (service notificationService) sendNativeSynologyChat(ctx context.Context, c
 }
 
 func (service notificationService) sendNativeWebhook(ctx context.Context, config map[string]any, title, message, image, clickURL string) (bool, error) {
-	if text(config["json_tpl"]) != "" {
-		return false, errors.New("notification template is unsupported")
-	}
-	body, err := json.Marshal(map[string]any{
-		"title": title, "text": message, "image": image, "url": clickURL, "user_id": "",
-	})
+	body, err := webhookMessageBody(ctx, config, title, message, image, clickURL)
 	if err != nil {
-		return false, errors.New("notification delivery failed")
+		return false, err
 	}
 	return service.sendWebhookBody(ctx, config, body)
+}
+
+func webhookMessageBody(ctx context.Context, cfg map[string]any, title, message, image, link string) ([]byte, error) {
+	return webhookBody(ctx, text(cfg["json_tpl"]), map[string]any{"title": title, "text": message, "image": image, "url": link, "user_id": ""})
+}
+func webhookBody(ctx context.Context, source string, variables map[string]any) ([]byte, error) {
+	if source != "" {
+		return notificationtemplate.Render(ctx, source, variables)
+	}
+	return json.Marshal(variables)
+}
+
+// SendWebhookCommand adapts old single and media-list callers. Secrets travel
+// on stdin, and rendering completes before the original method is dispatched.
+func SendWebhookCommand(ctx context.Context, kind string, in io.Reader) error {
+	var q struct{ Config, Variables map[string]any }
+	reader := &io.LimitedReader{R: in, N: 8 << 20}
+	dec := json.NewDecoder(reader)
+	dec.UseNumber()
+	dec.DisallowUnknownFields()
+	if dec.Decode(&q) != nil || dec.Decode(new(any)) != io.EOF || reader.N == 0 || q.Config == nil || q.Variables == nil {
+		return errors.New("invalid webhook message")
+	}
+	key := "json_tpl"
+	switch kind {
+	case "single":
+		if text(q.Variables["title"]) == "" && text(q.Variables["text"]) == "" {
+			return errors.New("empty webhook message")
+		}
+	case "list":
+		items, ok := q.Variables["medias"].([]any)
+		if !ok || len(items) == 0 || text(q.Variables["title"]) == "" || strings.EqualFold(text(q.Config["method"]), "GET") {
+			return errors.New("invalid webhook list")
+		}
+		key = "json_list_tpl"
+	default:
+		return errors.New("invalid webhook message kind")
+	}
+	body, err := webhookBody(ctx, text(q.Config[key]), q.Variables)
+	if err != nil {
+		return err
+	}
+	service := notificationService{client: http.DefaultClient}
+	sent, err := service.sendWebhookBody(ctx, q.Config, body)
+	if err != nil || !sent {
+		return errors.New("webhook delivery failed")
+	}
+	return nil
 }
 
 func (service notificationService) sendWebhookBody(ctx context.Context, config map[string]any, body []byte) (bool, error) {

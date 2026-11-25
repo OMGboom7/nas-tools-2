@@ -185,10 +185,10 @@ func TestBusinessNotificationChangedChannelBlocksAndDoesNotDeliverToNewEndpoint(
 		}
 	}
 }
-func TestBusinessNotificationUnsupportedTemplateBlocksWithoutNetwork(t *testing.T) {
+func TestBusinessNotificationInvalidTemplateBlocksWithoutNetwork(t *testing.T) {
 	f := newSubscriptionRunFixture(t)
 	businessChannel(t, f)
-	if _, err := f.db.Exec(`UPDATE MESSAGE_CLIENT SET CONFIG='{"url":"https://notify.test","method":"POST","json_tpl":"unsupported"}' WHERE ID=77`); err != nil {
+	if _, err := f.db.Exec(`UPDATE MESSAGE_CLIENT SET CONFIG='{"url":"https://notify.test","method":"POST","json_tpl":"{{ title | missing_filter }}"}' WHERE ID=77`); err != nil {
 		t.Fatal(err)
 	}
 	calls := businessWire(t, f, false, nil)

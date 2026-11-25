@@ -4,7 +4,6 @@ from threading import Event, Lock, Thread
 
 import log
 from app.helper import DbHelper
-from jinja2.sandbox import SandboxedEnvironment
 from app.sites.sites import Sites
 from app.utils import StringUtils
 from app.utils.commons import singleton
@@ -31,29 +30,21 @@ def _serve_refresh(worker, selected=None):
     try:
         for line in worker.stdout:
             item = json.loads(line)
-            if item["kind"] == "render":
-                try:
-                    template = SandboxedEnvironment().from_string(item["template"])
-                    body = template.render(title=item["title"], text=item["text"], image="", url="", user_id="")
-                except Exception:
-                    body = None
-                    log.error("【Sites】统计通知模板渲染失败")
-                worker.stdin.write(json.dumps({"body": body}, ensure_ascii=False) + "\n")
-                worker.stdin.flush()
-            elif item["kind"] == "done":
+            if item["kind"] == "done":
                 if item["failed"]:
                     log.warn(f"【Sites】{item['failed']} 个站点未能完整刷新")
                 return
             elif item["kind"] == "failed":
                 log.warn("【Sites】本次定时统计未能完成")
                 return
+            raise ValueError("unexpected statistics worker response")
         raise ValueError("incomplete statistics refresh")
     finally:
         Sites().init_favicons()
 
 
 class StatisticsScheduler:
-    """Connect the Go scheduler to the running client's notification templates."""
+    """Refresh the running client's icon cache after each scheduled collection."""
 
     def __init__(self):
         self._stopped = Event()

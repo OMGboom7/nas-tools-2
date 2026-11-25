@@ -17,7 +17,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 )
 
-// StatisticsRunCommand uses a local pipe for operator-configured Jinja templates. Go owns recipients, transport and receipts.
+// StatisticsRunCommand receives the site selection and reports completion.
 func StatisticsRunCommand(ctx context.Context, path, mode string, in io.Reader, out io.Writer) error {
 	if mode != "refresh" && mode != "summary" {
 		return sitestats.ErrState
@@ -80,22 +80,6 @@ func runStatistics(ctx context.Context, path, mode string, readLine func() ([]by
 		return err
 	}
 	defer db.Close()
-	render := func(template, title, message string) ([]byte, error) {
-		if err := encoder.Encode(map[string]string{"kind": "render", "template": template, "title": title, "text": message}); err != nil {
-			return nil, io.ErrClosedPipe
-		}
-		var reply struct {
-			Body *string `json:"body"`
-		}
-		raw, err := readLine()
-		if err != nil {
-			return nil, io.ErrUnexpectedEOF
-		}
-		if json.Unmarshal(raw, &reply) != nil || reply.Body == nil || *reply.Body == "" {
-			return nil, sitestats.ErrState
-		}
-		return []byte(*reply.Body), nil
-	}
 	if organization.CopySupported {
 		locks, err := organization.OpenJobLocks(dbPath)
 		if err != nil {
@@ -116,7 +100,7 @@ func runStatistics(ctx context.Context, path, mode string, readLine func() ([]by
 		if len(pending) == 0 {
 			break
 		}
-		if err = dispatcher.dispatch(ctx, pending, render); err != nil {
+		if err = dispatcher.dispatch(ctx, pending); err != nil {
 			return err
 		}
 	}
