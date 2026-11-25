@@ -454,6 +454,16 @@ func (service notificationService) sendNativeWebhook(ctx context.Context, config
 	if text(config["json_tpl"]) != "" {
 		return false, errors.New("notification template is unsupported")
 	}
+	body, err := json.Marshal(map[string]any{
+		"title": title, "text": message, "image": image, "url": clickURL, "user_id": "",
+	})
+	if err != nil {
+		return false, errors.New("notification delivery failed")
+	}
+	return service.sendWebhookBody(ctx, config, body)
+}
+
+func (service notificationService) sendWebhookBody(ctx context.Context, config map[string]any, body []byte) (bool, error) {
 	rawURL := strings.TrimSpace(text(config["url"]))
 	method := strings.ToUpper(strings.TrimSpace(text(config["method"])))
 	if len(rawURL) > 2048 || !validHTTPURL(rawURL) {
@@ -502,12 +512,6 @@ func (service notificationService) sendNativeWebhook(ctx context.Context, config
 		}
 	}
 	parsed.RawQuery = query.Encode()
-	body, err := json.Marshal(map[string]any{
-		"title": title, "text": message, "image": image, "url": clickURL, "user_id": "",
-	})
-	if err != nil {
-		return false, errors.New("notification delivery failed")
-	}
 	request, err := http.NewRequestWithContext(ctx, method, parsed.String(), bytes.NewReader(body))
 	if err != nil {
 		return false, errors.New("notification delivery failed")

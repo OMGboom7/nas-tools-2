@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math/big"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
-
-	"github.com/0xforee/nas-tools/backend/internal/bus"
 )
 
 // Reader queries legacy statistics tables on a database or a consistent read transaction.
@@ -191,24 +191,8 @@ func (s *Store) Finish(ctx context.Context, id, state string, urls []string, end
 		state = "stopped"
 	}
 	if j.Summary && (state == "complete" || state == "partial") {
-		items, e := deltas(ctx, tx, urls, 2, end)
-		if e != nil {
+		if e := emitSummary(ctx, tx, urls, end, j.ID); e != nil {
 			return e
-		}
-		body := ""
-		var up, down int64
-		for _, v := range items {
-			if v.Upload > 0 || v.Download > 0 {
-				up += v.Upload
-				down += v.Download
-				body += "【" + v.Site + "】\n上传量：" + humanSize(v.Upload) + "\n下载量：" + humanSize(v.Download) + "\n\n"
-			}
-		}
-		if body != "" {
-			body = "【今日汇总】\n总上传：" + humanSize(up) + "\n总下载：" + humanSize(down) + "\n\n" + body
-			if e = bus.Emit(ctx, tx, "ptrefresh_date_message", j.ID, j.ID, "站点数据统计", body); e != nil {
-				return e
-			}
 		}
 	}
 	if e = putJob(ctx, tx, j); e != nil {
@@ -216,11 +200,61 @@ func (s *Store) Finish(ctx context.Context, id, state string, urls []string, end
 	}
 	return tx.Commit()
 }
-func humanSize(n int64) string {
-	if n < 1024 {
-		return stringInt(n) + " B"
+func emitSummary(ctx context.Context, tx *sql.Tx, urls []string, end time.Time, reference string) error {
+	items, e := deltas(ctx, tx, urls, 2, end)
+	if e != nil {
+		return e
 	}
-	v := float64(n)
+	var body strings.Builder
+	var up, down big.Int
+	labels := make(map[string]int)
+	for _, v := range items {
+		labels[v.Site]++
+	}
+	for _, v := range items {
+		if v.Upload == 0 && v.Download == 0 {
+			continue
+		}
+		up.Add(&up, big.NewInt(v.Upload))
+		down.Add(&down, big.NewInt(v.Download))
+		name := v.Site
+		if labels[name] > 1 {
+			name += " (" + v.URL + ")"
+		}
+		body.WriteString("【" + name + "】\n上传量：" + humanSize(big.NewInt(v.Upload)) + "\n下载量：" + humanSize(big.NewInt(v.Download)) + "\n\n")
+	}
+	if body.Len() == 0 {
+		return nil
+	}
+	title := "【今日汇总】\n总上传：" + humanSize(&up) + "\n总下载：" + humanSize(&down) + "\n\n"
+	return emitNotice(ctx, tx, "ptrefresh_date_message", reference, reference, "站点数据统计", title+body.String())
+}
+
+func (s *Store) ScheduledSummary(ctx context.Context, end time.Time, reference string, scope func(context.Context, *sql.Tx) ([]string, error)) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Keep eligibility and daily counters at the same revision as the recipients.
+	if _, err = tx.ExecContext(ctx, "UPDATE CONFIG_SITE SET ID=ID WHERE 0"); err != nil {
+		return err
+	}
+	urls, err := scope(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if err = emitSummary(ctx, tx, urls, end, reference); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func humanSize(n *big.Int) string {
+	if n.BitLen() <= 10 {
+		return n.String() + " B"
+	}
+	v, _ := new(big.Float).SetInt(n).Float64()
 	units := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
 	i := 0
 	for v >= 1024 && i < len(units)-1 {

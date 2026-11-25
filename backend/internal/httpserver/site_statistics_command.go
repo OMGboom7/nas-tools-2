@@ -43,51 +43,59 @@ func ScheduledStatisticsCommand(ctx context.Context, path string, in io.Reader, 
 	if decoder.Decode(&targets) != nil || decoder.Decode(new(any)) != io.EOF || input.N == 0 || len(targets) == 0 {
 		return sitestats.ErrState
 	}
-	seen := map[int64]bool{}
-	for _, target := range targets {
-		if target.ID <= 0 || seen[target.ID] || target.Name == "" || target.URL == "" {
-			return sitestats.ErrState
-		}
-		seen[target.ID] = true
-	}
 	release, err := backuprestore.HoldStartup(path)
 	if err != nil {
 		return err
 	}
 	defer release()
+	rows, err := collectScheduledStatistics(ctx, path, targets, "", false)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(out).Encode(rows)
+}
+
+func collectScheduledStatistics(ctx context.Context, path string, targets []scheduledStatsTarget, reference string, summary bool) ([]scheduledStatsResult, error) {
+	seen := map[int64]bool{}
+	for _, target := range targets {
+		if target.ID <= 0 || seen[target.ID] || target.Name == "" || target.URL == "" {
+			return nil, sitestats.ErrState
+		}
+		seen[target.ID] = true
+	}
 	db := (config.Application{Path: path}).UserDatabasePath()
 	if info, err := os.Stat(db); err != nil || !info.Mode().IsRegular() {
-		return sitestats.ErrState
+		return nil, sitestats.ErrState
 	}
 	if organization.CopySupported {
 		locks, err := organization.OpenJobLocks(db)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		guard, err := locks.AcquireJob(ctx, "native-site-statistics")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer guard.Close()
 	}
 	app := config.NewStore(path)
 	cfg, err := app.Snapshot()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sites, err := siteconfig.Open(db)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer sites.Close()
 	store, err := sitestats.Open(db)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer store.Close()
 	all, err := sites.List(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	selected := map[int64]siteconfig.Site{}
 	counts := map[string]int{}
@@ -145,7 +153,7 @@ func ScheduledStatisticsCommand(ctx context.Context, path string, in io.Reader, 
 				err = guard(ctx)
 			}
 			if err == nil {
-				err = store.SaveScheduled(ctx, site, v, time.Now())
+				err = store.SaveScheduled(ctx, site, v, time.Now(), reference, reference != "" && notify)
 			}
 			if err != nil {
 				message := "站点数据未能完整获取或保存"
@@ -164,9 +172,25 @@ func ScheduledStatisticsCommand(ctx context.Context, path string, in io.Reader, 
 	}
 	group.Wait()
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	return json.NewEncoder(out).Encode(results)
+	if summary {
+		err = store.ScheduledSummary(ctx, time.Now(), reference, func(ctx context.Context, tx *sql.Tx) ([]string, error) {
+			all, err := siteconfig.ListIn(ctx, tx)
+			if err != nil {
+				return nil, err
+			}
+			eligible, err := eligibleStatsSites(all)
+			if err != nil {
+				return nil, err
+			}
+			return statsURLs(eligible), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
 }
 
 func statsNetworkConfig(cfg map[string]any) string {

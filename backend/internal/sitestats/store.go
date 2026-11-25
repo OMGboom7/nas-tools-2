@@ -325,8 +325,15 @@ func (s *Store) Save(ctx context.Context, j Job, v Snapshot, day, updated string
 			return ErrState
 		}
 	}
+	if e = publishSnapshot(ctx, tx, v, day, updated, j.ID, notify); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+func publishSnapshot(ctx context.Context, tx *sql.Tx, v Snapshot, day, updated, reference string, notify bool) error {
 	var unread int64 = -1
-	e = tx.QueryRowContext(ctx, `SELECT COALESCE(MSG_UNREAD,0) FROM SITE_USER_INFO_STATS WHERE URL=?`, v.URL).Scan(&unread)
+	e := tx.QueryRowContext(ctx, `SELECT COALESCE(MSG_UNREAD,0) FROM SITE_USER_INFO_STATS WHERE URL=?`, v.URL).Scan(&unread)
 	if e != nil && !errors.Is(e, sql.ErrNoRows) {
 		return e
 	}
@@ -344,12 +351,37 @@ func (s *Store) Save(ctx context.Context, j Job, v Snapshot, day, updated string
 			if m.Content != "" {
 				body = "时间：" + m.Date + "\n标题：" + m.Title + "\n内容：\n" + m.Content
 			}
-			if e = bus.Emit(ctx, tx, "site_message", Hash([]any{j.ID, v.URL, i}), j.ID, title, body); e != nil {
+			if e = emitNotice(ctx, tx, "site_message", Hash([]any{reference, v.URL, i}), reference, title, body); e != nil {
 				return e
 			}
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+// The shared message store bounds each body. Keep the remaining text as
+// consecutive notices with distinct, repeatable keys in the same transaction.
+func emitNotice(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string) error {
+	body = strings.ReplaceAll(strings.ToValidUTF8(body, "�"), "\x00", "")
+	for part := 0; ; part++ {
+		chunk := bus.Bounded(body, 10000)
+		if len(chunk) < len(body) {
+			if line := strings.LastIndexByte(chunk, '\n'); line > 0 {
+				chunk = chunk[:line+1]
+			}
+		}
+		partKey := key
+		if part > 0 {
+			partKey = Hash([]any{key, part})
+		}
+		if err := bus.Emit(ctx, tx, kind, partKey, reference, title, chunk); err != nil {
+			return err
+		}
+		body = body[len(chunk):]
+		if body == "" {
+			return nil
+		}
+	}
 }
 
 func checkSite(ctx context.Context, tx *sql.Tx, want siteconfig.Site) error {
@@ -391,7 +423,7 @@ func writeStatistics(ctx context.Context, tx *sql.Tx, v Snapshot, day, updated s
 
 // SaveScheduled publishes the original scheduler's result without creating a
 // second notification sender. Preserve its icon fallback on first discovery.
-func (s *Store) SaveScheduled(ctx context.Context, site siteconfig.Site, v Snapshot, now time.Time) error {
+func (s *Store) SaveScheduled(ctx context.Context, site siteconfig.Site, v Snapshot, now time.Time, reference string, notify bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -407,7 +439,7 @@ func (s *Store) SaveScheduled(ctx context.Context, site siteconfig.Site, v Snaps
 	if v.Favicon != "" && !strings.HasPrefix(v.Favicon, "data:") {
 		v.Favicon = "data:image/ico;base64," + v.Favicon
 	}
-	if err = writeStatistics(ctx, tx, v, now.Format(time.DateOnly), now.Format(time.DateTime)); err != nil {
+	if err = publishSnapshot(ctx, tx, v, now.Format(time.DateOnly), now.Format(time.DateTime), reference, notify); err != nil {
 		return err
 	}
 	if v.Favicon == "" {

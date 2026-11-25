@@ -3,6 +3,7 @@ package sitestats
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,5 +165,46 @@ func TestHistoryUsesRecentDatesAndOriginalMinMaxDelta(t *testing.T) {
 	empty, e := s.Deltas(t.Context(), nil, 3, end)
 	if e != nil || len(empty) != 0 {
 		t.Fatal("unconfigured site leaked", empty, e)
+	}
+}
+
+func TestSummaryPreservesLongBodiesAndTotalsAboveInt64(t *testing.T) {
+	s := statsStore(t)
+	ctx := t.Context()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	urls := []string{"https://one.invalid", "https://two.invalid"}
+	label := strings.Repeat("媒", 2400)
+	for _, u := range urls {
+		_, err = tx.ExecContext(ctx, `INSERT INTO SITE_STATISTICS_HISTORY(SITE,URL,DATE,UPLOAD,DOWNLOAD)
+        VALUES(?,?,'2026-11-25','1','1'),(?,?,'2026-11-26','9223372036854775807','2')`, label, u, label, u)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = emitSummary(ctx, tx, urls, time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC), "summary"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT BODY FROM GO_BUSINESS_EVENTS ORDER BY rowid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var full strings.Builder
+	for rows.Next() {
+		var body string
+		if err = rows.Scan(&body); err != nil || len(body) > 10000 {
+			t.Fatal("invalid summary part", err)
+		}
+		full.WriteString(body)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(full.String(), "总上传：16.00 EiB") || !strings.Contains(full.String(), label+" ("+urls[0]+")") || !strings.Contains(full.String(), label+" ("+urls[1]+")") {
+		t.Fatal("summary total overflowed or detail was lost")
 	}
 }

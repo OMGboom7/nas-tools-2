@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -90,6 +91,12 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	return api.dispatch(ctx, pending, nil)
+}
+
+type statsTemplateRenderer func(template, title, message string) ([]byte, error)
+
+func (api *businessNotifications) dispatch(ctx context.Context, pending []bus.Delivery, render statsTemplateRenderer) error {
 	for _, d := range pending {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -136,6 +143,23 @@ func (api *businessNotifications) tick(ctx context.Context) error {
 			} else {
 				sent, sendErr := api.service.sendNativeReply(ctx, c.Type, objectValue(record["config"]), original.User, e.Title, e.Text)
 				state, reason = "uncertain", "原接收确认的应答未确认，不自动重发"
+				if sendErr == nil && sent {
+					state, reason = "sent", ""
+				}
+			}
+		} else if err == nil && render != nil && c.Type == "webhook" && text(objectValue(record["config"])["json_tpl"]) != "" {
+			cfg := objectValue(record["config"])
+			body, renderErr := render(text(cfg["json_tpl"]), e.Title, e.Text)
+			if errors.Is(renderErr, io.ErrUnexpectedEOF) || errors.Is(renderErr, io.ErrClosedPipe) {
+				// No request has been sent: the local renderer is gone.
+				if err := api.queue.ReturnUnsent(ctx, d.ID); err != nil {
+					return err
+				}
+				return renderErr
+			}
+			if renderErr == nil {
+				sent, sendErr := api.service.sendWebhookBody(ctx, cfg, body)
+				state, reason = "uncertain", "notification response not positively acknowledged; do not retry automatically"
 				if sendErr == nil && sent {
 					state, reason = "sent", ""
 				}

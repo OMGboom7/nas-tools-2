@@ -63,6 +63,7 @@ func Bounded(s string, n int) string {
 func schema(ctx context.Context, tx *sql.Tx) error {
 	for _, s := range []string{
 		`CREATE TABLE IF NOT EXISTS GO_BUSINESS_EVENTS(ID TEXT PRIMARY KEY,KIND TEXT NOT NULL,REFERENCE TEXT NOT NULL,TITLE TEXT NOT NULL,BODY TEXT NOT NULL,CREATED TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS GO_BUSINESS_EVENT_REFERENCE ON GO_BUSINESS_EVENTS(REFERENCE,CREATED,ID)`,
 		`CREATE TABLE IF NOT EXISTS GO_NOTIFICATION_DELIVERIES(ID TEXT PRIMARY KEY,EVENT_ID TEXT NOT NULL,CHANNEL_ID INTEGER NOT NULL,CHANNEL_NAME TEXT NOT NULL,CHANNEL_TYPE TEXT NOT NULL,CONFIG_DIGEST TEXT NOT NULL,STATE TEXT NOT NULL,REASON TEXT NOT NULL DEFAULT '',ACTOR TEXT NOT NULL DEFAULT '',UPDATED TEXT NOT NULL,UNIQUE(EVENT_ID,CHANNEL_ID))`,
 		`CREATE INDEX IF NOT EXISTS GO_NOTIFICATION_DELIVERY_STATE ON GO_NOTIFICATION_DELIVERIES(STATE,UPDATED,ID)`,
 		`CREATE TABLE IF NOT EXISTS GO_BUSINESS_EVENT_DATA(EVENT_ID TEXT PRIMARY KEY,DATA TEXT NOT NULL)`,
@@ -219,12 +220,21 @@ func scanDelivery(row interface{ Scan(...any) error }) (Delivery, error) {
 	return d, err
 }
 func (s *Store) Pending(ctx context.Context) ([]Delivery, error) {
+	return s.pending(ctx, "")
+}
+
+// PendingLegacyStatistics restricts the transitional collector to its own committed notices.
+func (s *Store) PendingLegacyStatistics(ctx context.Context) ([]Delivery, error) {
+	return s.pending(ctx, " AND EVENT_ID IN (SELECT ID FROM GO_BUSINESS_EVENTS WHERE REFERENCE GLOB 'legacy-stats:*' AND KIND IN ('ptrefresh_date_message','site_message'))")
+}
+
+func (s *Store) pending(ctx context.Context, scope string) ([]Delivery, error) {
 	result := []Delivery{}
 	exists, err := s.exists(ctx)
 	if err != nil || !exists {
 		return result, err
 	}
-	rows, err := s.db.QueryContext(ctx, deliverySQL+` WHERE STATE='pending' ORDER BY UPDATED,ID LIMIT 20`)
+	rows, err := s.db.QueryContext(ctx, deliverySQL+` WHERE STATE='pending'`+scope+` ORDER BY UPDATED,ID LIMIT 20`)
 	if err != nil {
 		return nil, err
 	}
@@ -290,6 +300,21 @@ func (s *Store) Claim(ctx context.Context, expected Delivery) (Event, notificati
 	}
 	return e, c, nil
 }
+
+// ReturnUnsent releases a claim when the local template renderer disconnects
+// before the sender has constructed a request.
+func (s *Store) ReturnUnsent(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE GO_NOTIFICATION_DELIVERIES SET STATE='pending',UPDATED=? WHERE ID=? AND STATE='sending'`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err == nil && n != 1 {
+		return ErrState
+	}
+	return err
+}
+
 func (s *Store) Finish(ctx context.Context, id, state, reason string) error {
 	if state != "sent" && state != "uncertain" && state != "blocked" {
 		return ErrState
