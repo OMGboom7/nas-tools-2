@@ -111,8 +111,9 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		canRemove := scope.settings.DeleteSource && status.TargetStage == "verified" && task.Complete && !task.Error && (!scope.settings.AutoStart || started && task.SourceSeeding) && removalState == ""
+		canConfirmAbsence := status.SourceAbsentAt == "" && (removalState == "acknowledged" || removalState == "pending" || removalState == "unknown")
 		if action == "remove-source" || action == "confirm-absence" {
-			if !in.ConfirmAction || in.Proof != proof || (action == "remove-source" && (!in.KeepFiles || !canRemove)) || (action == "confirm-absence" && removalState != "acknowledged") {
+			if !in.ConfirmAction || in.Proof != proof || (action == "remove-source" && (!in.KeepFiles || !canRemove)) || (action == "confirm-absence" && !canConfirmAbsence) {
 				writeAPIError(w, 409, 409, "请重新核对源任务、目标任务和移除回执")
 				return
 			}
@@ -122,7 +123,12 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 				}
 				return nil
 			}
-			if err := ledger.RemoveSource(ctx, id, resolve, authorize); err != nil {
+			if action == "confirm-absence" {
+				err = ledger.ConfirmSourceAbsent(ctx, id, resolve)
+			} else {
+				err = ledger.RemoveSource(ctx, id, resolve, authorize)
+			}
+			if err != nil {
 				writeAPIError(w, 409, 409, "源移除尚未核实，请刷新回执并核对做种要求和原任务")
 				return
 			}
@@ -136,7 +142,7 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 					canStart = false
 				}
 			}
-			writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"receipt": id, "proof": proof, "target": scope.to, "wireId": task.WireID, "directory": task.Directory, "name": task.Name, "addedAt": task.AddedAt, "state": task.State, "targetStage": status.TargetStage, "canStart": canStart, "sourceName": scope.from, "sourceId": source.WireID, "sourceDirectory": source.Directory, "sourceTask": source.Name, "canRemove": canRemove, "canConfirmAbsence": removalState == "acknowledged"}})
+			writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]any{"receipt": id, "proof": proof, "target": scope.to, "wireId": task.WireID, "directory": task.Directory, "name": task.Name, "addedAt": task.AddedAt, "state": task.State, "targetStage": status.TargetStage, "canStart": canStart, "sourceName": scope.from, "sourceId": source.WireID, "sourceDirectory": source.Directory, "sourceTask": source.Name, "canRemove": canRemove, "canConfirmAbsence": canConfirmAbsence}})
 			return
 		}
 		if !in.ConfirmAction || in.Proof != proof || (action == "bind" && (!in.ConfirmOwner || status.TargetStage != "")) || (action == "verify" && status.TargetStage == "") || (action == "start" && status.TargetStage != "verified") {

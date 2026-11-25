@@ -54,6 +54,7 @@ export function TorrentTransferReceipts({ token, onSessionExpired }: { token: st
     {record && <div role="status">
       {record.actions.some(item => item.action === "add" && item.state === "acknowledged") && <TorrentTransferTarget key={record.receipt} receipt={record.receipt} token={token} expired={onSessionExpired} refresh={() => void lookup(record.receipt)} />}
       <p>目标任务 · {record.targetStage ? stages[record.targetStage] : "尚未关联"}</p>
+      {record.sourceAbsentAt && <p>已核实源任务不存在 · <time dateTime={record.sourceAbsentAt}>{new Date(record.sourceAbsentAt).toLocaleString()}</time></p>}
       {record.actions.length === 0 ? <p>尚无动作记录</p> : <ul>{record.actions.map(item =>
         <li key={item.action}>{actions[item.action]} · {states[item.state]} · <time dateTime={item.updated}>{new Date(item.updated).toLocaleString()}</time></li>
       )}</ul>}

@@ -12,9 +12,10 @@ type ActionStatus struct {
 }
 
 type PlanStatus struct {
-	Receipt     string         `json:"receipt"`
-	TargetStage string         `json:"targetStage,omitempty"`
-	Actions     []ActionStatus `json:"actions"`
+	SourceAbsentAt string         `json:"sourceAbsentAt,omitempty"`
+	Receipt        string         `json:"receipt"`
+	TargetStage    string         `json:"targetStage,omitempty"`
+	Actions        []ActionStatus `json:"actions"`
 }
 
 // ReadStatus observes a single SQLite snapshot without initializing a ledger,
@@ -24,14 +25,18 @@ func ReadStatus(ctx context.Context, db *sql.DB, receipt string) (PlanStatus, er
 	if db == nil || !Hex(receipt, 64) {
 		return status, ErrState
 	}
-	var exists bool
-	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_TORRENT_TRANSFER_PLANS')").Scan(&exists); err != nil {
+	var exists, hasAbsence bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_TORRENT_TRANSFER_PLANS'),EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_TORRENT_TRANSFER_ABSENCE')").Scan(&exists, &hasAbsence); err != nil {
 		return status, err
 	}
 	if !exists {
 		return status, sql.ErrNoRows
 	}
-	rows, err := db.QueryContext(ctx, `SELECT COALESCE(t.stage,''), COALESCE(a.action,''), COALESCE(a.state,''),COALESCE(a.updated,'')
+	observed := "''"
+	if hasAbsence {
+		observed = "COALESCE((SELECT observed FROM GO_TORRENT_TRANSFER_ABSENCE WHERE receipt=p.receipt),'')"
+	}
+	rows, err := db.QueryContext(ctx, `SELECT `+observed+`,COALESCE(t.stage,''), COALESCE(a.action,''), COALESCE(a.state,''),COALESCE(a.updated,'')
 	FROM GO_TORRENT_TRANSFER_PLANS p
 	LEFT JOIN GO_TORRENT_TRANSFER_TARGETS t ON t.receiver=json_extract(p.plan,'$.Receiver') AND t.wire_id=json_extract(p.plan,'$.WireID') AND t.receipt=p.receipt
 	LEFT JOIN GO_TORRENT_TRANSFER_ACTIONS a ON a.receipt=p.receipt
@@ -44,7 +49,7 @@ func ReadStatus(ctx context.Context, db *sql.DB, receipt string) (PlanStatus, er
 	for rows.Next() {
 		found = true
 		var action ActionStatus
-		if err := rows.Scan(&status.TargetStage, &action.Action, &action.State, &action.Updated); err != nil {
+		if err := rows.Scan(&status.SourceAbsentAt, &status.TargetStage, &action.Action, &action.State, &action.Updated); err != nil {
 			return status, err
 		}
 		if action.Action != "" {

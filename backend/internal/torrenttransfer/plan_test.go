@@ -23,6 +23,10 @@ func (c *planReceiver) AddReviewedTransfer(ctx context.Context, content []byte, 
 	return i.Send(ctx, c.Address(), i.WireID, dir, content, func() (AddReceipt, error) { c.sent++; return AddReceipt{WireID: i.WireID, CreatedKnown: true}, nil })
 }
 func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
+	t.Run("acknowledged", func(t *testing.T) { exerciseSavedPlan(t, false) })
+	t.Run("lost response", func(t *testing.T) { exerciseSavedPlan(t, true) })
+}
+func exerciseSavedPlan(t *testing.T, lost bool) {
 	ctx := t.Context()
 	path, id, _ := transferFileFixture(t)
 	settings := Settings{Enable: true, DeleteSource: true, From: []string{"1"}, To: []string{"2"}, TorrentPath: path}
@@ -137,9 +141,32 @@ func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
 		t.Fatal("blocked policy", err)
 	}
 	protected.allowed = true
+	if err := ledger.ConfirmSourceAbsent(ctx, receipt, removeScope); !errors.Is(err, ErrState) || protected.sends != 0 {
+		t.Fatal(err, protected.sends)
+	}
+	protected.lost = lost
+	err = ledger.RemoveSource(ctx, receipt, removeScope, approve)
+	if (err != nil) != lost || protected.sends != 1 {
+		t.Fatal(err, protected.sends)
+	}
 	for range 2 {
-		if err := ledger.RemoveSource(ctx, receipt, removeScope, approve); err != nil || protected.sends != 1 {
+		if err := ledger.ConfirmSourceAbsent(ctx, receipt, removeScope); err != nil || protected.sends != 1 {
 			t.Fatal(err, protected.sends)
+		}
+	}
+	status, err = ReadStatus(ctx, db, receipt)
+	if err != nil || status.SourceAbsentAt == "" {
+		t.Fatal(status, err)
+	}
+	if lost {
+		found := false
+		for _, a := range status.Actions {
+			if a.Action == "remove-source" && a.State == "unknown" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("lost response overwritten", status)
 		}
 	}
 	if err := db.QueryRow("SELECT json_extract(VALUE,\x27$.delete_source\x27) FROM PLUGIN_HISTORY WHERE KEY=?", key).Scan(&deleted); err != nil || !deleted {
@@ -154,6 +181,7 @@ func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
 type removalFixture struct {
 	sourceFixture
 	allowed bool
+	lost    bool
 	sends   int
 }
 
@@ -165,6 +193,9 @@ func (f *removalFixture) CheckTransferRemoval(context.Context, Task) error {
 }
 func (f *removalFixture) RemoveTransferKeepingFiles(context.Context, Task) error {
 	f.sends++
+	if f.lost {
+		return errors.New("fixture response lost")
+	}
 	return nil
 }
 func (f *removalFixture) TransferTask(ctx context.Context, id string) (Task, error) {

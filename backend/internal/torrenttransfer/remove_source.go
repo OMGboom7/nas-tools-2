@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strconv"
+	"time"
 )
 
 // ProtectedSource uses the application's PT and profile checks and retains all
@@ -19,6 +20,18 @@ func (l *Ledger) RemoveSource(ctx context.Context, receipt string, resolve Resol
 	if resolve == nil || authorize == nil {
 		return ErrState
 	}
+	return l.removeOrObserveSource(ctx, receipt, resolve, authorize)
+}
+
+// ConfirmSourceAbsent cannot send a removal, even if no action was recorded.
+func (l *Ledger) ConfirmSourceAbsent(ctx context.Context, receipt string, resolve ResolveScope) error {
+	if resolve == nil {
+		return ErrState
+	}
+	return l.removeOrObserveSource(ctx, receipt, resolve, nil)
+}
+
+func (l *Ledger) removeOrObserveSource(ctx context.Context, receipt string, resolve ResolveScope, authorize func(context.Context, string, Task, Task) error) error {
 	p, err := l.LoadPlan(ctx, receipt)
 	if err != nil {
 		return err
@@ -43,6 +56,9 @@ func (l *Ledger) RemoveSource(ctx context.Context, receipt string, resolve Resol
 	proof := Hash([]string{Hash(p), Hash(frozen)})
 	action, err := l.Lookup(ctx, key)
 	if errors.Is(err, sql.ErrNoRows) {
+		if authorize == nil {
+			return ErrState
+		}
 		review, receiver, err := p.live(ctx, resolve)
 		if err != nil {
 			return err
@@ -96,11 +112,16 @@ func (l *Ledger) RemoveSource(ctx context.Context, receipt string, resolve Resol
 		}
 	} else if err != nil {
 		return err
-	} else if action.Receipt != receipt || action.Proof != proof || action.State != "acknowledged" {
+	} else if action.Receipt != receipt || action.Proof != proof || (action.State != "acknowledged" && (authorize != nil || (action.State != "pending" && action.State != "unknown"))) {
 		return ErrState
 	}
-	// An acknowledged request may still be visible. Subsequent calls only
-	// observe absence and finish bookkeeping, including after a restart.
+	target, err := dst.TransferTask(ctx, p.WireID)
+	if err != nil {
+		return err
+	}
+	if !target.SameInstance(frozen) || target.Error || !target.Complete {
+		return ErrState
+	}
 	if _, err := client.TransferTask(ctx, key.WireID); !errors.Is(err, ErrTaskAbsent) {
 		if err != nil {
 			return err
@@ -141,21 +162,24 @@ func (l *Ledger) sourceHistory(ctx context.Context, p Plan, s Settings, receipt 
 	if err != nil {
 		return err
 	}
-	if removed && raw == after {
-		return nil
-	}
-	if raw != before {
+	if raw != before && !(removed && raw == after) {
 		return ErrState
 	}
 	if !removed {
 		return nil
 	}
-	result, err := tx.ExecContext(ctx, "UPDATE PLUGIN_HISTORY SET VALUE=? WHERE ID=? AND VALUE=? AND KEY=? AND PLUGIN_ID=?", after, id, before, key, Plugin)
+	if raw != after {
+		result, err := tx.ExecContext(ctx, "UPDATE PLUGIN_HISTORY SET VALUE=? WHERE ID=? AND VALUE=? AND KEY=? AND PLUGIN_ID=?", after, id, before, key, Plugin)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil || n != 1 {
+			return ErrState
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO GO_TORRENT_TRANSFER_ABSENCE(receipt,observed) VALUES(?,?) ON CONFLICT(receipt) DO NOTHING`, receipt, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return err
-	}
-	if n, err := result.RowsAffected(); err != nil || n != 1 {
-		return ErrState
 	}
 	return tx.Commit()
 }

@@ -1714,6 +1714,7 @@ export type TorrentTransferAction = {
 };
 
 export type TorrentTransferReceipt = {
+  sourceAbsentAt?: string;
   receipt: string;
   targetStage?: "bound" | "checking" | "verified";
   actions: TorrentTransferAction[];
@@ -1731,6 +1732,7 @@ export async function getTorrentTransferReceipt(token: string, id: string, signa
   const body = await response.json();
   const record = body?.result;
   if (body?.code !== 0 || record?.receipt !== id ||
+      (record.sourceAbsentAt !== undefined && (typeof record.sourceAbsentAt !== "string" || !Number.isFinite(Date.parse(record.sourceAbsentAt)))) ||
       (record.targetStage !== undefined && !["bound", "checking", "verified"].includes(record.targetStage)) ||
       !Array.isArray(record.actions) || !record.actions.every((item: TorrentTransferAction) =>
         item && ["add", "verify", "start", "remove-source"].includes(item.action) &&
