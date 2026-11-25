@@ -53,7 +53,9 @@ func PrepareNativeUserDatabase(path string) error {
 	if err != nil {
 		return err
 	}
-	dsn.RawQuery = "mode=rw&_txlock=immediate&_pragma=busy_timeout(10000)"
+	// Dropping a table during a type rebuild must not cascade into child
+	// rows. The private migration connection checks the affected keys itself.
+	dsn.RawQuery = "mode=rw&_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=foreign_keys(OFF)"
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return err
@@ -67,6 +69,11 @@ func PrepareNativeUserDatabase(path string) error {
 	for _, table := range userTableUpgrades {
 		if err := table.apply(tx); err != nil {
 			return fmt.Errorf("upgrade %s: %w", table.name, err)
+		}
+	}
+	for _, change := range historicalTypeChanges {
+		if err := change.apply(tx); err != nil {
+			return fmt.Errorf("upgrade %s column types: %w", change.table, err)
 		}
 	}
 	return tx.Commit()
