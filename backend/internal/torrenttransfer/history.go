@@ -49,15 +49,11 @@ func recordHistory(ctx context.Context, tx *sql.Tx, receipt string, settings Set
 	if exists {
 		return ErrState
 	}
-	value, err := json.Marshal(struct {
-		Downloader int64  `json:"to_download"`
-		Task       string `json:"to_download_id"`
-		Deleted    bool   `json:"delete_source"`
-	}{Downloader: to, Task: targetID})
+	value, err := historyValue(to, targetID, false)
 	if err != nil {
 		return err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO PLUGIN_HISTORY(PLUGIN_ID,KEY,VALUE,DATE) VALUES(?,?,?,?)`, Plugin, key, string(value), time.Now().Format("2006-01-02 15:04:05"))
+	result, err := tx.ExecContext(ctx, `INSERT INTO PLUGIN_HISTORY(PLUGIN_ID,KEY,VALUE,DATE) VALUES(?,?,?,?)`, Plugin, key, value, time.Now().Format("2006-01-02 15:04:05"))
 	if err != nil {
 		return err
 	}
@@ -67,4 +63,13 @@ func recordHistory(ctx context.Context, tx *sql.Tx, receipt string, settings Set
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO GO_TORRENT_TRANSFER_HISTORY(receipt,history_key,row_id) VALUES(?,?,?)`, receipt, key, rowID)
 	return err
+}
+
+func historyValue(to int64, targetID string, deleted bool) (string, error) {
+	raw, err := json.Marshal(struct {
+		Downloader int64  `json:"to_download"`
+		Task       string `json:"to_download_id"`
+		Deleted    bool   `json:"delete_source"`
+	}{Downloader: to, Task: targetID, Deleted: deleted})
+	return string(raw), err
 }

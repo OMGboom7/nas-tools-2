@@ -9,10 +9,12 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/qbittorrent"
+	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 	"github.com/0xforee/nas-tools/backend/internal/transmission"
 )
 
 type completionOrganizationClient struct {
+	transfer  torrenttransfer.SourceClient
 	completed func(context.Context) ([]string, error)
 	stop      func(context.Context, string) error
 	read      func(context.Context, string) (downloadcompletion.Task, error)
@@ -68,7 +70,7 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 				}
 				return c.StopForOrganization(ctx, id)
 			}
-			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}), nil
+			return api.protectSeedingClient(item, completionOrganizationClient{transfer: c, read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}), nil
 		}
 	case "transmission":
 		c, err := transmission.New(text(cfg["host"]), text(cfg["port"]), text(cfg["username"]), text(cfg["password"]), api.service.client.Transport)
@@ -91,7 +93,7 @@ func (api organizationAPI) clientFromDownloader(item downloaderconfig.Downloader
 				}
 				return c.Control(ctx, id, "stop")
 			}
-			return api.protectSeedingClient(item, completionOrganizationClient{read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}), nil
+			return api.protectSeedingClient(item, completionOrganizationClient{transfer: c, read: c.Completion, has: c.HasTorrent, mark: c.MarkOrganized, remove: func(ctx context.Context, id string) error { return protect(ctx, id, true) }, completed: c.CompletedIDs, stop: func(ctx context.Context, id string) error { return protect(ctx, id, false) }}), nil
 		}
 	case "aria2":
 		c, err := aria2.New(text(cfg["host"]), text(cfg["port"]), text(cfg["secret"]), api.service.client.Transport)

@@ -25,7 +25,7 @@ func (c *planReceiver) AddReviewedTransfer(ctx context.Context, content []byte, 
 func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
 	ctx := t.Context()
 	path, id, _ := transferFileFixture(t)
-	settings := Settings{Enable: true, From: []string{"1"}, To: []string{"2"}, TorrentPath: path}
+	settings := Settings{Enable: true, DeleteSource: true, From: []string{"1"}, To: []string{"2"}, TorrentPath: path}
 	src := sourceFixture{task: Task{Kind: "transmission", WireID: id, V1Hash: id, AddedAt: 1, Directory: "/library", State: "seeding", SourceSeeding: true, Complete: true, Labels: []string{}, Files: []torrentfiles.File{{Index: 0, Path: "movie.mkv", Size: 8, Selected: true}}, Done: []int{0}}}
 	dst := &planReceiver{}
 	root, err := OpenMetainfoRoot(path)
@@ -117,8 +117,59 @@ func TestSavedPlanChecksGrantAgainBeforeSending(t *testing.T) {
 	if err != nil || status.TargetStage != "bound" || len(status.Actions) != 2 {
 		t.Fatal(status, err)
 	}
+	protected := &removalFixture{sourceFixture: src}
+	removeScope := func(context.Context) (Settings, SourceClient, ReceiverClient, string, error) {
+		return settings, protected, dst, grant, nil
+	}
+	approve := func(context.Context, string, Task, Task) error { return nil }
+	if err := ledger.RemoveSource(ctx, receipt, removeScope, approve); !errors.Is(err, ErrState) {
+		t.Fatal("unverified target", err)
+	}
+	dst.task.State, dst.task.Checking, dst.task.Complete, dst.task.Paused = "checking", true, false, false
+	if _, err := ledger.ContinuePlan(ctx, receipt, resolve, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	dst.task.State, dst.task.Checking, dst.task.Complete, dst.task.Paused = "stopped", false, true, true
+	if _, err := ledger.ContinuePlan(ctx, receipt, resolve, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.RemoveSource(ctx, receipt, removeScope, approve); !errors.Is(err, ErrState) || protected.sends != 0 {
+		t.Fatal("blocked policy", err)
+	}
+	protected.allowed = true
+	for range 2 {
+		if err := ledger.RemoveSource(ctx, receipt, removeScope, approve); err != nil || protected.sends != 1 {
+			t.Fatal(err, protected.sends)
+		}
+	}
+	if err := db.QueryRow("SELECT json_extract(VALUE,\x27$.delete_source\x27) FROM PLUGIN_HISTORY WHERE KEY=?", key).Scan(&deleted); err != nil || !deleted {
+		t.Fatal(deleted, err)
+	}
 	plan.GrantDigest = Hash("replacement")
 	if err := ledger.SavePlan(ctx, receipt, plan); !errors.Is(err, ErrState) {
 		t.Fatal(err)
 	}
+}
+
+type removalFixture struct {
+	sourceFixture
+	allowed bool
+	sends   int
+}
+
+func (f *removalFixture) CheckTransferRemoval(context.Context, Task) error {
+	if !f.allowed {
+		return ErrState
+	}
+	return nil
+}
+func (f *removalFixture) RemoveTransferKeepingFiles(context.Context, Task) error {
+	f.sends++
+	return nil
+}
+func (f *removalFixture) TransferTask(ctx context.Context, id string) (Task, error) {
+	if f.sends > 0 {
+		return Task{}, ErrTaskAbsent
+	}
+	return f.sourceFixture.TransferTask(ctx, id)
 }
