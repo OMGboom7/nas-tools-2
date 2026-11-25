@@ -392,12 +392,6 @@ class ProUser(UserMixin):
 
         return None
 
-    def get_site_user_ranking_info(self, name=None, domain=None, siteid=None):
-        site = self.get_site_config(name=name, domain=domain, siteid=siteid)
-        if not site:
-            return None
-        return site.get("user_ranking_info")
-
     def get_public_sites(self):
         if self._public_sites:
             return self._public_sites

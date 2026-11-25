@@ -289,14 +289,10 @@ class SiteStatistic(ApiResource):
         """
         获取站点数据明细（密钥认证）
         """
-        # 返回站点信息
-        return {
-            "code": 0,
-            "success": True,
-            "data": {
-                "user_statistics": WebAction().get_site_user_statistics({"encoding": "DICT"}).get("data")
-            }
-        }
+        result = WebAction().get_site_user_statistics({"encoding": "DICT"})
+        if result["code"]:
+            return {"code": 1, "success": False, "message": result["msg"]}, 503
+        return {"code": 0, "success": True, "data": {"user_statistics": result["data"]}}
 
 
 @site.route('/sites')

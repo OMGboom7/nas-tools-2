@@ -14,6 +14,18 @@ from config import Config, run_go_helper
 lock = Lock()
 
 
+def read_site_statistics(action, data=None):
+    params = dict(data or {})
+    if isinstance(params.get("sites"), str):
+        params["sites"] = [params["sites"]] if params["sites"] else []
+    try:
+        raw = run_go_helper("site-statistics-read", Config().get_user_sites_bin_path(), action,
+                            payload=json.dumps(params).encode())
+        return json.loads(raw)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {"code": 1, "msg": "站点统计查询不可用"}
+
+
 @singleton
 class SiteUserInfo(object):
     sites = None
@@ -58,16 +70,11 @@ class SiteUserInfo(object):
         # 增量数据
         incUploads = 0
         incDownloads = 0
-        _, _, site, upload, download = SiteUserInfo().get_pt_site_statistics_history(2)
-
-        # 按照上传降序排序
-        data_list = list(zip(site, upload, download))
-        data_list = sorted(data_list, key=lambda x: x[1], reverse=True)
-
-        for data in data_list:
-            site = data[0]
-            upload = int(data[1])
-            download = int(data[2])
+        result = read_site_statistics("get_site_history", {"days": 1})
+        if result["code"]:
+            log.error("【Sites】" + result["msg"])
+            return
+        for site, upload, download in result["dataset"][1:]:
             if upload > 0 or download > 0:
                 incUploads += int(upload)
                 incDownloads += int(download)
@@ -149,114 +156,6 @@ class SiteUserInfo(object):
             self._last_update_time = datetime.now()
             log.info(f"【Sites】所有站点数据刷新流程结束，总耗时: {round((datetime.now() - start_time).total_seconds(), 2)}s")
 
-    def get_pt_site_statistics_history(self, days=7, end_day=None):
-        """
-        获取站点上传下载量
-        """
-        site_urls = []
-        for site in self.sites.get_sites(statistic=True):
-            site_url = site.get("strict_url")
-            if site_url:
-                site_urls.append(site_url)
-
-        return self.dbhelper.get_site_statistics_recent_sites(days=days, end_day=end_day, strict_urls=site_urls)
-
-    def get_site_user_statistics(self, sites=None, encoding="RAW"):
-        """
-        获取站点用户数据
-        :param sites: 站点名称
-        :param encoding: RAW/DICT
-        :return:
-        """
-        statistic_sites = self.sites.get_sites(statistic=True)
-        if not sites:
-            site_urls = [site.get("strict_url") for site in statistic_sites]
-        else:
-            site_urls = [site.get("strict_url") for site in statistic_sites
-                         if site.get("name") in sites]
-
-        raw_statistics = self.dbhelper.get_site_user_statistics(strict_urls=site_urls)
-        if encoding == "RAW":
-            return raw_statistics
-
-        return self.__todict(raw_statistics)
-
-    def get_pt_site_activity_history(self, site, days=365 * 2):
-        """
-        查询站点 上传，下载，做种数据
-        :param site: 站点名称
-        :param days: 最大数据量
-        :return:
-        """
-        site_activities = [["time", "upload", "download", "bonus", "seeding", "seeding_size"]]
-        sql_site_activities = self.dbhelper.get_site_statistics_history(site=site, days=days)
-        for sql_site_activity in sql_site_activities:
-            timestamp = datetime.strptime(sql_site_activity.DATE, '%Y-%m-%d').timestamp() * 1000
-            site_activities.append(
-                [timestamp,
-                 sql_site_activity.UPLOAD,
-                 sql_site_activity.DOWNLOAD,
-                 sql_site_activity.BONUS,
-                 sql_site_activity.SEEDING,
-                 sql_site_activity.SEEDING_SIZE])
-
-        return site_activities
-
-    def get_pt_site_seeding_info(self, site):
-        """
-        查询站点 做种分布信息
-        :param site: 站点名称
-        :return: seeding_info:[uploader_num, seeding_size]
-        """
-        site_seeding_info = {"seeding_info": []}
-        seeding_info = self.dbhelper.get_site_seeding_info(site=site)
-        if not seeding_info:
-            return site_seeding_info
-
-        site_seeding_info["seeding_info"] = json.loads(seeding_info[0])
-        return site_seeding_info
-
-    def get_pt_site_min_join_date(self, sites=None):
-        """
-        查询站点加入时间
-        """
-        statistics = self.get_site_user_statistics(sites=sites, encoding="DICT")
-        if not statistics:
-            return ""
-        dates = []
-        for s in statistics:
-            if s.get("join_at"):
-                try:
-                    dates.append(datetime.strptime(s.get("join_at"), '%Y-%m-%d %H:%M:%S'))
-                except Exception as err:
-                    print(str(err))
-                    pass
-        if dates:
-            return min(dates).strftime("%Y-%m-%d")
-        return ""
-
-    @staticmethod
-    def __todict(raw_statistics):
-        statistics = []
-        for site in raw_statistics:
-            statistics.append({"site": site.SITE,
-                               "username": site.USERNAME,
-                               "user_level": site.USER_LEVEL,
-                               "join_at": site.JOIN_AT,
-                               "last_seen": site.LAST_SEEN,
-                               "update_at": site.UPDATE_AT,
-                               "upload": site.UPLOAD,
-                               "download": site.DOWNLOAD,
-                               "ratio": site.RATIO,
-                               "seeding": site.SEEDING,
-                               "leeching": site.LEECHING,
-                               "seeding_size": site.SEEDING_SIZE,
-                               "bonus": site.BONUS,
-                               "url": site.URL,
-                               "msg_unread": site.MSG_UNREAD
-                               })
-        return statistics
-
     def update_site_name(self, old_name, name):
         """
         更新站点数据中的站点名称
@@ -275,7 +174,7 @@ class SiteUserInfo(object):
         if _force_enable_brush:
             return True
 
-        first_pt_site = self.get_pt_site_min_join_date()
+        first_pt_site = read_site_statistics("min_join_date").get("data")
         if not first_pt_site or not StringUtils.is_one_month_ago(first_pt_site):
             return False
         else:

@@ -2,11 +2,13 @@ package httpserver
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -102,5 +104,64 @@ func TestScheduledStatisticsPublishesOnlyCompleteSelectedAccounts(t *testing.T) 
 	target.Name = "Renamed"
 	if run(target)[0].Data["err_msg"] == nil || calls != requests.Load() {
 		t.Fatal("stale selection initiated account requests")
+	}
+}
+
+func TestStatisticsReadCommandUsesOriginalTablesWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	dbPath := filepath.Join(dir, "user.db")
+	query := func(action, input string) (string, error) {
+		var out bytes.Buffer
+		err := StatisticsReadCommand(t.Context(), path, "", action, strings.NewReader(input), &out)
+		return strings.TrimSpace(out.String()), err
+	}
+	if _, err := query("min_join_date", "{}"); err == nil {
+		t.Fatal("missing database accepted")
+	}
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Fatal("query created a database", err)
+	}
+	sites, err := siteconfig.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites.Close()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO CONFIG_SITE(NAME,SIGNURL,INCLUDE,COOKIE) VALUES
+ ('Current','https://current.invalid/','T','fixture'),('Hidden','https://hidden.invalid/','','hidden');
+ CREATE TABLE SITE_USER_INFO_STATS(SITE,URL,USERNAME,USER_LEVEL,JOIN_AT,LAST_SEEN,UPDATE_AT,UPLOAD,DOWNLOAD,RATIO,SEEDING,LEECHING,SEEDING_SIZE,BONUS,MSG_UNREAD);
+ INSERT INTO SITE_USER_INFO_STATS(SITE,URL,JOIN_AT,UPLOAD) VALUES
+ ('Current','https://current.invalid','2025-01-01 10:00:00',9007199254740993),('Hidden','https://hidden.invalid','2010-01-01 10:00:00','damaged hidden counter')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ action, input, want string }{
+		{"min_join_date", "{}", `"data":"2025-01-01"`},
+		{"min_join_date", `{"sites":["Hidden"]}`, `"data":""`},
+		{"get_site_user_statistics", "{}", `"upload":9007199254740993`},
+		{"get_site_user_statistics", `{"sites":["Hidden"]}`, `"data":[]`},
+		{"get_site_history", `{"days":"1"}`, `"code":1`},
+		{"get_user_ranking_status", `{"site":"Current"}`, `"status_type":"not_configured"`},
+		{"unsupported", "{}", `"code":1`},
+	} {
+		got, err := query(tc.action, tc.input)
+		if err != nil || !strings.Contains(got, tc.want) || strings.Contains(got, "hidden.invalid") {
+			t.Fatalf("%s: %s, %v", tc.action, got, err)
+		}
+	}
+	after, err := os.ReadFile(dbPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("query changed original database", err)
 	}
 }

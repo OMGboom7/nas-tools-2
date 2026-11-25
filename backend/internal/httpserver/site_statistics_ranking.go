@@ -26,6 +26,10 @@ func (api *siteStatisticsAPI) readStatsSites(ctx context.Context) ([]siteconfig.
 	if err != nil {
 		return nil, err
 	}
+	return eligibleStatsSites(sites)
+}
+
+func eligibleStatsSites(sites []siteconfig.Site) ([]siteconfig.Site, error) {
 	eligible := make([]siteconfig.Site, 0, len(sites))
 	for _, site := range sites {
 		record, err := nativeSiteRecord(site)
@@ -54,14 +58,23 @@ func statsAddressByName(sites []siteconfig.Site, name string) string {
 	return address
 }
 
-func (api *siteStatisticsAPI) rankingCatalog() (indexercatalog.Catalog, error) {
-	if api.login.catalogPath == "" {
-		return indexercatalog.Catalog{}, nil
-	}
-	return indexercatalog.Load(api.login.catalogPath)
+type statsReadService struct {
+	store       sitestats.Reader
+	catalogPath string
 }
 
-func (api *siteStatisticsAPI) rankAt(ctx context.Context, address, name string) (sitestats.RankStatus, error) {
+func (api *siteStatisticsAPI) reads() statsReadService {
+	return statsReadService{api.store.Reader, api.login.catalogPath}
+}
+
+func (api statsReadService) rankingCatalog() (indexercatalog.Catalog, error) {
+	if api.catalogPath == "" {
+		return indexercatalog.Catalog{}, nil
+	}
+	return indexercatalog.Load(api.catalogPath)
+}
+
+func (api statsReadService) rankAt(ctx context.Context, address, name string) (sitestats.RankStatus, error) {
 	item, err := api.store.Snapshot(ctx, address)
 	if err != nil {
 		return sitestats.RankStatus{}, err
@@ -138,7 +151,7 @@ func (api *siteStatisticsAPI) serveStatsRead(w http.ResponseWriter, r *http.Requ
 			writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"siteId": id, "history": history, "seedingInfo": sitestats.SeedStrings(seeds)}})
 			return
 		}
-		rank, err := api.rankAt(ctx, address, site.Name)
+		rank, err := api.reads().rankAt(ctx, address, site.Name)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			writeAPIError(w, 404, 404, "该站点尚无统计快照")
@@ -152,7 +165,7 @@ func (api *siteStatisticsAPI) serveStatsRead(w http.ResponseWriter, r *http.Requ
 	writeAPIError(w, 404, 404, "未找到参与统计的站点")
 }
 
-func (api *siteStatisticsAPI) statsSiteDataset(ctx context.Context, action, address string) ([][]any, error) {
+func (api statsReadService) statsSiteDataset(ctx context.Context, action, address string) ([][]any, error) {
 	if action == "seedinfo" {
 		rows, err := api.store.Seeds(ctx, address)
 		if err != nil {
@@ -181,7 +194,7 @@ func (api *siteStatisticsAPI) statsSiteDataset(ctx context.Context, action, addr
 	return result, nil
 }
 
-func (api *siteStatisticsAPI) statsHistoryDataset(ctx context.Context, sites []siteconfig.Site, days int, endDay string) ([][]any, error) {
+func (api statsReadService) statsHistoryDataset(ctx context.Context, sites []siteconfig.Site, days int, endDay string) ([][]any, error) {
 	loc, err := rssWorkerLocation()
 	if err != nil {
 		return nil, err
@@ -257,49 +270,48 @@ func (api *siteStatisticsAPI) legacyAction(next http.HandlerFunc) http.HandlerFu
 			legacyStatsError(w, "查询参数错误")
 			return
 		}
-		api.serveLegacyStats(w, r, envelope.Cmd, in)
+		sites, err := api.readStatsSites(r.Context())
+		if err != nil {
+			legacyStatsError(w, "原站点统计范围不可用")
+			return
+		}
+		writeJSON(w, http.StatusOK, api.reads().query(r.Context(), sites, envelope.Cmd, in))
 	}
 }
 
-func (api *siteStatisticsAPI) serveLegacyStats(w http.ResponseWriter, r *http.Request, action string, in legacyStatsInput) {
-	ctx := r.Context()
-	sites, err := api.readStatsSites(ctx)
-	if err != nil {
-		legacyStatsError(w, "原站点统计范围不可用")
-		return
-	}
+func statsReadError(message string) map[string]any {
+	return map[string]any{"code": 1, "msg": message}
+}
+
+func (api statsReadService) query(ctx context.Context, sites []siteconfig.Site, action string, in legacyStatsInput) map[string]any {
+	var err error
 	var result any
 	key := "data"
 	switch action {
 	case "get_user_ranking_status":
 		if in.Site == "" {
-			legacyStatsError(w, "未指定站点")
-			return
+			return statsReadError("未指定站点")
 		}
 		address := statsAddressByName(sites, in.Site)
 		if address == "" {
-			legacyStatsError(w, "未找到唯一参与统计的站点")
-			return
+			return statsReadError("未找到唯一参与统计的站点")
 		}
 		result, err = api.rankAt(ctx, address, in.Site)
 		if errors.Is(err, sql.ErrNoRows) {
-			legacyStatsError(w, "未找到站点的统计数据")
-			return
+			return statsReadError("未找到站点的统计数据")
 		}
 	case "get_site_user_statistics":
 		result, err = api.legacyStatsList(ctx, sites, in)
 	case "get_site_history":
 		if in.Days == nil || *in.Days < 1 || *in.Days > 729 {
-			legacyStatsError(w, "查询参数错误")
-			return
+			return statsReadError("查询参数错误")
 		}
 		key = "dataset"
 		result, err = api.statsHistoryDataset(ctx, sites, *in.Days, in.EndDay)
 	case "get_site_activity", "get_site_seeding_info":
 		address := statsAddressByName(sites, in.Name)
 		if address == "" {
-			legacyStatsError(w, "未找到唯一参与统计的站点")
-			return
+			return statsReadError("未找到唯一参与统计的站点")
 		}
 		dataset := "activity"
 		if action == "get_site_seeding_info" {
@@ -307,19 +319,20 @@ func (api *siteStatisticsAPI) serveLegacyStats(w http.ResponseWriter, r *http.Re
 		}
 		key = "dataset"
 		result, err = api.statsSiteDataset(ctx, dataset, address)
+	default:
+		return statsReadError("查询参数错误")
 	}
 	if err != nil {
-		legacyStatsError(w, "原统计或站点等级规则不可用")
-		return
+		return statsReadError("原统计或站点等级规则不可用")
 	}
-	writeJSON(w, 200, map[string]any{"code": 0, key: result})
+	return map[string]any{"code": 0, key: result}
 }
 
-func (api *siteStatisticsAPI) legacyStatsList(ctx context.Context, sites []siteconfig.Site, in legacyStatsInput) ([]map[string]any, error) {
+func (api statsReadService) selectedSnapshots(ctx context.Context, sites []siteconfig.Site, names []string) ([]sitestats.Snapshot, map[string]siteconfig.Site, error) {
 	byAddress := make(map[string]siteconfig.Site, len(sites))
 	urls := []string{}
 	for _, site := range sites {
-		if len(in.Sites) > 0 && !slices.Contains(in.Sites, site.Name) {
+		if len(names) > 0 && !slices.Contains(names, site.Name) {
 			continue
 		}
 		address := safeSiteOrigin(defaultString(site.SignURL, site.RSSURL))
@@ -328,13 +341,27 @@ func (api *siteStatisticsAPI) legacyStatsList(ctx context.Context, sites []sitec
 			urls = append(urls, address)
 		}
 	}
-	out := []map[string]any{}
+
 	if len(urls) == 0 {
-		return out, nil
+		return nil, nil, nil
 	}
 	rows, err := api.store.List(ctx, urls)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	slices.SortStableFunc(rows, func(a, b sitestats.Snapshot) int {
+		first, _ := strconv.Atoi(byAddress[a.URL].Priority)
+		second, _ := strconv.Atoi(byAddress[b.URL].Priority)
+		return cmp.Compare(first, second)
+	})
+	return rows[:min(len(rows), 100)], byAddress, nil
+}
+
+func (api statsReadService) legacyStatsList(ctx context.Context, sites []siteconfig.Site, in legacyStatsInput) ([]map[string]any, error) {
+	rows, byAddress, err := api.selectedSnapshots(ctx, sites, in.Sites)
+	out := []map[string]any{}
+	if err != nil || len(rows) == 0 {
+		return out, err
 	}
 	catalog, err := api.rankingCatalog()
 	if err != nil {
@@ -345,12 +372,6 @@ func (api *siteStatisticsAPI) legacyStatsList(ctx context.Context, sites []sitec
 		return nil, err
 	}
 	now := time.Now().In(loc)
-	slices.SortStableFunc(rows, func(a, b sitestats.Snapshot) int {
-		first, _ := strconv.Atoi(byAddress[a.URL].Priority)
-		second, _ := strconv.Atoi(byAddress[b.URL].Priority)
-		return cmp.Compare(first, second)
-	})
-	rows = rows[:min(len(rows), 100)]
 	if in.SortOn == "asc" || in.SortOn == "desc" {
 		slices.SortStableFunc(rows, func(a, b sitestats.Snapshot) int {
 			if in.SortOn == "desc" {
@@ -401,6 +422,22 @@ func compareLegacyStats(a, b sitestats.Snapshot, key string) int {
 		return cmp.Compare(a.SeedingSize, b.SeedingSize)
 	case "seeding":
 		return cmp.Compare(a.Seeding, b.Seeding)
+	case "leeching":
+		return cmp.Compare(a.Leeching, b.Leeching)
+	case "msg_unread":
+		return cmp.Compare(a.Unread, b.Unread)
+	case "username":
+		return cmp.Compare(a.Username, b.Username)
+	case "user_level":
+		return cmp.Compare(a.Level, b.Level)
+	case "join_at":
+		return cmp.Compare(a.Joined, b.Joined)
+	case "last_seen":
+		return cmp.Compare(a.LastSeen, b.LastSeen)
+	case "update_at":
+		return cmp.Compare(a.Updated, b.Updated)
+	case "url":
+		return cmp.Compare(a.URL, b.URL)
 	case "bonus":
 		return cmp.Compare(a.Bonus, b.Bonus)
 	case "site":

@@ -11,6 +11,16 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 )
 
+// Reader queries legacy statistics tables on a database or a consistent read transaction.
+type Reader struct{ db querySource }
+
+type querySource interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func NewReader(db querySource) Reader { return Reader{db: db} }
+
 func stringInt(v int64) string { return strconv.FormatInt(v, 10) }
 
 const snapshotSelect = `SELECT COALESCE(SITE,''),COALESCE(URL,''),COALESCE(USERNAME,''),COALESCE(USER_LEVEL,''),COALESCE(JOIN_AT,''),COALESCE(LAST_SEEN,''),COALESCE(UPDATE_AT,''),COALESCE(UPLOAD,0),COALESCE(DOWNLOAD,0),COALESCE(RATIO,0),COALESCE(SEEDING,0),COALESCE(LEECHING,0),COALESCE(SEEDING_SIZE,0),COALESCE(BONUS,0),COALESCE(MSG_UNREAD,0) FROM SITE_USER_INFO_STATS`
@@ -21,29 +31,27 @@ func scanSnapshot(row interface{ Scan(...any) error }) (Snapshot, error) {
 	v.Seeds = [][2]int64{}
 	return v, e
 }
-func (s *Store) Snapshot(ctx context.Context, address string) (Snapshot, error) {
+func (s Reader) Snapshot(ctx context.Context, address string) (Snapshot, error) {
 	return scanSnapshot(s.db.QueryRowContext(ctx, snapshotSelect+` WHERE URL=?`, address))
 }
 
-func (s *Store) List(ctx context.Context, urls []string) ([]Snapshot, error) {
-	rows, e := s.db.QueryContext(ctx, snapshotSelect+` ORDER BY SITE,URL`)
+func (s Reader) List(ctx context.Context, urls []string) ([]Snapshot, error) {
+	scope, e := json.Marshal(urls)
+	if e != nil {
+		return nil, e
+	}
+	rows, e := s.db.QueryContext(ctx, snapshotSelect+` WHERE URL IN (SELECT value FROM json_each(?)) ORDER BY SITE,URL`, string(scope))
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
 	out := []Snapshot{}
-	allowed := map[string]bool{}
-	for _, u := range urls {
-		allowed[u] = true
-	}
 	for rows.Next() {
 		v, e := scanSnapshot(rows)
 		if e != nil {
 			return nil, e
 		}
-		if allowed[v.URL] {
-			out = append(out, v)
-		}
+		out = append(out, v)
 	}
 	return out, rows.Err()
 }
@@ -59,7 +67,7 @@ type History struct {
 	SeedingSize int64   `json:"seedingSize"`
 }
 
-func (s *Store) History(ctx context.Context, address string, days int) ([]History, error) {
+func (s Reader) History(ctx context.Context, address string, days int) ([]History, error) {
 	if days < 1 || days > 730 {
 		return nil, ErrState
 	}
@@ -78,7 +86,7 @@ func (s *Store) History(ctx context.Context, address string, days int) ([]Histor
 	}
 	return out, rows.Err()
 }
-func (s *Store) Seeds(ctx context.Context, address string) ([][2]int64, error) {
+func (s Reader) Seeds(ctx context.Context, address string) ([][2]int64, error) {
 	var raw string
 	e := s.db.QueryRowContext(ctx, `SELECT COALESCE(SEEDING_INFO,'[]')FROM SITE_USER_SEEDING_INFO WHERE URL=?`, address).Scan(&raw)
 	if e == sql.ErrNoRows {
@@ -110,15 +118,15 @@ func deltas(ctx context.Context, db interface {
 	if days < 1 || days > 730 {
 		return nil, ErrState
 	}
-	rows, e := db.QueryContext(ctx, `SELECT COALESCE(SITE,''),COALESCE(URL,''),CAST(COALESCE(UPLOAD,'0')AS INTEGER),CAST(COALESCE(DOWNLOAD,'0')AS INTEGER)FROM SITE_STATISTICS_HISTORY WHERE DATE>? AND DATE<=? ORDER BY URL,DATE`, end.AddDate(0, 0, -days).Format("2006-01-02"), end.Format("2006-01-02"))
+	scope, e := json.Marshal(urls)
+	if e != nil {
+		return nil, e
+	}
+	rows, e := db.QueryContext(ctx, `SELECT COALESCE(SITE,''),COALESCE(URL,''),CAST(COALESCE(UPLOAD,'0')AS INTEGER),CAST(COALESCE(DOWNLOAD,'0')AS INTEGER)FROM SITE_STATISTICS_HISTORY WHERE URL IN (SELECT value FROM json_each(?)) AND DATE>? AND DATE<=? ORDER BY URL,DATE`, string(scope), end.AddDate(0, 0, -days).Format("2006-01-02"), end.Format("2006-01-02"))
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
-	allowed := map[string]bool{}
-	for _, u := range urls {
-		allowed[u] = true
-	}
 	type span struct {
 		site                   string
 		minU, minD, maxU, maxD int64
@@ -129,9 +137,6 @@ func deltas(ctx context.Context, db interface {
 		var up, down int64
 		if e = rows.Scan(&site, &u, &up, &down); e != nil {
 			return nil, e
-		}
-		if !allowed[u] {
-			continue
 		}
 		v, ok := data[u]
 		if !ok {
@@ -167,7 +172,7 @@ func deltas(ctx context.Context, db interface {
 	})
 	return out, nil
 }
-func (s *Store) Deltas(ctx context.Context, urls []string, days int, end time.Time) ([]Delta, error) {
+func (s Reader) Deltas(ctx context.Context, urls []string, days int, end time.Time) ([]Delta, error) {
 	return deltas(ctx, s.db, urls, days, end)
 }
 func (s *Store) Finish(ctx context.Context, id, state string, urls []string, end time.Time) error {

@@ -1180,31 +1180,6 @@ class DbHelper:
             }
         )
 
-    def is_site_user_statistics_exists(self, url):
-        """
-        判断站点用户数据是否存在
-        """
-        if not url:
-            return False
-        count = self._db.query(SITEUSERINFOSTATS).filter(SITEUSERINFOSTATS.URL == url).count()
-        if count > 0:
-            return True
-        else:
-            return False
-
-    def get_site_user_statistics(self, num=100, strict_urls=None):
-        """
-        查询站点数据历史
-        """
-        if strict_urls:
-            # 根据站点优先级排序
-            return self._db.query(SITEUSERINFOSTATS) \
-                .join(CONFIGSITE, SITEUSERINFOSTATS.SITE == CONFIGSITE.NAME) \
-                .filter(SITEUSERINFOSTATS.URL.in_(tuple(strict_urls + ["__DUMMY__"]))) \
-                .order_by(cast(CONFIGSITE.PRI, Integer).asc()).limit(num).all()
-        else:
-            return self._db.query(SITEUSERINFOSTATS).limit(num).all()
-
     @DbPersist(_db)
     def update_site_statistics_site_name(self, new_name, old_name):
         """
@@ -1218,101 +1193,6 @@ class DbHelper:
                 "SITE": new_name
             }
         )
-
-    def get_site_statistics_history(self, site, days=30):
-        """
-        查询站点数据历史
-        """
-        return self._db.query(SITESTATISTICSHISTORY).filter(
-            SITESTATISTICSHISTORY.SITE == site).order_by(
-            SITESTATISTICSHISTORY.DATE.asc()
-        ).limit(days)
-
-    def get_site_seeding_info(self, site):
-        """
-        查询站点做种信息
-        """
-        return self._db.query(SITEUSERSEEDINGINFO.SEEDING_INFO).filter(
-            SITEUSERSEEDINGINFO.SITE == site).first()
-
-    def get_site_statistics_recent_sites(self, days=7, end_day=None, strict_urls=None):
-        """
-        查询近期上传下载量
-        :param days 需要前几天的数据,传入7实际上会返回6天的数据?
-        :param end_day 开始时间
-        :param strict_urls 需要的站点URL的列表
-        传入 7,"2020-01-01" 表示需要从2020-01-01之前6天的数据
-        """
-        # 查询最大最小日期
-        if strict_urls is None:
-            strict_urls = []
-        end = datetime.datetime.now()
-        if end_day:
-            try:
-                end = datetime.datetime.strptime(end_day, "%Y-%m-%d")
-            except Exception as e:
-                pass
-
-        # 开始时间
-        b_date = (end - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
-        # 结束时间
-        e_date = end.strftime("%Y-%m-%d")
-        # 大于开始时间范围里的最大日期与最小日期
-        date_ret = self._db.query(func.max(SITESTATISTICSHISTORY.DATE),
-                                  func.MIN(SITESTATISTICSHISTORY.DATE)).filter(
-            SITESTATISTICSHISTORY.DATE > b_date, SITESTATISTICSHISTORY.DATE <= e_date).all()
-        if date_ret and date_ret[0][0]:
-            total_upload = 0
-            total_download = 0
-            ret_site_uploads = []
-            ret_site_downloads = []
-            min_date = date_ret[0][1]
-            max_date = date_ret[0][0]
-            # 查询开始值
-            if strict_urls:
-                subquery = self._db.query(SITESTATISTICSHISTORY.SITE.label("SITE"),
-                                          SITESTATISTICSHISTORY.DATE.label("DATE"),
-                                          func.sum(SITESTATISTICSHISTORY.UPLOAD).label("UPLOAD"),
-                                          func.sum(SITESTATISTICSHISTORY.DOWNLOAD).label("DOWNLOAD")).filter(
-                    SITESTATISTICSHISTORY.DATE >= min_date,
-                    SITESTATISTICSHISTORY.DATE <= max_date,
-                    SITESTATISTICSHISTORY.URL.in_(tuple(strict_urls + ["__DUMMY__"]))
-                ).group_by(SITESTATISTICSHISTORY.SITE, SITESTATISTICSHISTORY.DATE).subquery()
-            else:
-                subquery = self._db.query(SITESTATISTICSHISTORY.SITE.label("SITE"),
-                                          SITESTATISTICSHISTORY.DATE.label("DATE"),
-                                          func.sum(SITESTATISTICSHISTORY.UPLOAD).label("UPLOAD"),
-                                          func.sum(SITESTATISTICSHISTORY.DOWNLOAD).label("DOWNLOAD")).filter(
-                    SITESTATISTICSHISTORY.DATE >= min_date,
-                    SITESTATISTICSHISTORY.DATE <= max_date
-                ).group_by(SITESTATISTICSHISTORY.SITE, SITESTATISTICSHISTORY.DATE).subquery()
-            # 查询大于开始时间范围里的单日,单站点 最大值与最小值
-            rets = self._db.query(subquery.c.SITE,
-                                  func.min(subquery.c.UPLOAD),
-                                  func.min(subquery.c.DOWNLOAD),
-                                  func.max(subquery.c.UPLOAD),
-                                  func.max(subquery.c.DOWNLOAD)).group_by(subquery.c.SITE).all()
-            ret_sites = []
-            for ret_b in rets:
-                # 如果最小值都是0，可能时由于近几日没有更新数据，或者cookie过期，正常有数据的话，第二天能正常
-                ret_b = list(ret_b)
-                if ret_b[1] == 0 and ret_b[2] == 0:
-                    ret_b[1] = ret_b[3]
-                    ret_b[2] = ret_b[4]
-                ret_sites.append(ret_b[0])
-                if int(ret_b[1]) < int(ret_b[3]):
-                    total_upload += int(ret_b[3]) - int(ret_b[1])
-                    ret_site_uploads.append(int(ret_b[3]) - int(ret_b[1]))
-                else:
-                    ret_site_uploads.append(0)
-                if int(ret_b[2]) < int(ret_b[4]):
-                    total_download += int(ret_b[4]) - int(ret_b[2])
-                    ret_site_downloads.append(int(ret_b[4]) - int(ret_b[2]))
-                else:
-                    ret_site_downloads.append(0)
-            return total_upload, total_download, ret_sites, ret_site_uploads, ret_site_downloads
-        else:
-            return 0, 0, [], [], []
 
     def is_exists_download_history(self, enclosure, downloader, download_id):
         """

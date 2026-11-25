@@ -41,13 +41,12 @@ from app.rsschecker import RssChecker
 from app.scheduler import Scheduler
 from app.searcher import Searcher
 from app.sites import Sites, SiteUserInfo, SiteCookie, SiteConf
-from app.sites.site_ranking import SiteRankingManager
+from app.sites.site_userinfo import read_site_statistics
 from app.subscribe import Subscribe
 from app.sync import Sync
 from app.torrentremover import TorrentRemover
 from app.utils import StringUtils, EpisodeFormat, RequestUtils, PathUtils, \
     SystemUtils, ExceptionUtils, Torrent
-from app.utils.time_utils import TimeUtils
 from app.utils.types import RmtMode, OsType, SearchType, SyncType, MediaType, MovieTypes, TvTypes, \
     EventType, SystemConfigKey, RssType
 from config import RMT_MEDIAEXT, RMT_SUBEXT, RMT_AUDIO_TRACK_EXT, Config, run_go_helper
@@ -59,30 +58,6 @@ from web.backend.web_utils import WebUtils
 class WebAction:
     _actions = {}
     _commands = {}
-
-    @staticmethod
-    def _normalize_user_level(raw_level):
-        if raw_level is None:
-            return ""
-
-        text = str(raw_level)
-
-        # 优先取 img 的 alt/title 文本
-        m = re.search(r'alt\s*=\s*["\']([^"\']+)["\']', text, re.IGNORECASE)
-        if not m:
-            m = re.search(r'title\s*=\s*["\']([^"\']+)["\']', text, re.IGNORECASE)
-        if m:
-            text = m.group(1)
-
-        # 去除 HTML 标签
-        text = re.sub(r'<[^>]*>', '', text)
-
-        # 去掉前缀站点标识，如：(江湖儿女)
-        text = re.sub(r'^[\(\（][^\)\）]*[\)\）]\s*', '', text)
-        # 去掉后缀备注，如：Power User(憨声憨气)
-        text = re.sub(r'\s*[\(\（][^\)\）]*[\)\）]\s*$', '', text)
-
-        return text.strip()
 
     def __init__(self):
         # WEB请求响应
@@ -2190,62 +2165,15 @@ class WebAction:
 
     @staticmethod
     def __get_site_activity(data):
-        """
-        查询site活动[上传，下载，魔力值]
-        :param data: {"name":site_name}
-        :return:
-        """
-        if not data or "name" not in data:
-            return {"code": 1, "msg": "查询参数错误"}
-
-        resp = {"code": 0}
-
-        resp.update(
-            {"dataset": SiteUserInfo().get_pt_site_activity_history(data["name"])})
-        return resp
+        return read_site_statistics("get_site_activity", data)
 
     @staticmethod
     def __get_site_history(data):
-        """
-        查询site 历史[上传，下载]
-        :param data: {"days":累计时间}
-        :return:
-        """
-        if not data or "days" not in data or not isinstance(data["days"], int):
-            return {"code": 1, "msg": "查询参数错误"}
-
-        resp = {"code": 0}
-        _, _, site, upload, download = SiteUserInfo().get_pt_site_statistics_history(
-            data["days"] + 1, data.get("end_day", None)
-        )
-
-        # 调整为dataset组织数据
-        dataset = [["site", "upload", "download"]]
-        dataset.extend([[site, upload, download]
-                        for site, upload, download in zip(site, upload, download)])
-        resp.update({"dataset": dataset})
-        return resp
+        return read_site_statistics("get_site_history", data)
 
     @staticmethod
     def __get_site_seeding_info(data):
-        """
-        查询site 做种分布信息 大小，做种数
-        :param data: {"name":site_name}
-        :return:
-        """
-        if not data or "name" not in data:
-            return {"code": 1, "msg": "查询参数错误"}
-
-        resp = {"code": 0}
-
-        seeding_info = SiteUserInfo().get_pt_site_seeding_info(
-            data["name"]).get("seeding_info", [])
-        # 调整为dataset组织数据
-        dataset = [["seeders", "size"]]
-        dataset.extend(seeding_info)
-
-        resp.update({"dataset": dataset})
-        return resp
+        return read_site_statistics("get_site_seeding_info", data)
 
     @staticmethod
     def __add_filtergroup(data):
@@ -4660,71 +4588,11 @@ class WebAction:
 
     @staticmethod
     def get_site_user_statistics(data):
-        """
-        获取站点用户统计信息
-        """
-        sites = data.get("sites")
-        encoding = data.get("encoding") or "RAW"
-        sort_by = data.get("sort_by")
-        sort_on = data.get("sort_on")
-        site_hash = data.get("site_hash")
-        statistics = SiteUserInfo().get_site_user_statistics(sites=sites, encoding=encoding)
-        if sort_by and sort_on in ["asc", "desc"]:
-            if sort_on == "asc":
-                statistics.sort(key=lambda x: x[sort_by])
-            else:
-                statistics.sort(key=lambda x: x[sort_by], reverse=True)
-        if site_hash == "Y":
-            for item in statistics:
-                item["site_hash"] = StringUtils.md5_hash(item.get("site"))
-        for item in statistics:
-            item['user_level'] = WebAction._normalize_user_level(item.get('user_level'))
-            item['last_seen'] = TimeUtils.time_difference(item['last_seen'])
-            item['update_at'] = TimeUtils.time_difference(item['update_at'])
-            if TimeUtils.less_than_days(item['join_at'], 31):
-                item['level_description'] = "新手"
-            else:
-                item['level_description'] = ""
-
-            ranking_info = SiteRankingManager().get_site_ranking_info(site_name=item.get('site'),
-                                                                      site_url=item.get('url'))
-            keep_level = (ranking_info or {}).get('keep_account_level')
-            current_level = item.get('user_level')
-            item['keep_account_level'] = keep_level or ""
-            ranking_system = (ranking_info or {}).get('ranking_system') or {}
-            keep_level_obj = SiteRankingManager._find_level(keep_level, ranking_system) if keep_level else None
-            current_level_obj = SiteRankingManager._find_level(current_level, ranking_system) if current_level else None
-            if keep_level_obj and current_level_obj:
-                item['is_keep_account_level'] = current_level_obj.get('order', 0) >= keep_level_obj.get('order', 0)
-            else:
-                item['is_keep_account_level'] = bool(keep_level and current_level and
-                                                     str(current_level).strip().lower() == str(keep_level).strip().lower())
-        return {"code": 0, "data": statistics}
+        return read_site_statistics("get_site_user_statistics", data)
 
     @staticmethod
     def get_user_ranking_status(data):
-        """
-        获取站点用户等级进度信息
-        """
-        site_name = data.get("site")
-        if not site_name:
-            return {"code": 1, "msg": "未指定站点"}
-
-        statistics = SiteUserInfo().get_site_user_statistics(sites=[site_name], encoding="DICT")
-        if not statistics:
-            return {"code": 1, "msg": f"未找到站点 {site_name} 的统计数据"}
-
-        site_stats = None
-        for item in statistics:
-            item['user_level'] = WebAction._normalize_user_level(item.get('user_level'))
-            if item.get("site") == site_name:
-                site_stats = item
-                break
-        if not site_stats:
-            site_stats = statistics[0]
-
-        status = SiteRankingManager().build_status(site_stats)
-        return {"code": 0, "data": status}
+        return read_site_statistics("get_user_ranking_status", data)
 
     @staticmethod
     def send_plugin_message(data):

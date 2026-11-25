@@ -624,7 +624,10 @@ def statistics():
     # 只有当明确要求跳过后台刷新时才不进行任何刷新操作
 
     # 站点用户数据（数据库缓存）
-    SiteUserStatistics = WebAction().get_site_user_statistics({"encoding": "DICT"}).get("data") or []
+    result = WebAction().get_site_user_statistics({"encoding": "DICT"})
+    if result["code"]:
+        return result["msg"], 503
+    SiteUserStatistics = result["data"]
 
     # 总上传下载
     TotalUpload = 0

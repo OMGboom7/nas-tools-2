@@ -2,10 +2,12 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -170,4 +172,55 @@ func ScheduledStatisticsCommand(ctx context.Context, path string, in io.Reader, 
 func statsNetworkConfig(cfg map[string]any) string {
 	app := objectValue(cfg["app"])
 	return sitestats.Hash([]any{app["proxies"], app["user_agent"]})
+}
+
+// StatisticsReadCommand answers legacy clients from one read-only SQLite snapshot.
+// It can read an original installation before any Go worker has created its tables.
+func StatisticsReadCommand(ctx context.Context, path, catalog, action string, in io.Reader, out io.Writer) error {
+	var params legacyStatsInput
+	input := &io.LimitedReader{R: in, N: 256 << 10}
+	dec := json.NewDecoder(input)
+	if dec.Decode(&params) != nil || dec.Decode(new(any)) != io.EOF || input.N == 0 {
+		return json.NewEncoder(out).Encode(statsReadError("查询参数错误"))
+	}
+	dbPath := (config.Application{Path: path}).UserDatabasePath()
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: dbPath, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}).String())
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	all, err := siteconfig.ListIn(ctx, tx)
+	if err != nil {
+		return err
+	}
+	sites, err := eligibleStatsSites(all)
+	if err != nil {
+		return err
+	}
+	service := statsReadService{sitestats.NewReader(tx), catalog}
+	// The PT minimum-age check uses raw join dates independently of ranking rules.
+	if action == "min_join_date" {
+		rows, _, err := service.selectedSnapshots(ctx, sites, params.Sites)
+		if err != nil {
+			return err
+		}
+		var earliest time.Time
+		for _, row := range rows {
+			at, err := time.Parse(time.DateTime, row.Joined)
+			if err == nil && (earliest.IsZero() || at.Before(earliest)) {
+				earliest = at
+			}
+		}
+		date := ""
+		if !earliest.IsZero() {
+			date = earliest.Format(time.DateOnly)
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"code": 0, "data": date})
+	}
+	return json.NewEncoder(out).Encode(service.query(ctx, sites, action, params))
 }

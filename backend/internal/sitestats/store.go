@@ -20,7 +20,10 @@ import (
 
 var ErrState = errors.New("原统计配置或执行状态已变化，请重新读取")
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	Reader
+	db *sql.DB
+}
 type Control struct {
 	Created      string `json:"created"`
 	Enabled      bool   `json:"enabled"`
@@ -87,7 +90,7 @@ func Open(path string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	s := &Store{Reader: NewReader(db), db: db}
 	for _, q := range []string{
 		`PRAGMA busy_timeout=5000`,
 		`CREATE TABLE IF NOT EXISTS SITE_USER_INFO_STATS (ID INTEGER PRIMARY KEY AUTOINCREMENT,SITE TEXT,USERNAME TEXT,USER_LEVEL TEXT,JOIN_AT TEXT,LAST_SEEN TEXT,UPDATE_AT TEXT,UPLOAD INTEGER,DOWNLOAD INTEGER,RATIO REAL,SEEDING INTEGER,LEECHING INTEGER,SEEDING_SIZE INTEGER,BONUS REAL,URL TEXT UNIQUE,MSG_UNREAD INTEGER,EXT_INFO TEXT)`,

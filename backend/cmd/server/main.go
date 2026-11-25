@@ -23,6 +23,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 4 && os.Args[1] == "site-statistics-read" {
+		if err := httpserver.StatisticsReadCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Args[3], os.Stdin, os.Stdout); err != nil {
+			slog.Error("site statistics query unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "site-statistics" {
 		if err := httpserver.ScheduledStatisticsCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("scheduled site statistics unavailable")

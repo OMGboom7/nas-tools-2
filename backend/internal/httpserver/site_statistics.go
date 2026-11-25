@@ -237,7 +237,7 @@ func (api *siteStatisticsAPI) compat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/v1/site/statistics" {
-		out, e := api.legacyStatsList(r.Context(), eligible, legacyStatsInput{})
+		out, e := api.reads().legacyStatsList(r.Context(), eligible, legacyStatsInput{})
 		if e != nil {
 			statsError(w, e)
 			return
@@ -258,14 +258,14 @@ func (api *siteStatisticsAPI) compat(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, 404, 404, "未找到唯一参与统计的站点")
 			return
 		}
-		dataset, e = api.statsSiteDataset(r.Context(), action, address)
+		dataset, e = api.reads().statsSiteDataset(r.Context(), action, address)
 	case "/api/v1/site/statistics/history":
 		days, err := strconv.Atoi(r.FormValue("days"))
 		if err != nil || days < 1 || days > 729 {
 			writeAPIError(w, 400, 400, "统计天数无效")
 			return
 		}
-		dataset, e = api.statsHistoryDataset(r.Context(), eligible, days, r.FormValue("end_day"))
+		dataset, e = api.reads().statsHistoryDataset(r.Context(), eligible, days, r.FormValue("end_day"))
 		if _, ok := e.(*time.ParseError); ok {
 			writeAPIError(w, 400, 400, "统计日期无效")
 			return
