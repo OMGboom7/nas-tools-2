@@ -37,10 +37,54 @@ func tnodeResponse(ctx context.Context, client *http.Client, request *http.Reque
 }
 
 func SearchTNode(ctx context.Context, definition indexercatalog.Definition, cookie, ua, keyword string, page, limit int, transport http.RoundTripper) ([]externalindexer.Resource, error) {
+	if keyword == "" || limit < 1 || limit > 100 {
+		return nil, ErrConfig
+	}
+	rows, err := tnodeRows(ctx, definition, cookie, ua, keyword, page, limit, transport)
+	if err != nil {
+		return nil, err
+	}
+	resources := make([]externalindexer.Resource, 0, len(rows))
+	for _, row := range rows {
+		resource := externalindexer.Resource{
+			IndexerID: row.Indexer, Indexer: definition.Name, Title: row.Title,
+			Description: row.Description, Size: row.Size, Seeders: row.Seeders, Peers: row.Peers,
+			DownloadFactor: row.DownloadFactor, UploadFactor: row.UploadFactor,
+			IMDbID: row.IMDb, DownloadURL: row.Enclosure, PageURL: row.PageURL,
+		}
+		if row.DownloadFactor != nil {
+			free := *row.DownloadFactor == 0
+			resource.Freeleech = &free
+		}
+		resources = append(resources, resource)
+	}
+	return resources, nil
+}
+
+// tnodeRow is the site's resource listing as consumed by the original clients.
+// Download links contain the site and numeric torrent ID only.
+type tnodeRow struct {
+	Indexer        string          `json:"indexer"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	Enclosure      string          `json:"enclosure"`
+	PubDate        any             `json:"pubdate"`
+	Size           int64           `json:"size"`
+	Seeders        *int64          `json:"seeders"`
+	Peers          *int64          `json:"peers"`
+	Grabs          json.RawMessage `json:"grabs"`
+	DownloadFactor *float64        `json:"downloadvolumefactor"`
+	UploadFactor   *float64        `json:"uploadvolumefactor"`
+	PageURL        string          `json:"page_url"`
+	IMDb           string          `json:"imdbid"`
+}
+
+// tnodeRows accepts an empty keyword to browse the requested page.
+func tnodeRows(ctx context.Context, definition indexercatalog.Definition, cookie, ua, keyword string, page, limit int, transport http.RoundTripper) ([]tnodeRow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if definition.Parser != "TNodeSpider" || definition.ID == "" || cookie == "" || len(cookie) > 64<<10 || len(ua) > 4096 || strings.ContainsAny(cookie+ua, "\r\n") || keyword == "" || len(keyword) > 1024 || !utf8.ValidString(keyword) || strings.ContainsFunc(keyword, unicode.IsControl) || page < 0 || page > 10000 || limit < 1 || limit > 100 {
+	if definition.Parser != "TNodeSpider" || definition.ID == "" || cookie == "" || len(cookie) > 64<<10 || len(ua) > 4096 || strings.ContainsAny(cookie+ua, "\r\n") || len(keyword) > 1024 || !utf8.ValidString(keyword) || strings.ContainsFunc(keyword, unicode.IsControl) || page < 0 || page > 10000 || limit < 1 {
 		return nil, ErrConfig
 	}
 	base, err := url.Parse(definition.Domain)
@@ -116,6 +160,8 @@ func SearchTNode(ctx context.Context, definition indexercatalog.Definition, cook
 				Peers       json.RawMessage `json:"leeching"`
 				Download    json.RawMessage `json:"downloadRate"`
 				Upload      json.RawMessage `json:"uploadRate"`
+				Completed   json.RawMessage `json:"complete"`
+				Published   json.RawMessage `json:"upload_time"`
 				IMDb        string          `json:"imdb"`
 			} `json:"torrents"`
 		} `json:"data"`
@@ -135,7 +181,7 @@ func SearchTNode(ctx context.Context, definition indexercatalog.Definition, cook
 	if len(envelope.Success) != 0 && strings.TrimSpace(string(envelope.Success)) != "true" {
 		return nil, ErrResponse
 	}
-	resources := []externalindexer.Resource{}
+	rows := []tnodeRow{}
 	seen := map[int64]bool{}
 	for _, row := range envelope.Data.Torrents {
 		if err := ctx.Err(); err != nil {
@@ -172,14 +218,35 @@ func SearchTNode(ctx context.Context, definition indexercatalog.Definition, cook
 		download, detail := *base, *base
 		download.Path = "/api/torrent/download/" + strconv.FormatInt(*id, 10)
 		detail.Path = "/torrent/info/" + strconv.FormatInt(*id, 10)
-		resource := externalindexer.Resource{IndexerID: definition.ID, Indexer: definition.Name, Title: row.Title, Description: row.Description, Size: *size, Seeders: seeders, Peers: peers, DownloadFactor: down, UploadFactor: up, IMDbID: row.IMDb, DownloadURL: download.String(), PageURL: detail.String()}
-		if down != nil {
-			free := *down == 0
-			resource.Freeleech = &free
-		}
-		resources = append(resources, resource)
+		rows = append(rows, tnodeRow{
+			Indexer: definition.ID, Title: row.Title, Description: row.Description,
+			Size: *size, Seeders: seeders, Peers: peers, Grabs: row.Completed,
+			PubDate: tnodeDate(row.Published), DownloadFactor: down, UploadFactor: up,
+			IMDb: row.IMDb, Enclosure: download.String(), PageURL: detail.String(),
+		})
 	}
-	return resources, nil
+	return rows, nil
+}
+
+func tnodeDate(raw json.RawMessage) any {
+	value := string(raw)
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '"' {
+		if json.Unmarshal(raw, &value) != nil || strings.Trim(value, "0123456789") != "" {
+			return raw
+		}
+	}
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return raw
+	}
+	published := time.Unix(seconds, 0)
+	if published.Year() < 1 || published.Year() > 9999 {
+		return raw
+	}
+	return published.Format("2006-01-02 15:04:05")
 }
 
 func tnodeFactor(raw json.RawMessage) (*float64, error) {

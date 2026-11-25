@@ -150,21 +150,7 @@ func checkSiteConnectionAdmitted(ctx context.Context, site siteconfig.Site, app 
 }
 
 func siteProxyTransport(transport http.RoundTripper, proxies map[string]any, scheme string) (http.RoundTripper, error) {
-	raw := strings.TrimSpace(text(proxies[scheme]))
-	proxy, err := url.Parse(raw)
-	if raw == "" || err != nil || proxy.Hostname() == "" || proxy.RawQuery != "" || proxy.Fragment != "" || (proxy.Scheme != "http" && proxy.Scheme != "https" && proxy.Scheme != "socks5" && proxy.Scheme != "socks5h") {
-		return nil, http.ErrNotSupported
-	}
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-	base, ok := transport.(*http.Transport)
-	if !ok {
-		return nil, http.ErrNotSupported
-	}
-	configured := base.Clone()
-	configured.Proxy = http.ProxyURL(proxy)
-	return configured, nil
+	return siteconfig.ProxyTransport(transport, text(proxies[scheme]))
 }
 
 func siteHTMLLoggedIn(contents []byte) bool {

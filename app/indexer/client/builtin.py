@@ -1,5 +1,7 @@
 import copy
 import datetime
+import json
+import subprocess
 import time
 
 import log
@@ -10,14 +12,13 @@ from app.indexer.client._haidan import HaiDanSpider
 from app.indexer.client._render_spider import RenderSpider
 from app.indexer.client._spider import TorrentSpider
 from app.indexer.client._spider_new import DefaultSpider
-from app.indexer.client._tnode import TNodeSpider
 from app.indexer.client._torrentleech import TorrentLeech
 from app.indexer.client._plugins import PluginsSpider
 from app.indexer.client._mteam import MTeamSpider
 from app.sites import Sites
 from app.utils import StringUtils
 from app.utils.types import SearchType, IndexerType, ProgressKey, SystemConfigKey, MediaType
-from config import Config
+from config import Config, run_go_helper
 from web.backend.pro_user import ProUser
 
 class BuiltinIndexer(_IIndexClient):
@@ -186,7 +187,7 @@ class BuiltinIndexer(_IIndexClient):
         result_array = []
         try:
             if indexer.parser == "TNodeSpider":
-                error_flag, result_array = TNodeSpider(indexer).search(keyword=search_word)
+                error_flag, result_array = self.__tnode_resources(indexer, search_word)
             elif indexer.parser == "RenderSpider":
                 error_flag, result_array = RenderSpider(indexer).search(
                     keyword=search_word,
@@ -288,8 +289,7 @@ class BuiltinIndexer(_IIndexClient):
             error_flag, result_array = RenderSpider(indexer).search(keyword=keyword,
                                                                     page=page)
         elif indexer.parser == "TNodeSpider":
-            error_flag, result_array = TNodeSpider(indexer).search(keyword=keyword,
-                                                                   page=page)
+            error_flag, result_array = self.__tnode_resources(indexer, keyword, page)
         elif indexer.parser == "TorrentLeech":
             error_flag, result_array = TorrentLeech(indexer).search(keyword=keyword,
                                                             page=page)
@@ -325,6 +325,24 @@ class BuiltinIndexer(_IIndexClient):
                                                 seconds=seconds,
                                                 result='N' if error_flag else 'Y')
         return result_array
+
+    @staticmethod
+    def __tnode_resources(indexer, keyword, page=0):
+        try:
+            proxy = (Config().get_proxies() or {}).get("https") if indexer.proxy else None
+            if indexer.proxy and not proxy:
+                raise ValueError("站点代理未配置")
+            query = {
+                "id": indexer.id, "domain": indexer.domain, "name": indexer.name,
+                "cookie": indexer.cookie, "ua": indexer.ua or Config().get_ua(),
+                "keyword": keyword or "", "page": int(page or 0), "proxy": proxy,
+                "limit": int(Config().get_config("pt").get("site_search_result_num") or 100),
+            }
+            rows = run_go_helper("tnode-resources", payload=json.dumps(query).encode(), timeout=65)
+            return False, json.loads(rows)
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+            log.warn(f"【INDEXER】{indexer.name} 获取站点资源失败")
+            return True, []
 
     @staticmethod
     def __spider_search(spider, indexer, keyword=None, page=None, mtype=None, timeout=30):

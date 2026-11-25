@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/dbinit"
@@ -20,6 +21,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "tnode-resources" {
+		if err := builtinindexer.TNodeCommand(context.Background(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("TNode resource request failed")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "plugin-config" {
 		if err := database.PluginConfig(context.Background(), config.ApplicationPath(), os.Args[2:], os.Stdin, os.Stdout); err != nil {
 			if errors.Is(err, database.ErrPluginConfigChanged) {

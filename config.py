@@ -7,7 +7,7 @@ from threading import Lock
 import ruamel.yaml
 import re
 
-def run_go_helper(*args, payload=None):
+def run_go_helper(*args, payload=None, timeout=15):
     helper = os.environ.get("NASTOOL_DB_BINARY")
     if not helper:
         name = "nas-tools-db.exe" if os.name == "nt" else "nas-tools-db"
@@ -15,7 +15,7 @@ def run_go_helper(*args, payload=None):
     if not Path(helper).is_absolute():
         raise ValueError("invalid Go helper path")
     return subprocess.run([helper, *args], input=payload, stdout=subprocess.PIPE,
-                          stderr=subprocess.DEVNULL, check=True, timeout=15).stdout
+                          stderr=subprocess.DEVNULL, check=True, timeout=timeout).stdout
 
 
 # 种子名/文件名要素分隔字符
