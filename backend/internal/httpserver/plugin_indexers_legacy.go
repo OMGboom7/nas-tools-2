@@ -49,6 +49,14 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.helper != nil && id == helperID {
+			if action {
+				writeAPIError(w, 400, 400, "下载器助手扩展页只支持查看")
+			} else {
+				s.helperPage(w, probe, true)
+			}
+			return
+		}
 		if s.iyuu != nil && id == "IYUUAutoSeed" {
 			if action {
 				writeAPIError(w, 400, 400, "不支持的 IYUU 扩展页操作")

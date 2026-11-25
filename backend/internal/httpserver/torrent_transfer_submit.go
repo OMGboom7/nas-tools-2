@@ -172,6 +172,12 @@ func (api torrentTransferAPI) transferAction(w http.ResponseWriter, r *http.Requ
 			writeAPIError(w, 409, 409, "任务或授权已变化，请重新查看目标和回执")
 			return
 		}
+		if !scope.settings.DeleteSource && (stage == "verified" && !scope.settings.AutoStart || action == "start" && stage == "acknowledged") {
+			if err := ledger.CompleteTarget(ctx, id, target); err != nil {
+				writeAPIError(w, 503, 503, "无法保存转种完成记录，请按原回执核对")
+				return
+			}
+		}
 		writeJSON(w, 200, map[string]any{"code": 0, "result": map[string]string{"receipt": id, "state": stage}})
 		return
 	}

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strconv"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/downloaderhelper"
 )
 
 // recordHistory runs in the same transaction as target binding. The marker
@@ -72,4 +74,34 @@ func historyValue(to int64, targetID string, deleted bool) (string, error) {
 		Deleted    bool   `json:"delete_source"`
 	}{Downloader: to, Task: targetID, Deleted: deleted})
 	return string(raw), err
+}
+
+// CompleteTarget records that transfer verification and optional source
+// removal no longer depend on the target's labels. Capture the helper event
+// only on the first transition, including across a process restart.
+func (l *Ledger) CompleteTarget(ctx context.Context, receipt string, to int64) error {
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := completeTarget(ctx, tx, receipt, to); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func completeTarget(ctx context.Context, tx *sql.Tx, receipt string, to int64) error {
+	if !Hex(receipt, 64) || to <= 0 {
+		return ErrState
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO GO_TORRENT_TRANSFER_COMPLETED(receipt) VALUES(?) ON CONFLICT(receipt) DO NOTHING`, receipt)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return err
+	}
+	return downloaderhelper.Capture(ctx, tx, "download.add", "transfer:"+receipt, map[string]int64{"downloader_id": to})
 }

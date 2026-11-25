@@ -24,6 +24,9 @@ type feedPluginDefinition struct {
 }
 
 func (service pluginService) feedPlugin(id string) feedPluginDefinition {
+	if id == helperID {
+		return service.helper.plugin()
+	}
 	if id == iyuu.Plugin {
 		return service.iyuu.plugin()
 	}
@@ -44,6 +47,9 @@ func (service pluginService) feedPlugin(id string) feedPluginDefinition {
 }
 
 func (s pluginService) nativeFeedPlugin(id string) bool {
+	if id == helperID {
+		return s.helper != nil
+	}
 	if id == iyuu.Plugin {
 		return s.iyuu != nil
 	}

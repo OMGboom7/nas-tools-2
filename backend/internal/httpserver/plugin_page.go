@@ -49,6 +49,10 @@ type pluginPageActionRequest struct {
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.helper != nil && request.PathValue("id") == helperID {
+		service.helperPage(response, request, false)
+		return
+	}
 	if service.iyuu != nil && request.PathValue("id") == "IYUUAutoSeed" {
 		service.iyuu.partnerPage(response, request, false)
 		return
@@ -228,6 +232,10 @@ func normalizePluginPage(pluginID string, raw map[string]any) pluginPageData {
 }
 
 func (service pluginService) deletePageRecord(response http.ResponseWriter, request *http.Request) {
+	if service.helper != nil && request.PathValue("id") == helperID {
+		writeAPIError(response, 400, 400, "下载器助手扩展页只支持查看")
+		return
+	}
 	token, ok := requireServiceToken(response, request)
 	if !ok {
 		return

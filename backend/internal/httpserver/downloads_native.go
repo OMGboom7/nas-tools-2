@@ -339,6 +339,14 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 	if item.ID == 0 {
 		return true, errors.New("default downloader is not configured")
 	}
+	return service.controlConfigured(ctx, item, id, action)
+}
+
+func (service downloadService) controlConfigured(ctx context.Context, item downloaderconfig.Downloader, id, action string) (bool, error) {
+	seed := action == "seed"
+	if seed {
+		action = "start"
+	}
 	if action == "start" && (item.Type == "qbittorrent" || item.Type == "transmission") {
 		if err := service.guardSelectedStart(ctx, item, id); err != nil {
 			return true, err
@@ -405,6 +413,9 @@ func (service downloadService) nativeControl(ctx context.Context, id, action str
 			if len(policies) > 0 {
 				return true, c.StopForOrganization(ctx, id)
 			}
+		}
+		if seed {
+			return true, c.StartSelected(ctx, id)
 		}
 		return true, c.Control(ctx, id, action)
 	case "transmission":

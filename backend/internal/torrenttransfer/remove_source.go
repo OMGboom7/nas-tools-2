@@ -181,5 +181,8 @@ func (l *Ledger) sourceHistory(ctx context.Context, p Plan, s Settings, receipt 
 	if err != nil {
 		return err
 	}
+	if err := completeTarget(ctx, tx, receipt, to); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

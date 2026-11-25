@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderhelper"
 	"github.com/0xforee/nas-tools/backend/internal/iyuu"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
@@ -355,7 +356,12 @@ func iyuuSaveStage(ctx context.Context, db *sql.DB, j iyuuJob, old, next string)
 	if err != nil {
 		return err
 	}
-	res, err := db.ExecContext(ctx, "UPDATE GO_IYUU_SEEDS SET state=?,job=? WHERE id=? AND state=?", next, string(raw), j.Receipt, old)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, "UPDATE GO_IYUU_SEEDS SET state=?,job=? WHERE id=? AND state=?", next, string(raw), j.Receipt, old)
 	if err != nil {
 		return err
 	}
@@ -363,7 +369,12 @@ func iyuuSaveStage(ctx context.Context, db *sql.DB, j iyuuJob, old, next string)
 	if err != nil || n != 1 {
 		return iyuu.ErrInput
 	}
-	return nil
+	if next == "seeding" {
+		if err := downloaderhelper.Capture(ctx, tx, "download.add", "iyuu:"+j.Receipt, downloaderhelper.Event{Downloader: json.Number(j.Match.DownloaderID)}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // A missing action claim proves the add RPC was never sent. A pending claim

@@ -36,7 +36,11 @@ func (api torrentTransferAPI) followTransfer(ctx context.Context, db *sql.DB, l 
 	if err != nil {
 		return "", err
 	}
-	if status.SourceAbsentAt != "" {
+	var completed bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM GO_TORRENT_TRANSFER_COMPLETED WHERE receipt=?)", work.Receipt).Scan(&completed); err != nil {
+		return "", err
+	}
+	if status.SourceAbsentAt != "" || completed {
 		return "complete", nil
 	}
 	started := false
@@ -71,7 +75,7 @@ func (api torrentTransferAPI) followTransfer(ctx context.Context, db *sql.DB, l 
 			}
 		}
 		if !scope.settings.DeleteSource {
-			return "complete", nil
+			return "complete", l.CompleteTarget(ctx, work.Receipt, to)
 		}
 		err := l.RemoveSource(ctx, work.Receipt, resolve, func(ctx context.Context, id string, source, target torrenttransfer.Task) error {
 			if id != work.Receipt || !p.Source.Task.SameInstance(source) || target.WireID != p.WireID {

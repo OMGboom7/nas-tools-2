@@ -103,6 +103,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitDoubanSync := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣同步", runner.archivePlugin.doubanSync.tick)
 		waitRandom := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "电影随机订阅", runner.archivePlugin.doubanSync.movieRandomTick)
 		waitRank := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣榜单", runner.archivePlugin.doubanSync.rankTick)
+		waitHelper := startDownloaderHelper(workerContext, runner.archivePlugin.helper)
 		waitIyuuSeeds := startIyuuSeeds(workerContext, runner.archivePlugin.iyuu)
 		waitMteamFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
 		waitArchive := startMediaArchiveWorker(workerContext, runner.archivePlugin)
@@ -137,6 +138,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitDoubanSync()
 			waitRank()
 			waitRandom()
+			waitHelper()
 			waitIyuuSeeds()
 			waitMteamFeed()
 		}
@@ -742,6 +744,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins := pluginService{archiveConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
 		if nativeDownloaders != nil && nativeSiteLogin != nil {
+			plugins.helper = &downloaderHelperAPI{transfer: &transferAPI, downloads: &downloads}
 			plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport, downloads: &downloads}
 			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/overview", plugins.iyuu.overview)
 			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/partners", plugins.iyuu.partners)

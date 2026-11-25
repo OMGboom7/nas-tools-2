@@ -72,6 +72,10 @@ func NewLedger(ctx context.Context, db *sql.DB) (*Ledger, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, err = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS GO_TORRENT_TRANSFER_COMPLETED(receipt TEXT PRIMARY KEY NOT NULL)`)
+	if err != nil {
+		return nil, err
+	}
 	return &Ledger{db}, nil
 }
 

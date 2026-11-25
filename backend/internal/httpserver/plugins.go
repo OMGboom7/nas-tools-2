@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	helper            *downloaderHelperAPI
 	iyuu              *iyuuAPI
 	mteamFeed         *mteamFeedService
 	doubanSync        *doubanSyncAPI

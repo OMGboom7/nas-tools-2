@@ -6,12 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/downloaderhelper"
 )
 
 // captureNativeSignal snapshots an explicitly enabled domain consumer before
 // the optional external Webhook subscriber. Replacing a grant never rebinds an
 // old event to a new executor, and no historic event scan authorizes new work.
 func captureNativeSignal(ctx context.Context, tx *sql.Tx, kind, key, reference string, data any) error {
+	if kind == "download.add" || kind == "sourcefile.deleted" {
+		return downloaderhelper.Capture(ctx, tx, kind, Hash([]string{kind, key}), data)
+	}
 	if kind != "site.signin" {
 		return nil
 	}
