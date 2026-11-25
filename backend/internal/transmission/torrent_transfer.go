@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/0xforee/nas-tools/backend/internal/torrentfiles"
@@ -88,17 +89,26 @@ func transferField(row map[string]json.RawMessage, key string, out any) bool {
 // Transmission's supported RPC identity is SHA1. Hybrid torrents retain that
 // original v1 identity; pure v2 is not sent to a SHA1-only target.
 func (c *Client) AddTransferPaused(ctx context.Context, content []byte, directory string) (torrenttransfer.AddReceipt, error) {
-	return c.addTransferPaused(ctx, content, directory, nil)
+	return c.addTransferPaused(ctx, content, directory, nil, []string{"已整理", "转移做种"})
 }
 
 func (c *Client) AddReviewedTransfer(ctx context.Context, content []byte, directory string, intent torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
 	if err := intent.Validate(); err != nil {
 		return torrenttransfer.AddReceipt{}, err
 	}
-	return c.addTransferPaused(ctx, content, directory, &intent)
+	return c.addTransferPaused(ctx, content, directory, &intent, []string{"已整理", "转移做种"})
 }
 
-func (c *Client) addTransferPaused(ctx context.Context, content []byte, directory string, intent *torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
+// AddReseedPaused marks the new task so an ambiguous duplicate cannot be
+// mistaken for a target created by this IYUU operation.
+func (c *Client) AddReseedPaused(ctx context.Context, content []byte, directory string, intent torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
+	if err := intent.Validate(); err != nil {
+		return torrenttransfer.AddReceipt{}, err
+	}
+	return c.addTransferPaused(ctx, content, directory, &intent, []string{"已整理", "辅种", "iyuu-" + intent.Receipt})
+}
+
+func (c *Client) addTransferPaused(ctx context.Context, content []byte, directory string, intent *torrenttransfer.AddIntent, labels []string) (torrenttransfer.AddReceipt, error) {
 	r := torrenttransfer.AddReceipt{}
 	m, err := torrentmeta.PrepareTransfer(content, nil)
 	if err != nil {
@@ -112,8 +122,8 @@ func (c *Client) addTransferPaused(ctx context.Context, content []byte, director
 		return r, err
 	}
 	encoded := base64.StdEncoding.EncodeToString(m.Content)
-	old := map[string]any{"metainfo": encoded, "download-dir": directory, "paused": true, "labels": []string{"已整理", "转移做种"}}
-	new := map[string]any{"metainfo": encoded, "download_dir": directory, "paused": true, "labels": []string{"已整理", "转移做种"}}
+	old := map[string]any{"metainfo": encoded, "download-dir": directory, "paused": true, "labels": labels}
+	new := map[string]any{"metainfo": encoded, "download_dir": directory, "paused": true, "labels": labels}
 	send := func() (torrenttransfer.AddReceipt, error) {
 		return c.sendTransferAdd(ctx, m.V1Hash, old, new)
 	}
@@ -286,3 +296,71 @@ func (c *Client) TransferWireID(ctx context.Context, m torrentmeta.TransferMetad
 }
 
 var _ torrenttransfer.ReceiverClient = (*Client)(nil)
+
+// PrepareReseedStart removes inherited stop limits from this newly added private
+// torrent. Bandwidth settings and other torrents keep their existing values.
+func (c *Client) PrepareReseedStart(ctx context.Context, expected torrenttransfer.Task, m torrentmeta.TransferMetadata, receipt string) error {
+	if !torrenttransfer.Hex(receipt, 64) || !slices.Contains(expected.Labels, "iyuu-"+receipt) || !expected.Paused || !expected.FullComplete(m) || !m.Private {
+		return ErrConfiguration
+	}
+	current, err := c.TransferTask(ctx, expected.WireID)
+	if err != nil {
+		return err
+	}
+	if !expected.SameInstance(current) || !current.Paused || !current.FullComplete(m) {
+		return ErrResponse
+	}
+	p, err := c.Profile(ctx, current.WireID)
+	if err != nil {
+		return err
+	}
+	if p.Status != 0 || p.Directory != current.Directory || !slices.Contains(p.Labels, "iyuu-"+receipt) {
+		return ErrResponse
+	}
+	if p.RatioMode == 2 && p.IdleMode == 2 {
+		return nil
+	}
+	ids := []string{current.WireID}
+	_, _, err = c.transferRPC(ctx, "torrent-set", "torrent_set", map[string]any{"ids": ids, "seedRatioMode": 2, "seedIdleMode": 2}, map[string]any{"ids": ids, "seed_ratio_mode": 2, "seed_idle_mode": 2})
+	return err
+}
+
+// ReseedVerified distinguishes checked bytes from bytes the daemon merely
+// found at the existing path. Small local files can verify between polls.
+func (c *Client) ReseedVerified(ctx context.Context, t torrenttransfer.Task, m torrentmeta.TransferMetadata) (bool, error) {
+	if !t.Paused || !t.FullComplete(m) {
+		return false, nil
+	}
+	old := []string{"hashString", "addedDate", "status", "haveValid", "haveUnchecked", "totalSize", "downloadDir", "labels"}
+	modern := []string{"hash_string", "added_date", "status", "have_valid", "have_unchecked", "total_size", "download_dir", "labels"}
+	q, modernRPC, err := c.transferRPC(ctx, "torrent-get", "torrent_get", map[string]any{"ids": []string{t.WireID}, "fields": old}, map[string]any{"ids": []string{t.WireID}, "fields": modern})
+	if err != nil {
+		return false, err
+	}
+	keys := old
+	if modernRPC {
+		keys = modern
+	}
+	var rows []map[string]json.RawMessage
+	if !transferField(q, "torrents", &rows) || len(rows) != 1 {
+		return false, ErrResponse
+	}
+	var hash, dir string
+	var added, valid, unchecked, total int64
+	var status int
+	var labels []string
+	for i, p := range []any{&hash, &added, &status, &valid, &unchecked, &total, &dir, &labels} {
+		if !transferField(rows[0], keys[i], p) {
+			return false, ErrResponse
+		}
+	}
+	labels, err = torrenttransfer.Labels(labels)
+	if err != nil {
+		return false, err
+	}
+	var size int64
+	for _, f := range t.Files {
+		size += f.Size
+	}
+	return hash == t.WireID && added == t.AddedAt && dir == t.Directory && slices.Equal(labels, t.Labels) && status == 0 && total == size && size > 0 && valid == size && unchecked == 0, nil
+}

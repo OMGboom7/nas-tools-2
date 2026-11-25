@@ -14,9 +14,12 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/sitelogin"
 )
 
-var iyuuKeys = []string{"UserInstalledPlugins", iyuu.ConfigKey}
+const iyuuGeneration = "go.iyuu.generation"
+
+var iyuuKeys = []string{"UserInstalledPlugins", iyuu.ConfigKey, iyuuGeneration}
 
 type iyuuAPI struct {
+	downloads *downloadService
 	transfer  *torrentTransferAPI
 	transport http.RoundTripper
 }
@@ -116,10 +119,10 @@ func (api *iyuuAPI) changes(ctx context.Context, _ string, raw map[string]string
 }
 
 type iyuuScope struct {
-	actor, proof string
-	raw          map[string]string
-	cfg          iyuu.Settings
-	client       iyuu.Client
+	actor, proof, authority string
+	raw                     map[string]string
+	cfg                     iyuu.Settings
+	client                  iyuu.Client
 }
 
 func (api *iyuuAPI) scope(ctx context.Context, actor string) (iyuuScope, error) {
@@ -140,7 +143,7 @@ func (api *iyuuAPI) scope(ctx context.Context, actor string) (iyuuScope, error) 
 	if err != nil || cfg.Token == "" {
 		return s, iyuu.ErrInput
 	}
-	return iyuuScope{actor: actor, proof: sitelogin.Hash([]any{actor, auth, raw}), raw: raw, cfg: cfg, client: iyuu.Client{Token: cfg.Token, Transport: api.transport}}, nil
+	return iyuuScope{actor: actor, authority: auth, proof: sitelogin.Hash([]any{actor, auth, raw}), raw: raw, cfg: cfg, client: iyuu.Client{Token: cfg.Token, Transport: api.transport}}, nil
 }
 func (api *iyuuAPI) current(ctx context.Context, s iyuuScope) error {
 	n, err := api.scope(ctx, s.actor)

@@ -103,6 +103,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitDoubanSync := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣同步", runner.archivePlugin.doubanSync.tick)
 		waitRandom := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "电影随机订阅", runner.archivePlugin.doubanSync.movieRandomTick)
 		waitRank := startDoubanWorker(workerContext, runner.archivePlugin.doubanSync, "豆瓣榜单", runner.archivePlugin.doubanSync.rankTick)
+		waitIyuuSeeds := startIyuuSeeds(workerContext, runner.archivePlugin.iyuu)
 		waitMteamFeed := startMTeamFeed(workerContext, runner.archivePlugin.mteamFeed)
 		waitArchive := startMediaArchiveWorker(workerContext, runner.archivePlugin)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
@@ -136,6 +137,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitDoubanSync()
 			waitRank()
 			waitRandom()
+			waitIyuuSeeds()
 			waitMteamFeed()
 		}
 	}
@@ -740,11 +742,13 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins := pluginService{archiveConfigPath: cfg.ApplicationConfigPath, archiveContainer: backup.container, legacyURL: cfg.LegacyBackendURL, client: &http.Client{Transport: transport}, system: nativeSystemConfig, auth: nativeAuth, siteSignin: nativeSiteSignin}
 	if cfg.DisableLegacy && nativeSites != nil && nativeSystemConfig != nil {
 		if nativeDownloaders != nil && nativeSiteLogin != nil {
-			plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport}
+			plugins.iyuu = &iyuuAPI{transfer: &transferAPI, transport: transport, downloads: &downloads}
 			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/overview", plugins.iyuu.overview)
 			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/partners", plugins.iyuu.partners)
 			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/bind", plugins.iyuu.bind)
 			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/matches", plugins.iyuu.matches)
+			mux.HandleFunc("POST /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.submitSeed)
+			mux.HandleFunc("GET /api/v1/plugins/IYUUAutoSeed/seeds", plugins.iyuu.listSeeds)
 		}
 		plugins.mteamFeed = &mteamFeedService{system: nativeSystemConfig, sites: nativeSites, config: nativeConfig, limits: siteLimits, transport: transport, address: "0.0.0.0:8001", requests: make(chan struct{}, 1)}
 	}

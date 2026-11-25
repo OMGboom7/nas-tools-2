@@ -1794,9 +1794,14 @@ export type IyuuOverview = {
   fingerprint: string; requestId: string; matchFingerprint: string;
   latest: IyuuReceipt; downloaders: string[];
 };
+export type IyuuCandidate = {
+  downloader: string; downloaderId: string; source: string; sourceId: string; sourceProof: string;
+  name: string; site: string; siteId: string; providerId: string; torrentId: string; hash: string;
+};
+export type IyuuSeed = { id: string; name: string; downloader: string; site: string; state: string };
 export type IyuuMatches = {
   scanned: number;
-  items: { downloader: string; downloaderId: string; source: string; name: string; site: string; siteId: string; torrentId: string; hash: string }[];
+  items: IyuuCandidate[];
 };
 
 async function iyuuRequest<T>(token: string, action: string, input?: object): Promise<T> {
@@ -1816,3 +1821,7 @@ export const bindIyuuSite = (token: string, input: { fingerprint: string; reques
   iyuuRequest<IyuuReceipt>(token, "bind", input);
 export const matchIyuuTorrents = (token: string, fingerprint: string) =>
   iyuuRequest<IyuuMatches>(token, "matches", { fingerprint });
+
+export const getIyuuSeeds = (token: string) => iyuuRequest<IyuuSeed[]>(token, "seeds");
+export const addIyuuSeed = (token: string, fingerprint: string, candidate: IyuuCandidate) =>
+  iyuuRequest<IyuuSeed>(token, "seeds", { fingerprint, candidate });

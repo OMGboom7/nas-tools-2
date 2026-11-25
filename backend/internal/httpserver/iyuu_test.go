@@ -23,7 +23,11 @@ const iyuuTestToken = "fixture-service-token"
 
 var iyuuSource = strings.Repeat("a", 40)
 var iyuuExcluded = strings.Repeat("e", 40)
-var iyuuTarget = strings.Repeat("b", 40)
+
+const iyuuFixtureInfo = "d6:lengthi8e4:name9:Movie.mkv6:pieces20:xxxxxxxxxxxxxxxxxxxxe"
+const iyuuFixtureTorrent = "d8:announce23:https://tracker.fixture4:info" + iyuuFixtureInfo + "e"
+
+var iyuuTarget = iyuu.Digest(iyuuFixtureInfo)
 var iyuuExisting = strings.Repeat("c", 40)
 
 type iyuuFixture struct {
@@ -34,9 +38,16 @@ type iyuuFixture struct {
 	token          string
 	binds, lookups int
 	bindReply      string
+	seed           *iyuuSeedFixture
+	api            *iyuuAPI
 }
 
 func (f *iyuuFixture) upstream(r *http.Request) (*http.Response, error) {
+	if f.seed != nil {
+		if res, err, ok := f.seed.route(f.t, r); ok {
+			return res, err
+		}
+	}
 	if r.URL.Hostname() == "qb.fixture" {
 		body := ""
 		q := r.URL.Query()
@@ -116,10 +127,12 @@ func (f *iyuuFixture) upstream(r *http.Request) (*http.Response, error) {
 	return jsonResponse(r, `{"code":0,"data":`+data+`}`), nil
 }
 func (f *iyuuFixture) start() {
-	h, err := buildHandler(config.Config{ApplicationConfigPath: f.config, DisableLegacy: true}, roundTripFunc(f.upstream), new(*rssRunAPI))
+	var runner *rssRunAPI
+	h, err := buildHandler(config.Config{ApplicationConfigPath: f.config, DisableLegacy: true}, roundTripFunc(f.upstream), &runner)
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	f.api = runner.archivePlugin.iyuu
 	f.handler = h
 	f.token = loginForTest(f.t, h, "admin", "password")
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -176,5 +177,67 @@ func TestTransferSnapshotBothDialectsRequireFileAndIncarnationProof(t *testing.T
 				t.Fatal("missing incarnation accepted")
 			}
 		})
+	}
+}
+
+func TestReseedVerifiedRequiresExactInstanceAndVerifiedBytes(t *testing.T) {
+	meta, err := torrentmeta.PrepareTransfer(transferMetainfo, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := "iyuu-" + strings.Repeat("f", 64)
+	task := torrenttransfer.Task{Kind: "transmission", WireID: meta.V1Hash, V1Hash: meta.V1Hash, AddedAt: 33, Directory: "/data", Name: "movie.mkv", State: "stopped", Complete: true, Paused: true, Labels: []string{label}, Files: meta.Files, Done: []int{0}}
+	task.Files = slices.Clone(meta.Files)
+	task.Files[0].Selected = true
+	if !task.FullComplete(meta) {
+		t.Fatal("fixture files")
+	}
+	for _, modern := range []bool{false, true} {
+		row := map[string]any{}
+		key := func(old, new string) string {
+			if modern {
+				return new
+			}
+			return old
+		}
+		row[key("hashString", "hash_string")] = meta.V1Hash
+		row[key("addedDate", "added_date")] = 33
+		row["status"] = 0
+		row[key("totalSize", "total_size")] = 8
+		row["labels"] = []string{label}
+		row[key("downloadDir", "download_dir")] = "/data"
+		c, _ := New("tr.fixture", "", "", "", transportFunc(func(r *http.Request) (*http.Response, error) {
+			if r.Header.Get("X-Transmission-Session-Id") == "" {
+				o := reply(409, "")
+				o.Header.Set("X-Transmission-Session-Id", "fixture")
+				if modern {
+					o.Header.Set("X-Transmission-Rpc-Version", "6.0.0")
+				}
+				return o, nil
+			}
+			var q struct{ Method string }
+			if json.NewDecoder(r.Body).Decode(&q) != nil || q.Method != key("torrent-get", "torrent_get") {
+				t.Fatal(q.Method)
+			}
+			data := map[string]any{"torrents": []any{row}}
+			env := map[string]any{"result": "success", "tag": 1, "arguments": data}
+			if modern {
+				env = map[string]any{"jsonrpc": "2.0", "id": 1, "result": data}
+			}
+			b, _ := json.Marshal(env)
+			return reply(200, string(b)), nil
+		}))
+		for _, v := range []struct {
+			valid, unchecked, added int
+			want                    bool
+		}{{8, 0, 33, true}, {7, 1, 33, false}, {8, 0, 34, false}} {
+			row[key("haveValid", "have_valid")] = v.valid
+			row[key("haveUnchecked", "have_unchecked")] = v.unchecked
+			row[key("addedDate", "added_date")] = v.added
+			ok, err := c.ReseedVerified(t.Context(), task, meta)
+			if err != nil || ok != v.want {
+				t.Fatal(modern, v, ok, err)
+			}
+		}
 	}
 }

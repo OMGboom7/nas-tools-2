@@ -48,7 +48,7 @@ func (api *iyuuAPI) selection(ctx context.Context, s iyuuScope) (iyuuSelection, 
 			out.sites = append(out.sites, v)
 		}
 	}
-	out.proof = sitelogin.Hash([]any{s.proof, out.downloaders, out.sites})
+	out.proof = sitelogin.Hash([]any{s.actor, s.authority, s.account(), s.raw[iyuuGeneration], s.cfg.Downloaders, s.cfg.Sites, s.cfg.Excluded, out.downloaders, out.sites})
 	return out, nil
 }
 
@@ -64,6 +64,9 @@ func iyuuHost(address string) string {
 }
 
 type iyuuMatch struct {
+	SourceProof  string `json:"sourceProof"`
+	SourceID     string `json:"sourceId"`
+	ProviderID   string `json:"providerId"`
 	Downloader   string `json:"downloader"`
 	DownloaderID string `json:"downloaderId"`
 	Source       string `json:"source"`
@@ -133,6 +136,7 @@ type iyuuMatcher struct {
 	current   func() error
 	signature string
 	targets   map[string]siteconfig.Site
+	providers map[string]iyuu.Site
 }
 
 func (m *iyuuMatcher) prepare(ctx context.Context) error {
@@ -163,9 +167,11 @@ func (m *iyuuMatcher) prepare(ctx context.Context) error {
 		}
 	}
 	targets := map[string]siteconfig.Site{}
+	m.providers = map[string]iyuu.Site{}
 	for _, s := range sites {
 		if v := local[iyuuHost(s.Domain)]; v.ID != 0 {
 			targets[s.ID.String()] = v
+			m.providers[s.ID.String()] = s
 		}
 	}
 	if len(targets) > 0 {
@@ -189,7 +195,8 @@ func (m *iyuuMatcher) scan(ctx context.Context, d downloaderconfig.Downloader, c
 	if err != nil {
 		return nil, 0, err
 	}
-	names := map[string]string{}
+	type sourceInfo struct{ name, wire, proof string }
+	names := map[string]sourceInfo{}
 	hashes := []string{}
 	cfg := m.scope.cfg
 	for _, id := range ids {
@@ -206,21 +213,13 @@ func (m *iyuuMatcher) scan(ctx context.Context, d downloaderconfig.Downloader, c
 		if !task.Valid() || task.Kind != d.Type || task.WireID != id {
 			return nil, 0, iyuu.ErrResponse
 		}
-		if !task.Complete || task.Error || task.Checking || !iyuu.Hash(task.V1Hash) {
-			continue
-		}
-		if slices.ContainsFunc(cfg.Excluded, func(label string) bool {
-			if task.Kind == "qbittorrent" {
-				return strings.Contains(task.RawQbTags, label)
-			}
-			return slices.Contains(task.Labels, label)
-		}) {
+		if !iyuuSourceEligible(task, cfg) {
 			continue
 		}
 		if _, ok := names[task.V1Hash]; ok {
 			continue
 		}
-		names[task.V1Hash] = task.Name
+		names[task.V1Hash] = sourceInfo{task.Name, id, iyuuSourceProof(task)}
 		hashes = append(hashes, task.V1Hash)
 	}
 	if len(hashes) == 0 {
@@ -269,9 +268,24 @@ func (m *iyuuMatcher) scan(ctx context.Context, d downloaderconfig.Downloader, c
 				if exists {
 					continue
 				}
-				rows = append(rows, iyuuMatch{Downloader: d.Name, DownloaderID: strconv.FormatInt(d.ID, 10), Source: source, Name: names[source], Site: site.Name, SiteID: strconv.FormatInt(site.ID, 10), TorrentID: v.TorrentID.String(), Hash: v.Hash})
+				rows = append(rows, iyuuMatch{Downloader: d.Name, DownloaderID: strconv.FormatInt(d.ID, 10), Source: source, Name: names[source].name, SourceID: names[source].wire, SourceProof: names[source].proof, ProviderID: v.SiteID.String(), Site: site.Name, SiteID: strconv.FormatInt(site.ID, 10), TorrentID: v.TorrentID.String(), Hash: v.Hash})
 			}
 		}
 	}
 	return rows, len(hashes), nil
+}
+
+func iyuuSourceProof(t torrenttransfer.Task) string {
+	return sitelogin.Hash([]any{t.Kind, t.WireID, t.V1Hash, t.V2Hash, t.AddedAt, t.Directory, t.RawQbTags, t.Labels, t.Files})
+}
+func iyuuSourceEligible(t torrenttransfer.Task, cfg iyuu.Settings) bool {
+	if !t.Valid() || !t.Complete || t.Error || t.Checking || !iyuu.Hash(t.V1Hash) || cfg.Failed[t.V1Hash] || cfg.Permanent[t.V1Hash] {
+		return false
+	}
+	return !slices.ContainsFunc(cfg.Excluded, func(label string) bool {
+		if t.Kind == "qbittorrent" {
+			return strings.Contains(t.RawQbTags, label)
+		}
+		return slices.Contains(t.Labels, label)
+	})
 }

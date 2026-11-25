@@ -257,17 +257,26 @@ func (c *Client) TransferTask(ctx context.Context, id string) (torrenttransfer.T
 }
 
 func (c *Client) AddTransferPaused(ctx context.Context, content []byte, directory string) (torrenttransfer.AddReceipt, error) {
-	return c.addTransferPaused(ctx, content, directory, nil)
+	return c.addTransferPaused(ctx, content, directory, nil, []string{"已整理", "转移做种"})
 }
 
 func (c *Client) AddReviewedTransfer(ctx context.Context, content []byte, directory string, intent torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
 	if err := intent.Validate(); err != nil {
 		return torrenttransfer.AddReceipt{}, err
 	}
-	return c.addTransferPaused(ctx, content, directory, &intent)
+	return c.addTransferPaused(ctx, content, directory, &intent, []string{"已整理", "转移做种"})
 }
 
-func (c *Client) addTransferPaused(ctx context.Context, content []byte, directory string, intent *torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
+// AddReseedPaused marks the new task so an ambiguous duplicate cannot be
+// mistaken for a target created by this IYUU operation.
+func (c *Client) AddReseedPaused(ctx context.Context, content []byte, directory string, intent torrenttransfer.AddIntent) (torrenttransfer.AddReceipt, error) {
+	if err := intent.Validate(); err != nil {
+		return torrenttransfer.AddReceipt{}, err
+	}
+	return c.addTransferPaused(ctx, content, directory, &intent, []string{"已整理", "辅种", "iyuu-" + intent.Receipt})
+}
+
+func (c *Client) addTransferPaused(ctx context.Context, content []byte, directory string, intent *torrenttransfer.AddIntent, labels []string) (torrenttransfer.AddReceipt, error) {
 	r := torrenttransfer.AddReceipt{}
 	m, err := torrentmeta.PrepareTransfer(content, nil)
 	if err != nil {
@@ -294,7 +303,7 @@ func (c *Client) addTransferPaused(ctx context.Context, content []byte, director
 	} else if err != torrenttransfer.ErrTaskAbsent {
 		return r, err
 	}
-	form := url.Values{"savepath": {directory}, "autoTMM": {"false"}, "skip_checking": {"false"}, "tags": {"已整理,转移做种"}}
+	form := url.Values{"savepath": {directory}, "autoTMM": {"false"}, "skip_checking": {"false"}, "tags": {strings.Join(labels, ",")}}
 	if p.Major == 5 {
 		form.Set("stopped", "true")
 	} else {

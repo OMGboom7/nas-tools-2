@@ -146,6 +146,16 @@ func (service pluginService) serveFeedPlugin(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	// Running reseeds already bind their downloader, site and selected settings.
+	// A fresh installation must not inherit the previous installation's jobs.
+	if id == iyuu.Plugin && changes["UserInstalledPlugins"] != "" && changes["UserInstalledPlugins"] != raw["UserInstalledPlugins"] {
+		nonce, e := refreshNonce()
+		if e != nil {
+			writeAPIError(w, 503, 503, "保存配置失败")
+			return
+		}
+		changes[iyuuGeneration] = nonce
+	}
 	err = service.system.UpdateMany(ctx, p.keys, func(current map[string]string) (map[string]string, error) {
 		if !maps.Equal(current, raw) {
 			return nil, douban.ErrSettings
