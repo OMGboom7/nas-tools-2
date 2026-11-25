@@ -58,6 +58,16 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "plugin-editors" {
+		if err := database.PluginEditors(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			if errors.Is(err, database.ErrPluginConfigChanged) {
+				os.Exit(3)
+			}
+			slog.Error("plugin editor data unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "plugin-market" {
 		if err := database.PluginMarket(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("plugin market unavailable")

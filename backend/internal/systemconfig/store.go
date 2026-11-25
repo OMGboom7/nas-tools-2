@@ -147,13 +147,25 @@ func (store *Store) ReadMany(ctx context.Context, keys []string) (map[string]str
 	return values, nil
 }
 
+func validSnapshotKey(key string) bool {
+	if len(key) <= 160 {
+		return key != ""
+	}
+	for _, prefix := range []string{"plugin.", "GoExternalPluginFields."} {
+		if id, ok := strings.CutPrefix(key, prefix); ok && ValidStoredPluginID(id) {
+			return true
+		}
+	}
+	return false
+}
+
 func readMany(ctx context.Context, tx *sql.Tx, keys []string) (map[string]string, error) {
 	if len(keys) == 0 || len(keys) > 16 {
 		return nil, ErrInvalidSetting
 	}
 	values := map[string]string{}
 	for _, key := range keys {
-		if key == "" || len(key) > 160 && !(strings.HasPrefix(key, "plugin.") && ValidStoredPluginID(strings.TrimPrefix(key, "plugin."))) {
+		if !validSnapshotKey(key) {
 			return nil, ErrInvalidSetting
 		}
 		if _, ok := values[key]; ok {

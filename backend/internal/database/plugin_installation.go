@@ -42,7 +42,11 @@ func PluginInstallation(ctx context.Context, configPath string, args []string, o
 	return tx.Commit()
 }
 
-func readPluginInstallation(ctx context.Context, db *sql.DB) ([]string, error) {
+type pluginQuery interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func readPluginInstallation(ctx context.Context, db pluginQuery) ([]string, error) {
 	var raw string
 	err := db.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY='UserInstalledPlugins' ORDER BY ID DESC LIMIT 1").Scan(&raw)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

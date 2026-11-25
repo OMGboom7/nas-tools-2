@@ -19,7 +19,14 @@ func PluginMarket(ctx context.Context, configPath, access string, in io.Reader, 
 	input := &io.LimitedReader{R: in, N: 4 << 20}
 	decoder := json.NewDecoder(input)
 	decoder.UseNumber()
-	var entries []systemconfig.PluginDeclaration
+	var entries []struct {
+		systemconfig.PluginDeclaration
+		Runtime *struct {
+			Running      bool `json:"running"`
+			Configurable bool `json:"configurable"`
+			HasPage      bool `json:"hasPage"`
+		}
+	}
 	if decoder.Decode(&entries) != nil || decoder.Decode(new(any)) != io.EOF || input.N == 0 || entries == nil {
 		return errors.New("invalid plugin declarations")
 	}
@@ -50,6 +57,9 @@ func PluginMarket(ctx context.Context, configPath, access string, in io.Reader, 
 			if v, exists := entry.Fields[key]; exists {
 				row[key] = v
 			}
+		}
+		if installed[id] && entry.Runtime != nil {
+			row["runtime"] = entry.Runtime
 		}
 		rows = append(rows, row)
 	}

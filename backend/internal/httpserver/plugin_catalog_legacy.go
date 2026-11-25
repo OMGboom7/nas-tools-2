@@ -14,7 +14,13 @@ func (service pluginService) serveNativeLegacyPluginApps(response http.ResponseW
 	if !ok {
 		return
 	}
-	data, err := service.nativePluginCatalogData(request.Context(), administrator, false)
+	request.Body = http.MaxBytesReader(response, request.Body, 128<<10)
+	if err := request.ParseForm(); err != nil {
+		writeAPIError(response, 400, 400, "invalid plugin market request")
+		return
+	}
+	withRuntime := request.PostForm.Get("with_runtime") == "1"
+	data, err := service.nativePluginCatalogData(request.Context(), administrator, withRuntime)
 	if err != nil {
 		writeAPIError(response, 502, 502, "plugin catalog is unavailable")
 		return
@@ -30,11 +36,30 @@ func (service pluginService) serveNativeLegacyPluginApps(response http.ResponseW
 		if !bundled {
 			entry.Icon, entry.Color = item.MarketIcon, item.MarketColor
 		}
-		result[item.ID] = map[string]any{"id": item.ID, "name": item.Name, "desc": item.Description, "version": item.Version, "author": item.Author, "author_url": item.AuthorURL, "installed": item.Installed, "icon": entry.Icon, "color": entry.Color, "native": item.Native}
+		row := map[string]any{"id": item.ID, "name": item.Name, "desc": item.Description, "version": item.Version, "author": item.Author, "author_url": item.AuthorURL, "installed": item.Installed, "icon": entry.Icon, "color": entry.Color, "native": item.Native}
+		if withRuntime && item.Installed {
+			row["runtime"] = map[string]any{"running": item.Running, "known": item.StateKnown,
+				"configurable": item.Native && item.Configurable, "hasPage": item.CanViewPage}
+		}
+		result[item.ID] = row
 	}
 	// The old helper's statistics backend was disabled and returned {}.
 	// Preserve that contract without introducing a fictitious external count.
-	writeJSON(response, 200, map[string]any{"code": 0, "result": result, "statistic": map[string]any{}})
+	reply := map[string]any{"code": 0, "result": result, "statistic": map[string]any{}}
+	if withRuntime {
+		// A paired external extension still supplies its live form and state.
+		complete := true
+		for _, item := range data.Items {
+			if item.Installed && !item.Native && service.legacyURL != "" {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			reply["runtime_included"] = true
+		}
+	}
+	writeJSON(response, 200, reply)
 }
 
 func (s pluginService) legacyCommandRoutes(reads map[string]http.HandlerFunc, next http.HandlerFunc) http.HandlerFunc {

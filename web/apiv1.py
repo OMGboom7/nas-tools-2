@@ -2478,7 +2478,7 @@ class PluginApps(ClientResource):
         """
         获取插件市场所有插件
         """
-        return WebAction().api_action(cmd='get_plugin_apps')
+        return WebAction().api_action(cmd='get_plugin_apps', data={'with_runtime': request.form.get('with_runtime')})
 
 
 @plugin.route('/list')

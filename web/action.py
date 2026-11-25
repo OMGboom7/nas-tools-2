@@ -5315,15 +5315,19 @@ class WebAction:
         return 2 if user.admin else 1
 
     @staticmethod
-    def get_plugin_apps():
+    def get_plugin_apps(data=None):
         """
         获取插件列表
         """
         level = WebAction.plugin_user_level()
         if level is None:
             return {"code": 403, "msg": "用户未登录"}
-        plugins = PluginManager().get_plugin_apps(level)
-        return {"code": 0, "result": plugins, "statistic": {}}
+        with_runtime = (data or {}).get("with_runtime") == "1"
+        plugins = PluginManager().get_plugin_apps(level, with_runtime=with_runtime)
+        result = {"code": 0, "result": plugins, "statistic": {}}
+        if with_runtime:
+            result["runtime_included"] = True
+        return result
 
     @staticmethod
     def get_plugin_page(data):
@@ -5352,7 +5356,12 @@ class WebAction:
         level = WebAction.plugin_user_level()
         if level is None:
             return {"code": 403, "msg": "用户未登录"}
-        Plugins = PluginManager().get_plugins_conf(level, (data or {}).get("id"))
+        try:
+            Plugins = PluginManager().get_plugins_conf(level, (data or {}).get("id"))
+        except subprocess.CalledProcessError as error:
+            if error.returncode == 3:
+                return {"code": 409, "msg": "插件配置已变化，请刷新后重试"}
+            raise
         return {"code": 0, "result": Plugins}
 
     @staticmethod

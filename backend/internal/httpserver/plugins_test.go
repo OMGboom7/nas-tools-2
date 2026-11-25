@@ -156,3 +156,22 @@ func TestPluginUninstallRequiresInstalledPlugin(t *testing.T) {
 		t.Fatalf("status = %d, uninstalled = %v: %s", response.Code, uninstalled, response.Body.String())
 	}
 }
+
+func TestRemotePluginMarketIncludesStateWithoutFetchingEditor(t *testing.T) {
+	calls := 0
+	handler, _ := newHandler(config.Config{LegacyBackendURL: "http://legacy:3000"}, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Path != "/api/v1/plugin/apps" || r.FormValue("with_runtime") != "1" {
+			t.Fatalf("unexpected request %s", r.URL)
+		}
+		return jsonResponse(r, `{"code":0,"data":{"runtime_included":true,"result":{"Demo":{"installed":true,"runtime":{"running":true,"configurable":true,"hasPage":true}},"Unknown":{"installed":true,"runtime":{"known":false}}}}}`), nil
+	}))
+	req := httptest.NewRequest("GET", "/api/v1/plugins", nil)
+	req.Header.Set("Authorization", "test-token")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	var reply struct{ Data pluginsData }
+	if res.Code != 200 || calls != 1 || json.Unmarshal(res.Body.Bytes(), &reply) != nil || reply.Data.InstalledCount != 2 || reply.Data.RunningCount != 1 || reply.Data.UnknownStateCount != 1 || !reply.Data.Items[0].Configurable || !reply.Data.Items[0].HasPage {
+		t.Fatal(calls, res.Body.String())
+	}
+}

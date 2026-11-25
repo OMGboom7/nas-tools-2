@@ -193,7 +193,7 @@ func (service pluginService) pluginForMutation(ctx context.Context, response htt
 			return nil, true
 		}
 	}
-	result, err := service.legacyMarket(ctx, token)
+	result, err := service.legacyMarket(ctx, token, false)
 	if !handlePluginResult(response, result, err, "plugin list is unavailable") {
 		return nil, false
 	}
@@ -219,8 +219,12 @@ func (service pluginService) localPluginForMutation(ctx context.Context, respons
 	return &pluginSummary{ID: id, Installed: slices.Contains(ids, id)}, true
 }
 
-func (service pluginService) legacyMarket(ctx context.Context, token string) (map[string]any, error) {
-	return postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/apps", token, nil)
+func (service pluginService) legacyMarket(ctx context.Context, token string, withRuntime bool) (map[string]any, error) {
+	form := url.Values{}
+	if withRuntime {
+		form.Set("with_runtime", "1")
+	}
+	return postLegacy(ctx, service.client, service.legacyURL, "/api/v1/plugin/apps", token, form)
 }
 
 func pluginMarketID(key string, entry map[string]any) string {
@@ -231,17 +235,22 @@ func pluginMarketID(key string, entry map[string]any) string {
 }
 
 func (service pluginService) list(ctx context.Context, token string) (pluginsData, map[string]any, error) {
-	appsResult, err := service.legacyMarket(ctx, token)
+	appsResult, err := service.legacyMarket(ctx, token, true)
 	if err != nil || int(number(appsResult["code"])) != 0 {
 		return pluginsData{}, appsResult, err
 	}
-	runningResult, err := service.legacyInstalledPlugins(ctx, token, nil)
-	if err != nil || int(number(runningResult["code"])) != 0 {
-		return pluginsData{}, runningResult, err
+	payload := legacyPayload(appsResult)
+	apps := objectValue(payload["result"])
+	withRuntime := payload["runtime_included"] == true
+	var running map[string]any
+	if !withRuntime {
+		// Unupgraded data hosts only expose live state through the original list.
+		runningResult, err := service.legacyInstalledPlugins(ctx, token, nil)
+		if err != nil || int(number(runningResult["code"])) != 0 {
+			return pluginsData{}, runningResult, err
+		}
+		running = objectValue(legacyPayload(runningResult)["result"])
 	}
-
-	apps := objectValue(legacyPayload(appsResult)["result"])
-	running := objectValue(legacyPayload(runningResult)["result"])
 	data := pluginsData{Items: make([]pluginSummary, 0, len(apps))}
 	for key, raw := range apps {
 		app := objectValue(raw)
@@ -263,7 +272,16 @@ func (service pluginService) list(ctx context.Context, token string) (pluginsDat
 			Installed:   truthy(app["installed"]),
 			StateKnown:  true, ActionsAvailable: true,
 		}
-		if rawRunning, found := running[id]; found {
+		if withRuntime {
+			state := objectValue(app["runtime"])
+			item.StateKnown = !item.Installed || len(state) > 0
+			if known, ok := state["known"].(bool); ok {
+				item.StateKnown = known
+			}
+			item.Running = item.StateKnown && state["running"] == true
+			item.Configurable = state["configurable"] == true
+			item.HasPage = state["hasPage"] == true
+		} else if rawRunning, found := running[id]; found {
 			configuration := objectValue(rawRunning)
 			item.Installed = true
 			item.Running = truthy(configuration["state"])
@@ -272,6 +290,9 @@ func (service pluginService) list(ctx context.Context, token string) (pluginsDat
 		}
 		item.CanViewPage = item.HasPage
 		if item.Installed {
+			if !item.StateKnown {
+				data.UnknownStateCount++
+			}
 			data.InstalledCount++
 		}
 		if item.Running {
@@ -285,7 +306,7 @@ func (service pluginService) list(ctx context.Context, token string) (pluginsDat
 		}
 		return strings.ToLower(data.Items[left].Name) < strings.ToLower(data.Items[right].Name)
 	})
-	return data, runningResult, nil
+	return data, appsResult, nil
 }
 
 func handlePluginResult(response http.ResponseWriter, result map[string]any, err error, fallback string) bool {
@@ -294,6 +315,10 @@ func handlePluginResult(response http.ResponseWriter, result map[string]any, err
 		return false
 	}
 	code := int(number(result["code"]))
+	if code == 409 {
+		writeAPIError(response, http.StatusConflict, 409, "插件状态或配置已变化，请刷新后重试")
+		return false
+	}
 	if code == 403 {
 		writeAPIError(response, http.StatusUnauthorized, 401, "authorization token is invalid or expired")
 		return false

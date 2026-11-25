@@ -258,91 +258,42 @@ class PluginManager:
             return ImageUtils.calculate_theme_color(icon_path)
         return ""
 
-    def _record_external_fields(self, pid, plugin, fields, revision):
-        source = self._external_modules.get(plugin.__class__.__module__)
-        digest = self._external_digests.get(source)
-        if not digest:
-            return
-
-        # Only control identifiers are needed after upgrading. Free-form defaults,
-        # choices, scripts and values remain with the extension.
-        keys = set()
-        pending = [fields]
-        while pending and len(keys) <= 300:
-            node = pending.pop()
-            if isinstance(node, list):
-                pending.extend(node)
-            elif isinstance(node, dict):
-                key = node.get("id")
-                if isinstance(key, str) and 0 < len(key) <= 120:
-                    keys.add(key)
-                if isinstance(node.get("content"), (list, dict)):
-                    pending.append(node["content"])
-        if len(keys) <= 300:
-            record = {"digest": digest, "revision": revision, "keys": sorted(keys)}
-            setting = "GoExternalPluginFields." + pid
-            if self.systemconfig.get(setting) != record:
-                self.systemconfig.set(setting, record)
-
     def get_plugins_conf(self, auth_level, selected=None):
-        """
-        获取所有插件配置
-        """
-        all_confs = {}
-        for pid, plugin in self._running_plugins.items():
-            if selected is not None and pid != selected:
-                continue
-            # 基本属性
-            conf = {}
-            # 权限
-            if hasattr(plugin, "auth_level") \
-                    and plugin.auth_level > auth_level:
-                continue
-            # 名称
-            if hasattr(plugin, "module_name"):
-                conf.update({"name": plugin.module_name})
-            # 描述
-            if hasattr(plugin, "module_desc"):
-                conf.update({"desc": plugin.module_desc})
-            # 版本号
-            if hasattr(plugin, "module_version"):
-                conf.update({"version": plugin.module_version})
-            # 图标
-            if hasattr(plugin, "module_icon"):
-                conf.update({"icon": plugin.module_icon})
-            # ID前缀
-            if hasattr(plugin, "module_config_prefix"):
-                conf.update({"prefix": plugin.module_config_prefix})
-            # 插件额外的页面
+        visible = [(pid, plugin, getattr(plugin, "auth_level", 0))
+                   for pid, plugin in self._running_plugins.items()
+                   if (selected is None or pid == selected) and getattr(plugin, "auth_level", 0) <= auth_level]
+        external = {}
+        if auth_level >= 2:
+            for pid, plugin, level in visible:
+                source = self._external_modules.get(plugin.__class__.__module__)
+                digest = self._external_digests.get(source)
+                if digest:
+                    external[pid] = {"id": pid, "level": level, "digest": digest}
+        revisions = {}
+        if external:
+            payload = json.dumps({"revisionsOnly": True, "forms": list(external.values())}).encode()
+            revisions = json.loads(run_go_helper("plugin-editors", str(auth_level), payload=payload))
+        forms = []
+        for pid, plugin, level in visible:
+            entry = {"id": pid, "level": level}
+            if pid in external:
+                if pid not in revisions:
+                    continue
+                entry.update(digest=external[pid]["digest"], revision=revisions[pid])
+            attributes = {"module_name": "name", "module_desc": "desc", "module_version": "version",
+                          "module_icon": "icon", "module_config_prefix": "prefix"}
+            detail = {key: getattr(plugin, attr) for attr, key in attributes.items() if hasattr(plugin, attr)}
             if hasattr(plugin, "get_page"):
-                title, _, _ = plugin.get_page()
-                conf.update({"page": title})
-            # 插件额外的脚本
+                detail["page"], _, _ = plugin.get_page()
             if hasattr(plugin, "get_script"):
-                conf.update({"script": plugin.get_script()})
-            # 主题色
-            conf.update({"color": self.__get_plugin_color(plugin)})
-            # Record fields only if the saved configuration stayed at the same revision
-            # while an administrator read the extension's live form.
-            external_form = auth_level >= 2 and plugin.__class__.__module__ in self._external_modules
-            revision = self.systemconfig.read_plugin_config(pid)["revision"] if external_form else None
-            conf.update({"fields": plugin.get_fields() or {}})
-            if selected is None and not external_form:
-                conf["config"] = self.get_plugin_config(pid)
-            else:
-                stored = self.systemconfig.read_plugin_config(pid)
-                if selected is None:
-                    conf["config"] = stored["value"] or {}
-                else:
-                    conf["config"] = {} if stored["value"] is None or stored["value"] == "" else stored["value"]
-                    conf["config_revision"] = stored["revision"]
-                if external_form and revision == stored["revision"]:
-                    self._record_external_fields(pid, plugin, conf["fields"], revision)
-            # 状态
-            conf.update({"state": plugin.get_state()})
-            # 汇总
-            all_confs[pid] = conf
-        return all_confs
+                detail["script"] = plugin.get_script()
+            detail.update(color=self.__get_plugin_color(plugin), fields=plugin.get_fields() or {},
+                          state=plugin.get_state())
+            entry["detail"] = detail
+            forms.append(entry)
+        payload = json.dumps({"selected": selected, "forms": forms}, allow_nan=False).encode()
+        rows = json.loads(run_go_helper("plugin-editors", str(auth_level), payload=payload))
+        return {row["id"]: row["detail"] for row in rows}
 
     def _market_declaration(self, pid, plugin):
         attributes = {"module_name": "name", "module_desc": "desc", "module_version": "version",
@@ -355,8 +306,25 @@ class PluginManager:
             fields["color"] = ""
         return {"level": getattr(plugin, "auth_level", 0), "fields": fields}
 
-    def get_plugin_apps(self, auth_level):
+    def get_plugin_apps(self, auth_level, with_runtime=False):
         declarations = [self._market_declaration(pid, plugin) for pid, plugin in self._plugins.items()]
+        if with_runtime:
+            for declaration in declarations:
+                pid = declaration["fields"]["id"]
+                plugin = self._running_plugins.get(pid)
+                if plugin is None or declaration["level"] > auth_level:
+                    continue
+                fields = plugin.get_fields()
+                page = plugin.get_page()[0] if hasattr(plugin, "get_page") else None
+                state = plugin.get_state()
+                running = state.lower() in ("true", "1") if isinstance(state, str) else bool(state)
+                if isinstance(fields, str):
+                    try:
+                        fields = json.loads(fields)
+                    except ValueError:
+                        fields = None
+                declaration["runtime"] = {"running": running, "configurable": isinstance(fields, (list, dict)) and bool(fields),
+                                          "hasPage": bool(page and str(page).strip())}
         rows = run_go_helper("plugin-market", str(auth_level), payload=json.dumps(declarations).encode())
         return {row["id"]: row for row in json.loads(rows)}
 

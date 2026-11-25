@@ -31,20 +31,11 @@ func PluginConfig(ctx context.Context, configPath string, args []string, in io.R
 	}
 	defer closeDB()
 	if read {
-		var raw sql.NullString
-		err := db.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&raw)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		value, raw, err := readPluginValue(ctx, db, key)
+		if err != nil {
 			return err
 		}
-		var value any
-		if raw.Valid {
-			value = raw.String
-			// The legacy SystemConfig parser decodes lists and objects only.
-			if strings.HasPrefix(raw.String, "{") || strings.HasPrefix(raw.String, "[") {
-				value = json.RawMessage(raw.String)
-			}
-		}
-		return json.NewEncoder(out).Encode(map[string]any{"value": value, "revision": pluginConfigRevision(raw.String)})
+		return json.NewEncoder(out).Encode(map[string]any{"value": value, "revision": pluginConfigRevision(raw)})
 	}
 
 	var input struct {
@@ -88,6 +79,26 @@ func PluginConfig(ctx context.Context, configPath string, args []string, in io.R
 		return err
 	}
 	return tx.Commit()
+}
+
+func readPluginValue(ctx context.Context, db pluginQuery, key string) (value any, raw string, err error) {
+	var stored sql.NullString
+	err = db.QueryRowContext(ctx, "SELECT VALUE FROM SYSTEM_DICT WHERE TYPE='SystemConfig' AND KEY=? ORDER BY ID DESC LIMIT 1", key).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil || !stored.Valid {
+		return nil, "", err
+	}
+	raw = stored.String
+	// The original reader recognized JSON arrays and objects only at the first byte.
+	if strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "[") {
+		if !json.Valid([]byte(raw)) {
+			return nil, "", errors.New("invalid stored plugin JSON")
+		}
+		return json.RawMessage(raw), raw, nil
+	}
+	return raw, raw, nil
 }
 
 func pluginConfigRevision(raw string) string {
