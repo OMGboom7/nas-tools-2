@@ -3,13 +3,11 @@ package filterconfig
 import (
 	"context"
 	"database/sql"
-	_ "embed"
 	"errors"
 	"strconv"
-)
 
-//go:embed init_filter.sql
-var builtinSQL string
+	"github.com/0xforee/nas-tools/backend/internal/initialsql"
+)
 
 var ErrInvalidTemplate = errors.New("unknown filter template")
 var ErrTemplateConflict = errors.New("template rule ID belongs to another group")
@@ -81,7 +79,7 @@ func Builtins(ctx context.Context) ([]GroupInfo, error) {
 	for _, statement := range []string{
 		"CREATE TABLE CONFIG_FILTER_GROUP (ID INTEGER PRIMARY KEY, GROUP_NAME TEXT, IS_DEFAULT TEXT, NOTE TEXT)",
 		"CREATE TABLE CONFIG_FILTER_RULES (ID INTEGER PRIMARY KEY, GROUP_ID TEXT, ROLE_NAME TEXT, PRIORITY TEXT, INCLUDE TEXT, EXCLUDE TEXT, SIZE_LIMIT TEXT, NOTE TEXT)",
-		builtinSQL,
+		initialsql.Filters,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return nil, err

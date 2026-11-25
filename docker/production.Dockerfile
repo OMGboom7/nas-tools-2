@@ -41,6 +41,7 @@ ENV S6_SERVICES_GRACETIME=30000 \
     LANG="C.UTF-8" \
     TZ="Asia/Shanghai" \
     NASTOOL_CONFIG="/config/config.yaml" \
+    NASTOOL_GO_INIT_DATA="1" \
     NASTOOL_SITE_CATALOG="/nas-tools/web/backend/user.sites.bin" \
     NASTOOL_DEFAULT_CATEGORY="/nas-tools/config/default-category.yaml" \
     NASTOOL_AUTO_UPDATE=false \

@@ -14,11 +14,20 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/httpserver"
 )
 
 func main() {
 	if len(os.Args) > 1 {
+		if os.Args[1] == "init-data" && len(os.Args) == 2 {
+			path := config.ApplicationPath()
+			if err := initializeData(path); err != nil {
+				slog.Error("initialize user data", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
 		if os.Args[1] != "restore" {
 			slog.Error("unknown command")
 			os.Exit(2)
@@ -84,6 +93,19 @@ func main() {
 		// graceful shutdown deadline.
 		os.Exit(1)
 	}
+}
+
+func initializeData(path string) error {
+	release, err := backuprestore.HoldStartup(path)
+	if err != nil {
+		return err
+	}
+	defer release()
+	dbPath := filepath.Join(filepath.Dir(path), "user.db")
+	if _, err := database.EnsureMigrationBackup(dbPath); err != nil {
+		return err
+	}
+	return database.InitializeUserData(dbPath, path)
 }
 
 func holdApplication(cfg config.Config) (func(), error) {

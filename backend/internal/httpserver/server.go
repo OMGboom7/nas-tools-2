@@ -288,6 +288,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		if err != nil {
 			return nil, fmt.Errorf("open native RSS task configuration: %w", err)
 		}
+		if cfg.DisableLegacy {
+			if err := database.InitializeUserData(nativeUserDatabasePath, cfg.ApplicationConfigPath); err != nil {
+				return nil, fmt.Errorf("initialize user data: %w", err)
+			}
+		}
 		taskAPI := rssTaskAPI{tasks: nativeRSSTasks, parsers: nativeRSSParsers, filters: nativeFilters}
 		for _, path := range []string{"list", "info", "update", "delete"} {
 			mux.HandleFunc("POST /api/v1/rss/"+path, taskAPI.serveHTTP)

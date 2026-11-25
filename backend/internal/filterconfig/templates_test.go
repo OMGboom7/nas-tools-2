@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/0xforee/nas-tools/backend/internal/initialsql"
 )
 
 func TestBuiltinTemplatesMatchLegacyAndRestoreAtomically(t *testing.T) {
@@ -16,7 +18,7 @@ func TestBuiltinTemplatesMatchLegacyAndRestoreAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(legacy)) != strings.TrimSpace(builtinSQL) {
+	if strings.TrimSpace(string(legacy)) != strings.TrimSpace(initialsql.Filters) {
 		t.Fatal("embedded templates differ from original templates")
 	}
 	ctx := context.Background()

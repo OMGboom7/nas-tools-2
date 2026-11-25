@@ -1,4 +1,5 @@
 import os
+import subprocess
 import threading
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -49,6 +50,11 @@ class MainDb:
         """
         读取config目录下的sql文件，并初始化到数据库，只处理一次
         """
+        if os.environ.get("NASTOOL_GO_INIT_DATA") == "1":
+            subprocess.run(["/usr/local/bin/nas-tools-go", "init-data"], check=True)
+            Config().init_config()
+            if not Config().get_config("app").get("init_files"):
+                raise RuntimeError("无法读取 Go 写入的数据初始化记录")
         config = Config().get_config()
         init_files = Config().get_config("app").get("init_files") or []
         config_dir = Config().get_script_path()

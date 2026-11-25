@@ -30,6 +30,10 @@ func TestBackupRestoreStagesNativeHTTPWithoutApplying(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	liveConfig, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	admin := loginForTest(t, handler, "admin", "original-password")
 	create := performFormRequest(handler, "/api/v1/user/manage", admin, url.Values{"oper": {"add"}, "name": {"viewer"}, "password": {"viewer-password"}, "pris": {""}})
 	if create.Code != 200 {
@@ -103,7 +107,7 @@ func TestBackupRestoreStagesNativeHTTPWithoutApplying(t *testing.T) {
 	if r := nativeJSONRequest(handler, "POST", "/do", admin, `{"cmd":"restory_backup","data":{"file_name":"x.zip"}}`); r.Code != 410 {
 		t.Fatal(r.Code)
 	}
-	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, original) {
+	if data, err := os.ReadFile(path); err != nil || !bytes.Equal(data, liveConfig) {
 		t.Fatal("staging overwrote live configuration", err)
 	}
 }
