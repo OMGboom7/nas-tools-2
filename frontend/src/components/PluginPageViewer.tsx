@@ -12,7 +12,7 @@ type ViewerState = { kind: "loading" } | { kind: "ready"; data: PluginPageData }
 
 export function PluginPageViewer({ session, plugin, onClose, onSessionExpired }: PluginPageViewerProps) {
   const [state, setState] = useState<ViewerState>({ kind: "loading" });
-  const [pendingDelete, setPendingDelete] = useState<{ recordId: string; label: string; confirmation: PluginPageDeleteConfirmation }>();
+  const [pendingDelete, setPendingDelete] = useState<{ proof?: string; recordId: string; label: string; confirmation: PluginPageDeleteConfirmation }>();
   const [confirmationText, setConfirmationText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -39,7 +39,7 @@ export function PluginPageViewer({ session, plugin, onClose, onSessionExpired }:
     setNotice("");
     try {
       const deletesFile = pendingDelete.confirmation === "typeRecordId";
-      await deletePluginPageRecord(session.token, plugin.id, pendingDelete.recordId, confirmationText);
+      await deletePluginPageRecord(session.token, plugin.id, pendingDelete.recordId, confirmationText, pendingDelete.proof);
       setPendingDelete(undefined);
       setConfirmationText("");
       await load();
@@ -67,7 +67,7 @@ export function PluginPageViewer({ session, plugin, onClose, onSessionExpired }:
       {state.data.sections.length > 0 && <section className="plugin-page-sections" aria-label="扩展页说明">{state.data.sections.map((section, index) => <p key={`${index}-${section}`}>{section}</p>)}</section>}
       {state.data.tables.map((table, tableIndex) => {
         const tableHasActions = table.rowActions.some(Boolean);
-        return <section className="plugin-page-table" key={tableIndex} aria-label={`数据表 ${tableIndex + 1}`}><div><table><thead><tr>{table.columns.map((column, index) => <th key={`${index}-${column}`}>{column}</th>)}{tableHasActions && <th>操作</th>}</tr></thead><tbody>{table.rows.length > 0 ? table.rows.map((row, rowIndex) => { const action = table.rowActions[rowIndex]; return <tr key={rowIndex}>{table.columns.map((_, cellIndex) => <td key={cellIndex}>{row[cellIndex] || "—"}</td>)}{tableHasActions && <td className="plugin-page-row-action">{action?.type === "delete" && <button type="button" disabled={deleting} onClick={() => { setNotice(""); setConfirmationText(""); setPendingDelete({ recordId: action.recordId, label: row.find(Boolean) || action.recordId, confirmation: action.confirmation }); }}>删除</button>}</td>}</tr>; }) : <tr><td colSpan={table.columns.length + (tableHasActions ? 1 : 0)}>暂无数据</td></tr>}</tbody></table></div><small>{table.rows.length} 条记录</small></section>;
+        return <section className="plugin-page-table" key={tableIndex} aria-label={`数据表 ${tableIndex + 1}`}><div><table><thead><tr>{table.columns.map((column, index) => <th key={`${index}-${column}`}>{column}</th>)}{tableHasActions && <th>操作</th>}</tr></thead><tbody>{table.rows.length > 0 ? table.rows.map((row, rowIndex) => { const action = table.rowActions[rowIndex]; return <tr key={rowIndex}>{table.columns.map((_, cellIndex) => <td key={cellIndex}>{row[cellIndex] || "—"}</td>)}{tableHasActions && <td className="plugin-page-row-action">{action?.type === "delete" && <button type="button" disabled={deleting} onClick={() => { setNotice(""); setConfirmationText(""); setPendingDelete({ proof: action.proof, recordId: action.recordId, label: row.find(Boolean) || action.recordId, confirmation: action.confirmation }); }}>删除</button>}</td>}</tr>; }) : <tr><td colSpan={table.columns.length + (tableHasActions ? 1 : 0)}>暂无数据</td></tr>}</tbody></table></div><small>{table.rows.length} 条记录</small></section>;
       })}
       {(cursors.length > 1 || state.data.nextCursor) && <nav aria-label="历史分页">
         <button type="button" className="secondary-button" disabled={cursors.length === 1 || deleting || !!pendingDelete} onClick={() => setCursors(cursors.slice(0, -1))}>上一页</button>

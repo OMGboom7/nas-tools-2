@@ -49,6 +49,16 @@ func (s pluginService) nativePluginPageRoute(fallback http.Handler, action bool)
 			return
 		}
 		id := strings.TrimSpace(probe.PostForm.Get("id"))
+		if s.nativeArchivePage(id) {
+			if !action {
+				s.serveArchivePage(w, probe, true)
+			} else if probe.PostForm.Get("action") == "delete" {
+				s.removeArchiveRecord(w, probe, probe.PostForm.Get("record_id"), probe.PostForm.Get("confirmation"), probe.PostForm.Get("proof"))
+			} else {
+				writeAPIError(w, 400, 400, "不支持的插件扩展页操作")
+			}
+			return
+		}
 		if s.nativeSubscriptionHistory(id) {
 			if !action {
 				s.subscriptionHistoryPage(w, probe, id, true)

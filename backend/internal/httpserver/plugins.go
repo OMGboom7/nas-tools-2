@@ -14,28 +14,30 @@ import (
 )
 
 type pluginService struct {
-	legacyURL       string
-	client          *http.Client
-	system          *systemconfig.Store
-	auth            *nativeAuthentication
-	hosts           *nativeHostsPlugin
-	indexers        *nativeIndexerPlugins
-	subtitles       *subtitleAPI
-	openSubtitles   *openSubtitleAPI
-	library         *libraryScraper
-	mediaRefresh    *mediaRefreshAPI
-	eventWebhook    *eventWebhookAPI
-	speedLimiter    *speedLimiterAPI
-	mediaSyncDelete *mediaSyncDeleteAPI
-	movieLike       *movieLikeAPI
-	siteSignin      *siteSigninAPI
-	cloudflare      *cloudflareAPI
-	cookieCloud     *cookieCloudAPI
-	torrentMark     *torrentMarkAPI
-	torrentTransfer *torrentTransferAPI
-	torrentRemover  *torrentRemovalAPI
-	autoBackup      *autoBackupAPI
-	syncTimer       *organizationAPI
+	archiveConfigPath string
+	archiveContainer  bool
+	legacyURL         string
+	client            *http.Client
+	system            *systemconfig.Store
+	auth              *nativeAuthentication
+	hosts             *nativeHostsPlugin
+	indexers          *nativeIndexerPlugins
+	subtitles         *subtitleAPI
+	openSubtitles     *openSubtitleAPI
+	library           *libraryScraper
+	mediaRefresh      *mediaRefreshAPI
+	eventWebhook      *eventWebhookAPI
+	speedLimiter      *speedLimiterAPI
+	mediaSyncDelete   *mediaSyncDeleteAPI
+	movieLike         *movieLikeAPI
+	siteSignin        *siteSigninAPI
+	cloudflare        *cloudflareAPI
+	cookieCloud       *cookieCloudAPI
+	torrentMark       *torrentMarkAPI
+	torrentTransfer   *torrentTransferAPI
+	torrentRemover    *torrentRemovalAPI
+	autoBackup        *autoBackupAPI
+	syncTimer         *organizationAPI
 }
 
 type pluginSummary struct {
@@ -48,6 +50,7 @@ type pluginSummary struct {
 	Installed         bool   `json:"installed"`
 	Running           bool   `json:"running"`
 	Configurable      bool   `json:"configurable"`
+	NativeArchivePage bool   `json:"nativeArchivePage,omitempty"`
 	NativeHistoryPage bool   `json:"nativeHistoryPage,omitempty"`
 	HasPage           bool   `json:"hasPage"`
 	StateKnown        bool   `json:"stateKnown"`

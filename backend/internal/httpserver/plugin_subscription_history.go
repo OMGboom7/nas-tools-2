@@ -67,7 +67,6 @@ func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *h
 		return
 	}
 	table := pluginPageTable{Columns: []string{"标题", "类型", "状态", "添加时间"}, Rows: [][]string{}, RowActions: []*pluginPageRowAction{}}
-	var legacyActions = []any{}
 	for _, record := range records {
 		fields := record.Fields
 		title := historyCell(fields["name"])
@@ -93,25 +92,16 @@ func (service pluginService) subscriptionHistoryPage(w http.ResponseWriter, r *h
 		table.Rows = append(table.Rows, []string{title, historyCell(fields["type"]), status, historyCell(fields["add_time"])})
 		key := record.HistoryKey()
 		var action *pluginPageRowAction
-		var oldAction any
 		if key != "" {
 			action = &pluginPageRowAction{Type: "delete", RecordID: key, Confirmation: "confirm"}
-			oldAction = map[string]string{"type": "delete", "record_id": key}
 		}
 		table.RowActions = append(table.RowActions, action)
-		if legacy {
-			legacyActions = append(legacyActions, oldAction)
-		}
 	}
 	data := pluginPageData{Title: systemconfig.SubscriptionHistoryTitle(id), Sections: []string{}, Tables: []pluginPageTable{table}, ReadOnly: true, CanDeleteRecords: true, DeleteConfirmation: "confirm"}
 	if more {
 		data.NextCursor = strconv.FormatInt(records[len(records)-1].RowID, 10)
 	}
-	if legacy {
-		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"title": data.Title, "sections": data.Sections, "tables": []any{map[string]any{"columns": table.Columns, "rows": table.Rows, "row_actions": legacyActions}}, "actions_omitted": false, "nextCursor": data.NextCursor}})
-		return
-	}
-	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
+	writeNativeRecordPage(w, data, legacy)
 }
 
 func (service pluginService) removeSubscriptionHistory(w http.ResponseWriter, r *http.Request, id, key string) {

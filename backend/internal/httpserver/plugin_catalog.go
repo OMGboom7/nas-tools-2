@@ -86,7 +86,8 @@ func (service pluginService) nativePluginCatalogData(ctx context.Context, admini
 		}
 		item.Installed = installedSet[item.ID]
 		item.NativeHistoryPage = service.nativeSubscriptionHistory(item.ID)
-		if item.NativeHistoryPage {
+		item.NativeArchivePage = service.nativeArchivePage(item.ID)
+		if item.NativeHistoryPage || item.NativeArchivePage {
 			item.HasPage = true
 		}
 		item.Native = service.ownsPlugin(item.ID)

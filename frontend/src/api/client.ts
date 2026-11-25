@@ -801,6 +801,7 @@ export type PluginSummary = {
   configurable: boolean;
 	 hasPage: boolean;
   nativeHistoryPage?: boolean;
+  nativeArchivePage?: boolean;
   stateKnown?: boolean;
   native?: boolean;
   actionsAvailable?: boolean;
@@ -846,7 +847,7 @@ export type PluginConfigInput = {
 
 export type PluginPageDeleteConfirmation = "confirm" | "typeRecordId";
 
-export type PluginPageRowAction = { type: "delete"; recordId: string; confirmation: PluginPageDeleteConfirmation };
+export type PluginPageRowAction = { proof?: string; type: "delete"; recordId: string; confirmation: PluginPageDeleteConfirmation };
 
 export type PluginPageTable = {
   columns: string[];
@@ -1549,11 +1550,11 @@ export async function getPluginPage(token: string, id: string, after?: string): 
   return result.data;
 }
 
-export async function deletePluginPageRecord(token: string, id: string, recordId: string, confirmation = ""): Promise<void> {
+export async function deletePluginPageRecord(token: string, id: string, recordId: string, confirmation = "", proof?: string): Promise<void> {
   const response = await fetch(`/api/v1/plugins/${encodeURIComponent(id)}/page/records`, {
     method: "DELETE",
     headers: { Authorization: token, "Content-Type": "application/json" },
-    body: JSON.stringify({ recordId, confirmation }),
+    body: JSON.stringify({ recordId, confirmation, proof }),
   });
   const result = await readResponse<Record<string, never>>(response);
   if (!result.success || result.code !== 0) throw new ApiError(result.message || "插件扩展页记录删除失败", result.code);

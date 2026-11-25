@@ -19,6 +19,7 @@ var pluginPageDeleteConfirmation = map[string]string{
 }
 
 type pluginPageRowAction struct {
+	Proof        string `json:"proof,omitempty"`
 	Type         string `json:"type"`
 	RecordID     string `json:"recordId"`
 	Confirmation string `json:"confirmation"`
@@ -42,11 +43,16 @@ type pluginPageData struct {
 }
 
 type pluginPageActionRequest struct {
+	Proof        string `json:"proof,omitempty"`
 	RecordID     string `json:"recordId"`
 	Confirmation string `json:"confirmation"`
 }
 
 func (service pluginService) servePage(response http.ResponseWriter, request *http.Request) {
+	if service.nativeArchivePage(strings.TrimSpace(request.PathValue("id"))) {
+		service.serveArchivePage(response, request, false)
+		return
+	}
 	if id := strings.TrimSpace(request.PathValue("id")); service.nativeSubscriptionHistory(id) {
 		service.subscriptionHistoryPage(response, request, id, false)
 		return
@@ -241,6 +247,10 @@ func (service pluginService) deletePageRecord(response http.ResponseWriter, requ
 		writeAPIError(response, http.StatusBadRequest, 400, "plugin page confirmation does not match")
 		return
 	}
+	if service.nativeArchivePage(id) {
+		service.removeArchiveRecord(response, request, input.RecordID, input.Confirmation, input.Proof)
+		return
+	}
 	if service.nativeSubscriptionHistory(id) {
 		service.removeSubscriptionHistory(response, request, id, input.RecordID)
 		return
@@ -299,4 +309,28 @@ func cleanPluginPageText(value any, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes)
+}
+
+// The legacy form endpoint uses snake-case action keys; the React client
+// consumes the typed page directly. Both expose the same rows and cursor.
+func writeNativeRecordPage(w http.ResponseWriter, data pluginPageData, legacy bool) {
+	if !legacy {
+		writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": data})
+		return
+	}
+	tables := make([]any, 0, len(data.Tables))
+	for _, table := range data.Tables {
+		actions := make([]any, len(table.RowActions))
+		for i, a := range table.RowActions {
+			if a != nil {
+				action := map[string]string{"type": a.Type, "record_id": a.RecordID}
+				if a.Proof != "" {
+					action["proof"] = a.Proof
+				}
+				actions[i] = action
+			}
+		}
+		tables = append(tables, map[string]any{"columns": table.Columns, "rows": table.Rows, "row_actions": actions})
+	}
+	writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": map[string]any{"title": data.Title, "sections": data.Sections, "tables": tables, "actions_omitted": data.ActionsOmitted, "nextCursor": data.NextCursor}})
 }
