@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import random
 import re
@@ -20,7 +21,7 @@ from app.utils import EpisodeFormat, PathUtils, StringUtils, SystemUtils, Except
 from app.utils.commons import singleton
 from app.utils.types import MediaType, SyncType, RmtMode, EventType, ProgressKey, MovieTypes
 from config import RMT_AUDIO_TRACK_EXT, RMT_SUBEXT, RMT_MEDIAEXT, RMT_FAVTYPE, RMT_MIN_FILESIZE, DEFAULT_MOVIE_FORMAT, \
-    DEFAULT_TV_FORMAT, Config
+    DEFAULT_TV_FORMAT, Config, run_go_helper
 
 lock = Lock()
 
@@ -1096,64 +1097,56 @@ class FileTransfer:
             else:
                 return os.path.join(dest, dir_name, season_name)
 
+    def check_library_inventory(self, media, totals=None, local_season=None, local_only=False):
+        movie = media.type == MediaType.MOVIE
+        enabled = self._movie_category_flag if movie else (
+            self._anime_category_flag if media.type == MediaType.ANIME else self._tv_category_flag)
+        bounds = {"season": media.begin_season, "endSeason": media.end_season,
+                  "episode": media.begin_episode, "endEpisode": media.end_episode}
+        if local_only:
+            bounds = {"season": local_season}
+        query = {"kind": media.type.value, "id": str(media.tmdb_id or ""), "title": media.title,
+                 "year": str(media.year or ""), "category": (media.category or "") if enabled else "",
+                 "imdb": media.imdb_id or "", "originalTitle": media.original_title or "",
+                 "seasonEpisode": media.get_season_episode_string(), "localOnly": local_only,
+                 "metadata": {"title": media.get_name(), "resolution": media.resource_pix,
+                              "team": media.resource_team, "customization": media.customization,
+                              "effect": media.resource_effect, "videoCodec": media.video_encode,
+                              "audioCodec": media.audio_encode, "episodes": bounds},
+                 "totals": {str(k): int(v) for k, v in (totals or {}).items() if v}}
+        if not movie and not local_only:
+            tv = self.media.get_tmdb_info(mtype=MediaType.TV, tmdbid=media.tmdb_id)
+            if not tv or str(tv.get("id")) != query["id"]:
+                raise ValueError("剧集详情暂不可用")
+            external_ids = tv.get("external_ids") or {}
+            query["tvDetail"] = {"id": tv["id"], "name": tv.get("name"),
+                                 "genres": [{"id": g.get("id")} for g in tv.get("genres") or []],
+                                 "seasons": [{"season_number": s.get("season_number"),
+                                              "episode_count": s.get("episode_count")} for s in tv.get("seasons") or []],
+                                 "original_name": tv.get("original_name"), "imdb_id": external_ids.get("imdb_id")}
+        directory = (self._movie_dir_rmt_format or "") if movie else (
+            (self._tv_dir_rmt_format or "") + "/" + (self._tv_season_rmt_format or ""))
+        extras = ("original_name", "rev_name", "edition", "part", "episode", "season_episode",
+                  "episode_title", "rating", "rating_short", "rating_long")
+        if any("{" + field + suffix in directory for field in extras for suffix in ("}", ":", "!")):
+            fields = self.get_format_dict(media)
+            query["naming"] = {key: str(fields[key]).strip() for key in extras}
+        data = run_go_helper("library-inventory", payload=json.dumps(query).encode(), timeout=85)
+        return json.loads(data)
+
     def get_no_exists_medias(self, meta_info, season=None, total_num=None):
-        """
-        根据媒体库目录结构，判断媒体是否存在
-        :param meta_info: 已识别的媒体信息
-        :param season: 季号，数字，剧集时需要
-        :param total_num: 该季总集数，剧集时需要
-        :return: 如果是电影返回已存在的电影清单：title、year，如果是剧集，则返回不存在的集的清单
-        """
-        # 电影
-        if meta_info.type == MediaType.MOVIE:
-            dir_name, _ = self.get_moive_dest_path(meta_info)
-            for dest_path in self._movie_path:
-                # 判断精选
-                fav_path = os.path.join(dest_path, RMT_FAVTYPE, dir_name)
-                fav_files = PathUtils.get_dir_files(fav_path, RMT_MEDIAEXT)
-                # 其它分类
-                if self._movie_category_flag:
-                    dest_path = os.path.join(dest_path, meta_info.category, dir_name)
-                else:
-                    dest_path = os.path.join(dest_path, dir_name)
-                files = PathUtils.get_dir_files(dest_path, RMT_MEDIAEXT)
-                if len(files) > 0 or len(fav_files) > 0:
-                    return [{'title': meta_info.title, 'year': meta_info.year}]
+        """Return movie matches or the missing episodes in one local season."""
+        movie = meta_info.type == MediaType.MOVIE
+        if not movie and (season is None or not total_num):
             return []
-        # 电视剧
-        else:
-            dir_name, season_name, _ = self.get_tv_dest_path(meta_info)
-            if not season or not total_num:
-                return []
-            if meta_info.type == MediaType.ANIME:
-                dest_paths = self._anime_path
-                category_flag = self._anime_category_flag
-            else:
-                dest_paths = self._tv_path
-                category_flag = self._tv_category_flag
-            # 总需要的集
-            total_episodes = [episode for episode in range(1, total_num + 1)]
-            # 已存在的集
-            exists_episodes = []
-            for dest_path in dest_paths:
-                if category_flag:
-                    dest_path = os.path.join(dest_path, meta_info.category, dir_name, season_name)
-                else:
-                    dest_path = os.path.join(dest_path, dir_name, season_name)
-                # 目录不存在
-                if not os.path.exists(dest_path):
-                    continue
-                files = PathUtils.get_dir_files(dest_path, RMT_MEDIAEXT)
-                for file in files:
-                    file_meta_info = MetaInfo(os.path.basename(file), filePath=file)
-                    if not file_meta_info.get_season_list() or not file_meta_info.get_episode_list():
-                        continue
-                    if file_meta_info.get_name() != meta_info.title:
-                        continue
-                    if not file_meta_info.is_in_season(season):
-                        continue
-                    exists_episodes = list(set(exists_episodes).union(set(file_meta_info.get_episode_list())))
-            return list(set(total_episodes).difference(set(exists_episodes)))
+        result = self.check_library_inventory(meta_info, {season: total_num} if not movie else {},
+                                              local_season=season, local_only=True)
+        if movie:
+            return [{"title": meta_info.title, "year": meta_info.year}] if result["complete"] else []
+        if result["complete"]:
+            return []
+        item = result["missing"][0]
+        return item["episodes"] or list(range(1, item["total_episodes"] + 1))
 
     def get_best_target_path(self, mtype, in_path=None, size=0):
         """

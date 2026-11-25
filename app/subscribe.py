@@ -566,6 +566,9 @@ class Subscribe:
                 if not over_edition:
                     # 检查是否存在
                     exist_flag, no_exists, _ = self.downloader.check_exists_medias(meta_info=media_info)
+                    if exist_flag is None:
+                        self.dbhelper.update_rss_movie_state(rssid=rssid, state='R')
+                        continue
                     # 已经存在
                     if exist_flag:
                         log.info("【Subscribe】电影 %s 已存在" % media_info.get_title_string())
@@ -686,6 +689,9 @@ class Subscribe:
                     exist_flag, library_no_exists, _ = self.downloader.check_exists_medias(
                         meta_info=media_info,
                         total_ep={season: total_ep})
+                    if exist_flag is None:
+                        self.dbhelper.update_rss_tv_state(rssid=rssid, state='R')
+                        continue
                     # 当前剧集已存在，跳过
                     if exist_flag:
                         # 已全部存在

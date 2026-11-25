@@ -233,26 +233,16 @@ class Rss:
                                         episodes = []
                                         if current_ep:
                                             episodes = list(range(int(current_ep), int(total_ep) + 1))
-                                        rss_no_exists[media_info.tmdb_id] = [
-                                            {
-                                                "season": season,
-                                                "episodes": episodes,
-                                                "total_episodes": total_ep
-                                            }
-                                        ]
-                                    else:
-                                        rss_no_exists[media_info.tmdb_id] = [
-                                            {
-                                                "season": season,
-                                                "episodes": episodes,
-                                                "total_episodes": total_ep
-                                            }
-                                        ]
                                     # 检查本地媒体库情况
                                     exist_flag, library_no_exists, _ = self.downloader.check_exists_medias(
                                         meta_info=media_info,
                                         total_ep={season: total_ep}
                                     )
+                                    if exist_flag is None:
+                                        continue
+                                    rss_no_exists[media_info.tmdb_id] = [
+                                        {"season": season, "episodes": episodes, "total_episodes": total_ep}
+                                    ]
                                     # 取交集做为缺失集
                                     rss_no_exists = Torrent.get_intersection_episodes(target=rss_no_exists,
                                                                                       source=library_no_exists,
@@ -263,7 +253,7 @@ class Rss:
                                             rss_no_exists.get(media_info.tmdb_id)
                                         ))
                                 # 本地已存在
-                                if exist_flag:
+                                if exist_flag is not False:
                                     continue
                             # 洗版模式
                             else:

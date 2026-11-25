@@ -480,6 +480,8 @@ class DoubanSync(_IPluginModule):
                                 continue
                             # 检查是否存在，电视剧返回不存在的集清单
                             exist_flag, no_exists, _ = self.downloader.check_exists_medias(meta_info=media_info)
+                            if exist_flag is None:
+                                continue
                             # 已经存在
                             if exist_flag:
                                 # 更新为已下载状态

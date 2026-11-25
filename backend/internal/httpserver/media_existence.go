@@ -88,7 +88,7 @@ func (service subscriptionService) nativeMediaExistence(ctx context.Context, met
 			if meta.Episodes.EndSeason != nil {
 				end = *meta.Episodes.EndSeason
 			}
-			if begin < 0 || end < begin || end-begin > 1000 {
+			if begin < 0 || end < begin || end > 10000 || end-begin > 1000 {
 				return mediaserver.Coverage{}, mediaserver.ErrConfiguration
 			}
 			for season := begin; season <= end; season++ {

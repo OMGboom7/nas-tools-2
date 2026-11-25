@@ -2833,6 +2833,8 @@ class WebAction:
         ).test_rss_articles(taskid=taskid, title=title)
         if not media_info:
             return {"code": 0, "data": {"name": "无法识别"}}
+        if exist_flag is None:
+            return {"code": -1, "msg": "暂时无法核实媒体库库存"}
         media_dict = self.mediainfo_dict(media_info)
         media_dict.update({"match_flag": match_flag, "exist_flag": exist_flag})
         return {"code": 0, "data": media_dict}

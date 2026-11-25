@@ -24,6 +24,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "library-inventory" {
+		if err := httpserver.LibraryInventoryCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("library inventory unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "tmdb-detail" {
 		if err := httpserver.TMDBDetailCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("media details unavailable")

@@ -385,8 +385,8 @@ def __search_media(in_from, media_info, user_id, user_name, scope, choice):
         Message().send_channel_msg(expected_scope=scope, channel=in_from,
                                    title="\n".join(messages),
                                    user_id=user_id)
-    # 已经存在
-    if exist_flag:
+    # Only a verified gap can start a search or an automatic subscription.
+    if exist_flag is not False:
         return
 
     # 开始搜索

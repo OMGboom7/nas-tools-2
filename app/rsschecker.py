@@ -257,6 +257,8 @@ class RssChecker(object):
                         if media_info.type == MediaType.MOVIE:
                             exist_flag, no_exists, _ = self.downloader.check_exists_medias(meta_info=media_info,
                                                                                            no_exists=no_exists)
+                            if exist_flag is None:
+                                continue
                             if exist_flag:
                                 log.info("【RssChecker】电影 %s 已存在" % media_info.get_title_string())
                                 continue
@@ -264,6 +266,8 @@ class RssChecker(object):
                             exist_flag, no_exists, _ = self.downloader.check_exists_medias(meta_info=media_info,
                                                                                            no_exists=no_exists)
                             # 当前剧集已存在，跳过
+                            if exist_flag is None:
+                                continue
                             if exist_flag:
                                 # 已全部存在
                                 if not no_exists or not no_exists.get(

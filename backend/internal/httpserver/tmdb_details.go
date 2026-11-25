@@ -15,15 +15,16 @@ import (
 )
 
 type tmdbMediaDetails struct {
-	Attributes   map[string]any `json:"-"`
-	EnglishTitle *string        `json:"-"`
-	ID           int64          `json:"id"`
-	Title        string         `json:"title"`
-	Name         string         `json:"name"`
-	ReleaseDate  string         `json:"release_date"`
-	FirstAirDate string         `json:"first_air_date"`
-	SeasonCount  int            `json:"number_of_seasons"`
-	ExternalIDs  *struct {
+	inventoryNames map[string]string
+	Attributes     map[string]any `json:"-"`
+	EnglishTitle   *string        `json:"-"`
+	ID             int64          `json:"id"`
+	Title          string         `json:"title"`
+	Name           string         `json:"name"`
+	ReleaseDate    string         `json:"release_date"`
+	FirstAirDate   string         `json:"first_air_date"`
+	SeasonCount    int            `json:"number_of_seasons"`
+	ExternalIDs    *struct {
 		ID     *int64  `json:"id"`
 		IMDbID *string `json:"imdb_id"`
 	} `json:"external_ids"`
@@ -54,6 +55,11 @@ func fetchNativeTMDBDetailsLanguage(ctx context.Context, store *config.Store, tr
 	if err != nil {
 		return detail, err
 	}
+	return decodeTMDBDetails(contents, id)
+}
+
+func decodeTMDBDetails(contents []byte, id string) (tmdbMediaDetails, error) {
+	var detail tmdbMediaDetails
 	if err := json.Unmarshal(contents, &detail); err != nil || strconv.FormatInt(detail.ID, 10) != id {
 		return detail, errors.New("invalid TMDB details")
 	}

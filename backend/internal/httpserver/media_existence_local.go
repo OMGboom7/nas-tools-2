@@ -159,9 +159,11 @@ func localMediaInventory(ctx context.Context, media map[string]any, meta mediame
 	if identity.TV {
 		values["original_title"] = localLibraryName(text(detail.Attributes["original_name"]), media)
 	}
-	directory, err := renderLocalDirectory(directoryFormat, values)
-	if err != nil {
-		return result, err
+	// Older volumes may use these additional organizer fields in a directory.
+	for _, field := range []string{"original_name", "rev_name", "edition", "part", "episode", "season_episode", "episode_title", "rating", "rating_short", "rating_long"} {
+		if v, ok := detail.inventoryNames[field]; ok {
+			values[field] = v
+		}
 	}
 	group := ""
 	if len(category) > 0 {
@@ -178,7 +180,7 @@ func localMediaInventory(ctx context.Context, media map[string]any, meta mediame
 			if meta.Episodes.EndSeason != nil {
 				end = *meta.Episodes.EndSeason
 			}
-			if *meta.Episodes.Season < 0 || end < *meta.Episodes.Season || end-*meta.Episodes.Season > 1000 {
+			if *meta.Episodes.Season < 0 || end < *meta.Episodes.Season || end > 10000 || end-*meta.Episodes.Season > 1000 {
 				return result, mediaserver.ErrConfiguration
 			}
 			for number := *meta.Episodes.Season; number <= end; number++ {
@@ -214,9 +216,15 @@ func localMediaInventory(ctx context.Context, media map[string]any, meta mediame
 			return result, mediaserver.ErrConfiguration
 		}
 		for _, season := range seasons {
-			paths := []string{filepath.Join(group, directory)}
 			if identity.TV {
 				values["season"] = strconv.Itoa(season)
+			}
+			directory, err := renderLocalDirectory(directoryFormat, values)
+			if err != nil {
+				return result, err
+			}
+			paths := []string{filepath.Join(group, directory)}
+			if identity.TV {
 				seasonDirectory, err := renderLocalDirectory(parts[len(parts)-2], values)
 				if err != nil {
 					return result, err
@@ -263,8 +271,18 @@ func localMediaInventory(ctx context.Context, media map[string]any, meta mediame
 					if result.Episodes[season] == nil {
 						result.Episodes[season] = map[int]bool{}
 					}
-					for episode := *fileMeta.Episodes.Episode; episode <= end; episode++ {
-						result.Episodes[season][episode] = true
+					chain, err := mediameta.ExplicitEpisodeChain(filepath.Base(file))
+					if err != nil {
+						return result, err
+					}
+					if len(chain) > 0 {
+						for _, episode := range chain {
+							result.Episodes[season][episode] = true
+						}
+					} else {
+						for episode := *fileMeta.Episodes.Episode; episode <= end; episode++ {
+							result.Episodes[season][episode] = true
+						}
 					}
 					result.ItemIDs = []string{"local"}
 				}
