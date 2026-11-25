@@ -14,6 +14,7 @@ import (
 )
 
 type pluginService struct {
+	archiveMedia      *mediaSyncAPI
 	archiveConfigPath string
 	archiveContainer  bool
 	legacyURL         string
@@ -124,6 +125,14 @@ func (service pluginService) mutate(response http.ResponseWriter, request *http.
 			action = "install"
 		}
 		service.serveSyncTimerPlugin(response, request, action)
+		return
+	}
+	if service.nativeArchiveRunner(request.PathValue("id")) {
+		action := "uninstall"
+		if install {
+			action = "install"
+		}
+		service.serveArchivePlugin(response, request, action)
 		return
 	}
 	if service.nativeAutoBackup(request.PathValue("id")) {

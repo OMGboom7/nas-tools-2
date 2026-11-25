@@ -66,6 +66,10 @@ func (service pluginService) serveConfig(response http.ResponseWriter, request *
 		service.serveSyncTimerPlugin(response, request, "get")
 		return
 	}
+	if service.nativeArchiveRunner(request.PathValue("id")) {
+		service.serveArchivePlugin(response, request, "get")
+		return
+	}
 	if service.nativeAutoBackup(request.PathValue("id")) {
 		service.serveAutoBackupPlugin(response, request, "get")
 		return
@@ -164,6 +168,10 @@ func (service pluginService) updateConfig(response http.ResponseWriter, request 
 	}
 	if service.nativeSyncTimer(request.PathValue("id")) {
 		service.serveSyncTimerPlugin(response, request, "save")
+		return
+	}
+	if service.nativeArchiveRunner(request.PathValue("id")) {
+		service.serveArchivePlugin(response, request, "save")
 		return
 	}
 	if service.nativeAutoBackup(request.PathValue("id")) {

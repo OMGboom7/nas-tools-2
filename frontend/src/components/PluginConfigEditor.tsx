@@ -111,6 +111,7 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
     {state.kind === "ready" && plugin.id === "TorrentRemover" && <p className="editor-note">保存会撤销原联动删除授权。请回到插件页审核下载器范围，启用后仅接收新的源文件删除事实。</p>}
     {state.kind === "ready" && plugin.id === "TorrentMark" && <p className="editor-note">保存会撤销原种子标记授权。请回到插件页核对下载器后启用。</p>}
     {state.kind === "ready" && plugin.id === "SyncTimer" && <p className="editor-note">保存会撤销此前的定时授权。请到整理页的自动同步区域审核来源并启用。</p>}
+    {state.kind === "ready" && plugin.id === "MediaLibraryArchive" && plugin.native && <p className="editor-note">保存后会按所选周期或单次设置生成归档。每次成功后按数量清理最早的归档，包括旧版生成的文件。留空默认保留 10 份，填写 0 会清理全部。</p>}
     {state.kind === "ready" && plugin.id === "AutoBackup" && <p className="editor-note">保存配置后请在自动备份管理中单独确认执行。保留数量只用于校验通过且有记录的 Go 自动备份。</p>}
     {state.kind === "ready" && plugin.id === "CookieCloud" && <p className="editor-note">修改配置会撤销旧的同步授权。保存后可在 CookieCloud 同步管理中确认接收方，单独测试、同步或启用周期。</p>}
     {state.kind==="ready"&&plugin.id==="Webhook"&&<p className="editor-note">此插件会向指定地址发送事件数据；原始媒体回调可能含路径、站点链接、用户和私有字段。每次启用需重新确认；关闭或卸载阻止尚未发送的待办，不能撤回已接收的操作。响应丢失请先只读核对配置与原回执。<button type="button" disabled={saving} onClick={()=>void load()}>只读刷新并重置确认</button></p>}

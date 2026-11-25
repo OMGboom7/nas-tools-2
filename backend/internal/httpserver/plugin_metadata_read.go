@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/0xforee/nas-tools/backend/internal/mediaarchive"
 )
 
 func (service pluginService) nativeMetadataInstalled(ctx context.Context) ([]string, error) {
@@ -222,6 +224,31 @@ func (service pluginService) metadataLegacyListRoute() http.Handler {
 				detail := syncTimerDetail(claims.Username, settings)
 				running, known := service.syncTimerRunning(request.Context())
 				result[id] = map[string]any{"name": detail.Name, "version": "1.0", "config": detail.Values, "fields": indexerLegacyFields(detail), "page": id, "state": running, "stateKnown": known, "native": true, "fingerprint": detail.Meta.Fingerprint}
+				continue
+			}
+			if service.nativeArchiveRunner(id) {
+				raw, err := service.system.ReadMany(request.Context(), archiveKeys)
+				if err != nil {
+					archivePageError(response, err)
+					return
+				}
+				running, known := service.archiveStatus(raw)
+				row := map[string]any{"name": "媒体库归档", "version": "1.1", "page": id, "state": running, "stateKnown": known, "native": true}
+				if administrator {
+					claims, err := service.auth.service.VerifyToken(request.Header.Get("Authorization"))
+					if err != nil {
+						writeAPIError(response, 401, 401, "请重新登录")
+						return
+					}
+					cfg, _, err := mediaarchive.Parse(raw[archiveSettingsKey])
+					if err != nil {
+						archivePageError(response, err)
+						return
+					}
+					detail := service.archiveSettings(claims.Username, raw, cfg)
+					row["fields"], row["config"], row["fingerprint"] = indexerLegacyFields(detail), detail.Values, detail.Meta.Fingerprint
+				}
+				result[id] = row
 				continue
 			}
 			if service.nativeAutoBackup(id) {

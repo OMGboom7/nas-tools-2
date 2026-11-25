@@ -98,6 +98,13 @@ func (s pluginService) serveArchivePage(w http.ResponseWriter, r *http.Request, 
 			table.RowActions = append(table.RowActions, &pluginPageRowAction{Type: "delete", RecordID: f.Name, Confirmation: "typeRecordId", Proof: f.Proof})
 		}
 	}
+	if s.nativeArchiveRunner(mediaarchive.Plugin) {
+		if raw, err := s.system.Get(r.Context(), archiveControlKey); err == nil {
+			if control, err := decodeArchiveControl(raw); err == nil && control.Last != "" {
+				data.Sections = append(data.Sections, control.Last)
+			}
+		}
+	}
 	data.Tables = []pluginPageTable{table}
 	writeNativeRecordPage(w, data, legacy)
 }

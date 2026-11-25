@@ -52,6 +52,10 @@ func (api mediaSyncAPI) connection() (*mediaserver.Client, string, string, strin
 	if err != nil {
 		return nil, "", "", "", err
 	}
+	return api.connectionFromSnapshot(snapshot)
+}
+
+func (api mediaSyncAPI) connectionFromSnapshot(snapshot map[string]any) (*mediaserver.Client, string, string, string, error) {
 	kind := strings.ToLower(strings.TrimSpace(text(objectValue(snapshot["media"])["media_server"])))
 	if kind == "" {
 		kind = "emby"

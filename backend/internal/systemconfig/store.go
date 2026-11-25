@@ -169,12 +169,17 @@ func readMany(ctx context.Context, tx *sql.Tx, keys []string) (map[string]string
 }
 
 func (store *Store) UpdateMany(ctx context.Context, keys []string, transform func(map[string]string) (map[string]string, error)) error {
+	return store.Transaction(ctx, func(tx *sql.Tx) error { return UpdateManyTx(ctx, tx, keys, transform) })
+}
+
+// Transaction can commit settings and the business events they produce together.
+func (store *Store) Transaction(ctx context.Context, apply func(*sql.Tx) error) error {
 	tx, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := UpdateManyTx(ctx, tx, keys, transform); err != nil {
+	if err = apply(tx); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -100,6 +100,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 		waitTorrentMark := startTorrentMarkWorker(workerContext, runner.torrentMark)
 		waitTransferSchedule := startTransferScheduler(workerContext, runner.torrentTransfer)
 		waitCookieCloud := startCookieCloudWorker(workerContext, runner.cookieCloud)
+		waitArchive := startMediaArchiveWorker(workerContext, runner.archivePlugin)
 		waitAutoBackup := startAutoBackupWorker(workerContext, runner.autoBackup)
 		wait = func() {
 			waitExisting()
@@ -127,6 +128,7 @@ func newRuntimeHandler(workerContext context.Context, cfg config.Config, transpo
 			waitTransferSchedule()
 			waitCookieCloud()
 			waitAutoBackup()
+			waitArchive()
 		}
 	}
 	return handler, wait, nil
@@ -732,6 +734,8 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins.torrentMark = markAPI
 	plugins.torrentTransfer = &transferAPI
 	plugins.torrentRemover = removalAPI
+	plugins.archiveMedia = &mediaSync
+	rssRunner.archivePlugin = &plugins
 	plugins.autoBackup = backup
 	plugins.syncTimer = &organizer
 	movieLikes := &movieLikeAPI{organizer: &organizer, system: nativeSystemConfig, transport: transport}

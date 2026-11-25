@@ -18,9 +18,25 @@ import (
 
 const Supported = true
 
-func openDirectory(base string, components []string) (*os.File, error) {
+func openDirectory(base string, components []string, create bool) (*os.File, error) {
 	// Resolve the operator-configured root, then pin its directory chain.
 	// The two fixed children of the default root must be actual directories.
+	// Existing configured symlinks are resolved as before. For a missing
+	// custom directory, create the absent suffix relative to its pinned parent.
+	base, err := filepath.Abs(base)
+	if err != nil {
+		return nil, err
+	}
+	if create {
+		for {
+			_, err := os.Lstat(base)
+			if !errors.Is(err, os.ErrNotExist) {
+				break
+			}
+			components = append([]string{filepath.Base(base)}, components...)
+			base = filepath.Dir(base)
+		}
+	}
 	resolved, err := filepath.EvalSymlinks(base)
 	if err != nil {
 		return nil, err
@@ -35,8 +51,13 @@ func openDirectory(base string, components []string) (*os.File, error) {
 		return nil, err
 	}
 	parts := strings.FieldsFunc(absolute, func(c rune) bool { return c == '/' })
-	for _, part := range append(parts, components...) {
+	for i, part := range append(parts, components...) {
 		next, e := unix.Openat(fd, part, flags, 0)
+		if errors.Is(e, unix.ENOENT) && create && i >= len(parts) {
+			if e = unix.Mkdirat(fd, part, 0700); e == nil || errors.Is(e, unix.EEXIST) {
+				next, e = unix.Openat(fd, part, flags, 0)
+			}
+		}
 		unix.Close(fd)
 		if e != nil {
 			return nil, e

@@ -37,6 +37,7 @@ type rssRunAPI struct {
 	torrentMark     *torrentMarkAPI
 	torrentTransfer *torrentTransferAPI
 	torrentRemover  *torrentRemovalAPI
+	archivePlugin   *pluginService
 	autoBackup      *autoBackupAPI
 	indexerPlugins  *nativeIndexerPlugins
 	mediaSync       *mediaSyncAPI
