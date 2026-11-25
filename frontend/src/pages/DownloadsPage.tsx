@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, addMagnetDownload, addSiteTorrentLink, addTorrentDownload, controlDownload, getDownloads, getSites, type AuthSession, type DownloadsData, type DownloadTask, type SiteSummary } from "../api/client";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { ManualDownloadReceipts } from "../components/ManualDownloadReceipts";
+import { TorrentTransferReceipts } from "../components/TorrentTransferReceipts";
 import { TransmissionProfiles } from "../components/TransmissionProfiles";
 import { SeedingPolicies } from "../components/SeedingPolicies";
 import { PTAdmission } from "../components/PTAdmission";
@@ -172,6 +173,7 @@ export function DownloadsPage({ session, currentPath, onNavigate, onLogout, onSe
         {actionError && <div className="data-warning" role="alert">{actionError}</div>}
         {actionNotice && <div className="data-notice" role="status">{actionNotice}</div>}
         <ManualDownloadReceipts token={session.token} onSessionExpired={onSessionExpired} />
+        {String(session.user.userid) === "0" && <TorrentTransferReceipts key={"transfer-receipts-" + session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         <TransmissionProfiles token={session.token} onSessionExpired={onSessionExpired} />
         {String(session.user.userid) === "0" && <QbProfiles key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
         {String(session.user.userid) === "0" && <PTAdmission key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}

@@ -1706,3 +1706,37 @@ export async function controlLegacyOrganizationBatch(token:string,batch:Organiza
   if(!result.success||result.code!==0||result.data?.id!==batch.id)throw new ApiError(result.message || "批次操作回执未核实，只读刷新、不自动重发",result.code);
   return result.data;
 }
+
+export type TorrentTransferAction = {
+  action: "add" | "verify" | "start" | "remove-source";
+  state: "pending" | "acknowledged" | "unknown";
+  updated: string;
+};
+
+export type TorrentTransferReceipt = {
+  receipt: string;
+  targetStage?: "bound" | "checking" | "verified";
+  actions: TorrentTransferAction[];
+};
+
+export async function getTorrentTransferReceipt(token: string, id: string, signal?: AbortSignal): Promise<TorrentTransferReceipt> {
+  if (!/^[a-f0-9]{64}$/.test(id)) throw new ApiError("请输入 64 位转种回执编号", 400);
+  const response = await fetch("/api/v1/torrent-transfer/records/" + id, {
+    headers: { Authorization: token }, cache: "no-store", signal,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new ApiError(error?.message || "转种回执查询失败", response.status);
+  }
+  const body = await response.json();
+  const record = body?.result;
+  if (body?.code !== 0 || record?.receipt !== id ||
+      (record.targetStage !== undefined && !["bound", "checking", "verified"].includes(record.targetStage)) ||
+      !Array.isArray(record.actions) || !record.actions.every((item: TorrentTransferAction) =>
+        item && ["add", "verify", "start", "remove-source"].includes(item.action) &&
+        ["pending", "acknowledged", "unknown"].includes(item.state) &&
+        typeof item.updated === "string" && Number.isFinite(Date.parse(item.updated)))) {
+    throw new ApiError("转种回执内容无效", 502);
+  }
+  return record;
+}
