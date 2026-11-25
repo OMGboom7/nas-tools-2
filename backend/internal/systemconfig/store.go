@@ -169,14 +169,23 @@ func readMany(ctx context.Context, tx *sql.Tx, keys []string) (map[string]string
 }
 
 func (store *Store) UpdateMany(ctx context.Context, keys []string, transform func(map[string]string) (map[string]string, error)) error {
-	if transform == nil {
-		return ErrInvalidSetting
-	}
 	tx, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := UpdateManyTx(ctx, tx, keys, transform); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UpdateManyTx applies the same verified writes in the caller's transaction
+// when a configuration change must commit with a related business event.
+func UpdateManyTx(ctx context.Context, tx *sql.Tx, keys []string, transform func(map[string]string) (map[string]string, error)) error {
+	if tx == nil || transform == nil {
+		return ErrInvalidSetting
+	}
 	current, err := readMany(ctx, tx, keys)
 	if err != nil {
 		return err
@@ -230,5 +239,5 @@ func (store *Store) UpdateMany(ctx context.Context, keys []string, transform fun
 			return ErrInvalidSetting
 		}
 	}
-	return tx.Commit()
+	return nil
 }

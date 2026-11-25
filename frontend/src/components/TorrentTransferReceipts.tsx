@@ -39,7 +39,7 @@ export function TorrentTransferReceipts({ token, onSessionExpired }: { token: st
 
   return <details>
     <summary>自动转种计划与回执</summary>
-    <TorrentTransferSchedule token={token} expired={onSessionExpired} />
+    <TorrentTransferSchedule token={token} expired={onSessionExpired} select={value => void lookup(value)} />
     <TorrentTransferReview token={token} onSessionExpired={onSessionExpired} select={value => void lookup(value)} />
     <form className="download-magnet-form" onSubmit={event => { event.preventDefault(); void lookup(id); }}>
       <label>回执编号<input value={id} required pattern="[a-fA-F0-9]{64}" placeholder="64 位回执编号"

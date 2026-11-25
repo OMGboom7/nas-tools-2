@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
@@ -163,12 +166,28 @@ func (api torrentTransferAPI) processTransferBatch(parent context.Context) error
 	if err != nil {
 		return err
 	}
-	return api.system.UpdateMany(ctx, transferScheduleKeys, func(current map[string]string) (map[string]string, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	total := batch.Submitted + batch.Existing + batch.Failed + batch.Unknown
+	if scope.settings.Notify && total > 0 {
+		message := fmt.Sprintf("提交阶段共 %d 项，暂停添加已应答 %d 项，目标已有 %d 项，失败 %d 项，待核实 %d 项。批次编号：%s", total, batch.Submitted, batch.Existing, batch.Failed, batch.Unknown, batch.ID)
+		if err := bus.EmitData(ctx, tx, "plugin_message", batch.ID, batch.ID, "【移转做种任务提交结果】", message, map[string]string{"plugin": torrenttransfer.Plugin}); err != nil {
+			return err
+		}
+	}
+	err = systemconfig.UpdateManyTx(ctx, tx, transferScheduleKeys, func(current map[string]string) (map[string]string, error) {
 		if current[transferScheduleKey] != raw || current[torrenttransfer.ConfigKey] != scope.raw || current["UserInstalledPlugins"] != scope.installedRaw {
 			return nil, torrenttransfer.ErrState
 		}
 		return map[string]string{transferScheduleKey: string(data)}, nil
 	})
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type transferBatchResult struct {

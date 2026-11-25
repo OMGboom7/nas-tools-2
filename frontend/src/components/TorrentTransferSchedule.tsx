@@ -8,12 +8,36 @@ type Schedule = {
 };
 const base = "/api/v1/torrent-transfer/schedule";
 
-export function TorrentTransferSchedule({token, expired}: {token: string; expired: () => void}) {
+export function TorrentTransferSchedule({token, expired, select}: {token: string; expired: () => void; select: (receipt: string) => void}) {
   const [status, setStatus] = useState<Schedule>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [batchId, setBatchId] = useState("");
+  const [receipts, setReceipts] = useState<string[]>();
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
+  async function lookupBatch(id: string) {
+    if (request.current || !/^[a-f0-9]{64}$/.test(id)) return;
+    const c = new AbortController();
+    request.current = c;
+    setBatchId(id);
+    setBusy(true);
+    setError("");
+    setReceipts(undefined);
+    try {
+      const response = await fetch("/api/v1/torrent-transfer/batches/" + id, {headers:{Authorization:token}, cache:"no-store", signal:c.signal});
+      const body = await response.json();
+      if (!response.ok) throw new ApiError(body?.message || "读取批次失败", response.status);
+      const batch = body?.result;
+      if (body?.code !== 0 || batch?.id !== id || !Array.isArray(batch.receipts) ||
+          !batch.receipts.every((entry: unknown) => typeof entry === "string" && /^[a-f0-9]{64}$/.test(entry))) throw new Error();
+      if (!c.signal.aborted) setReceipts(batch.receipts);
+    } catch (e) {
+      if (c.signal.aborted) return;
+      if (e instanceof ApiError && e.code === 401) expired();
+      else setError(e instanceof ApiError ? e.message : "无法读取批次回执");
+    } finally { request.current = null; if (!c.signal.aborted) setBusy(false); }
+  }
   async function operate(action?: "activate" | "stop") {
     if (request.current || (action && !status)) return;
     if (action && !window.confirm(action === "stop" ? "停止自动转种调度？" :
@@ -55,9 +79,15 @@ export function TorrentTransferSchedule({token, expired}: {token: string; expire
       {(status.onlyOnce || status.control.once) && <p>已配置单次运行</p>}
       {status.control.pending && <p>等待执行的批次 <code>{status.control.pending.id}</code></p>}
       {status.control.latest && <p>最近批次 <code>{status.control.latest.id}</code> · 暂停添加已应答 {status.control.latest.submitted} · 目标已有 {status.control.latest.existing} · 待核实 {status.control.latest.unknown} · 失败 {status.control.latest.failed}</p>}
+      {status.control.latest && <button type="button" disabled={busy} onClick={() => void lookupBatch(status.control.latest!.id)}>查看最近批次回执</button>}
       {status.control.actor ? <button disabled={busy} onClick={() => void operate("stop")}>停止调度</button> :
         <button disabled={busy || !status.ready} onClick={() => void operate("activate")}>启用调度</button>}
     </div>}
+    <form onSubmit={e => { e.preventDefault(); void lookupBatch(batchId); }}>
+      <label>批次编号<input value={batchId} disabled={busy} required pattern="[a-f0-9]{64}" onChange={e => { setBatchId(e.target.value.trim().toLowerCase()); setReceipts(undefined); }} /></label>
+      <button type="submit" disabled={busy}>查询批次回执</button>
+    </form>
+    {receipts && (receipts.length ? <ul>{receipts.map(id => <li key={id}><button type="button" onClick={() => select(id)}>{id}</button></li>)}</ul> : <p>此批次没有候选任务回执。</p>)}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

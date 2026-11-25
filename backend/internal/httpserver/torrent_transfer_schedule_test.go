@@ -12,6 +12,10 @@ import (
 )
 
 func TestTransferScheduleConsumesOnceAndKeepsPendingSlot(t *testing.T) {
+	t.Run("notify", func(t *testing.T) { exerciseTransferSchedule(t, true) })
+	t.Run("silent", func(t *testing.T) { exerciseTransferSchedule(t, false) })
+}
+func exerciseTransferSchedule(t *testing.T, notify bool) {
 	m := newMarkFixture(t)
 	ctx := t.Context()
 	ds, sys := m.api.downloaders, m.api.system
@@ -22,7 +26,7 @@ func TestTransferScheduleConsumesOnceAndKeepsPendingSlot(t *testing.T) {
 	if err := sys.Set(ctx, "UserInstalledPlugins", `["TorrentTransfer"]`); err != nil {
 		t.Fatal(err)
 	}
-	cfg := torrenttransfer.Settings{Enable: true, OnlyOnce: true, Cron: "0 * * * *", From: []string{strconv.FormatInt(m.item.ID, 10)}, To: []string{strconv.FormatInt(dst.ID, 10)}, TorrentPath: t.TempDir()}
+	cfg := torrenttransfer.Settings{Enable: true, Notify: notify, OnlyOnce: true, Cron: "0 * * * *", From: []string{strconv.FormatInt(m.item.ID, 10)}, To: []string{strconv.FormatInt(dst.ID, 10)}, TorrentPath: t.TempDir()}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +88,45 @@ func TestTransferScheduleConsumesOnceAndKeepsPendingSlot(t *testing.T) {
 	if _, err = db.Exec("INSERT INTO GO_TORRENT_TRANSFER_BATCHES VALUES(?,?)", st.Pending.ID, string(manifest)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.Exec(`CREATE TRIGGER fail_transfer_finish BEFORE UPDATE ON SYSTEM_DICT WHEN NEW.KEY='GoTorrentTransferSchedule' BEGIN SELECT RAISE(ABORT,'fixture'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.processTransferBatch(ctx); err == nil {
+		t.Fatal("injected failure did not abort")
+	}
+	countMessages := func() int {
+		t.Helper()
+		var exists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='GO_BUSINESS_EVENTS')").Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			return 0
+		}
+		var n int
+		if err := db.QueryRow("SELECT COUNT(*) FROM GO_BUSINESS_EVENTS WHERE REFERENCE=? AND KIND='plugin_message'", st.Pending.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := countMessages(); n != 0 {
+		t.Fatal("rolled-back notification", n)
+	}
+	if _, err = db.Exec("DROP TRIGGER fail_transfer_finish"); err != nil {
+		t.Fatal(err)
+	}
 	if err := api.processTransferBatch(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if err := api.processTransferBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	if notify {
+		want = 1
+	}
+	if n := countMessages(); n != want {
+		t.Fatal("messages", n, "want", want)
 	}
 	values, err = sys.ReadMany(ctx, transferScheduleKeys)
 	if err != nil {
