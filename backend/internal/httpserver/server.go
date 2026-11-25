@@ -378,8 +378,12 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		nativeBrowser = browserruntime.New(cfg.BrowserBinary)
 	}
 	if nativeSearchResources != nil {
+		searchBrowser := nativeBrowser
+		if searchBrowser == nil && cfg.BrowserBinary != "" {
+			searchBrowser = browserruntime.New(cfg.BrowserBinary)
+		}
 		search.native = &nativeExternalResourceSearch{system: nativeSystemConfig, auth: nativeAuth, resources: nativeSearchResources, transport: transport, images: images,
-			siteLimits: siteLimits, browser: nativeBrowser,
+			siteLimits: siteLimits, browser: searchBrowser,
 			sites: nativeSites, config: nativeConfig, catalogPath: cfg.SiteCatalogPath,
 			recognition: &mediaNameAPI{service: subscriptionService{client: &http.Client{Transport: transport}, configStore: nativeConfig, systemConfig: nativeSystemConfig, words: nativeWords}, categories: mediaCategoryAPI{config: nativeConfig, configPath: cfg.ApplicationConfigPath, defaultPath: cfg.DefaultCategoryPath}},
 		}

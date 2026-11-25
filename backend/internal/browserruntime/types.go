@@ -78,6 +78,14 @@ func New(binary string) *Engine {
 	}
 	if binary == "auto" {
 		choices := []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable"}
+		if runtime.GOOS == "windows" {
+			choices = append(choices, "chrome.exe")
+			for _, variable := range []string{"ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"} {
+				if root := os.Getenv(variable); filepath.IsAbs(root) {
+					choices = append(choices, filepath.Join(root, "Google", "Chrome", "Application", "chrome.exe"))
+				}
+			}
+		}
 		if runtime.GOOS == "darwin" {
 			choices = append(choices, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 		}
@@ -97,7 +105,7 @@ func (e *Engine) Available() bool {
 		return false
 	}
 	info, err := os.Stat(e.binary)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0
+	return err == nil && info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0111 != 0)
 }
 func (e *Engine) Active() int { e.mu.Lock(); defer e.mu.Unlock(); return e.active }
 func Hash(v any) string {

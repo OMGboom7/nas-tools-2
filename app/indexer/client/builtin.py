@@ -5,10 +5,9 @@ import subprocess
 
 import log
 from app.conf import SystemConfig
-from app.helper import ProgressHelper, ChromeHelper, DbHelper
+from app.helper import ProgressHelper, DbHelper
 from app.indexer.client._base import _IIndexClient
 from app.indexer.indexerConf import catalog_resources
-from app.indexer.client._render_spider import RenderSpider
 from app.indexer.client._plugins import PluginsSpider
 from app.sites import Sites
 from app.utils import MteamUtils, StringUtils
@@ -31,7 +30,6 @@ class BuiltinIndexer(_IIndexClient):
     sites = None
     dbhelper = None
     user = None
-    chromehelper = None
     systemconfig = None
 
     def __init__(self, config=None):
@@ -45,7 +43,6 @@ class BuiltinIndexer(_IIndexClient):
         self.progress = ProgressHelper()
         self.dbhelper = DbHelper()
         self.user = ProUser()
-        self.chromehelper = ChromeHelper()
         self.systemconfig = SystemConfig()
         self._show_more_sites = Config().get_config("laboratory").get('show_more_sites')
         self.quick_search = Config().get_config("laboratory").get('quick_search')
@@ -68,8 +65,6 @@ class BuiltinIndexer(_IIndexClient):
         """
         获取单个索引器配置
         """
-        # 检查浏览器状态
-        chrome_ok = self.chromehelper.get_status()
         site = self.sites.get_sites(siteurl=url)
         if site:
             return self.user.get_indexer(url=url,
@@ -81,7 +76,7 @@ class BuiltinIndexer(_IIndexClient):
                                          pri=site.get('pri'),
                                          public=False,
                                          proxy=site.get("proxy"),
-                                         render=False if not chrome_ok else site.get("chrome"))
+                                         render=site.get("chrome"))
         return None
 
     def get_indexers(self, check=True, public=True):
@@ -89,15 +84,13 @@ class BuiltinIndexer(_IIndexClient):
         _indexer_domains = []
         # 选中站点配置
         indexer_sites = self.systemconfig.get(SystemConfigKey.UserIndexerSites) or []
-        # 检查浏览器状态
-        chrome_ok = self.chromehelper.get_status()
         # 私有站点
         for site in self.sites.get_sites():
             url = site.get("signurl") or site.get("rssurl")
             cookie = site.get("cookie")
             if not url or not cookie:
                 continue
-            render = False if not chrome_ok else site.get("chrome")
+            render = site.get("chrome")
             indexer = self.user.get_indexer(url=url,
                                             siteid=site.get("id"),
                                             cookie=cookie,
@@ -185,11 +178,7 @@ class BuiltinIndexer(_IIndexClient):
                     error_flag = True
                 else:
                     error_flag, result_array = self.__site_resources(indexer, search_word)
-            elif indexer.parser == "RenderSpider":
-                error_flag, result_array = RenderSpider(indexer).search(
-                    keyword=search_word,
-                    mtype=match_media.type if match_media and match_media.tmdb_info else None)
-            elif indexer.parser != "HaiDanSpider" and PluginsSpider().status(indexer=indexer):
+            elif indexer.parser not in ("HaiDanSpider", "RenderSpider") and PluginsSpider().status(indexer=indexer):
                 error_flag, result_array = PluginsSpider().search(keyword=search_word, indexer=indexer)
             else:
                 kind = match_media.type if match_media and match_media.tmdb_info else None
@@ -268,12 +257,9 @@ class BuiltinIndexer(_IIndexClient):
         # 计算耗时
         start_time = datetime.datetime.now()
 
-        if indexer.parser == "RenderSpider":
-            error_flag, result_array = RenderSpider(indexer).search(keyword=keyword,
-                                                                    page=page)
-        elif indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech"):
+        if indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech"):
             error_flag, result_array = self.__site_resources(indexer, keyword, page)
-        elif indexer.parser != "HaiDanSpider" and PluginsSpider().status(indexer=indexer):
+        elif indexer.parser not in ("HaiDanSpider", "RenderSpider") and PluginsSpider().status(indexer=indexer):
             error_flag, result_array = PluginsSpider().search(keyword=keyword, indexer=indexer, page=page)
         else:
             error_flag, result_array = catalog_resources(indexer, keyword, page)

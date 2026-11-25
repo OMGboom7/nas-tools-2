@@ -18,6 +18,7 @@ type Definition struct {
 	Domain   string          `json:"domain"`
 	Public   bool            `json:"public"`
 	Encoding string          `json:"encoding"`
+	Render   json.RawMessage `json:"render,omitempty"`
 	Parser   string          `json:"parser"`
 	Search   json.RawMessage `json:"search"`
 	Category json.RawMessage `json:"category"`

@@ -112,7 +112,7 @@ func BuildResourcePage(definition indexercatalog.Definition, keyword string, pag
 }
 
 func buildPage(definition indexercatalog.Definition, keyword string, page int, kind string, browse, batch bool) (Plan, error) {
-	if definition.Parser != "" && definition.Parser != "HaiDanSpider" || definition.Encoding != "" && !strings.EqualFold(definition.Encoding, "UTF-8") {
+	if definition.Parser != "" && definition.Parser != "HaiDanSpider" && definition.Parser != "RenderSpider" || definition.Encoding != "" && !strings.EqualFold(definition.Encoding, "UTF-8") {
 		return Plan{}, ErrUnsupported
 	}
 	if page < 0 || page > 10000 || len(keyword) > 1024 || (!browse && strings.TrimSpace(keyword) == "") || !utf8.ValidString(keyword) || strings.ContainsFunc(keyword, unicode.IsControl) {
@@ -151,7 +151,7 @@ func buildPage(definition indexercatalog.Definition, keyword string, page int, k
 	if browse && len(definition.Browse) > 0 && json.Unmarshal(definition.Browse, &listing) != nil {
 		return Plan{}, ErrConfig
 	}
-	if path < 0 && listing.Path != "" {
+	if path < 0 && (listing.Path != "" || definition.Parser == "RenderSpider") {
 		path = 0
 	}
 	if path < 0 {

@@ -60,6 +60,15 @@ func catalogKeyword(q CatalogPageRequest) (string, error) {
 	return strings.Join(terms, delimiter), nil
 }
 
+// CatalogPlan applies the same batch and paging rules for HTTP and browser reads.
+func CatalogPlan(q CatalogPageRequest) (Plan, error) {
+	keyword, err := catalogKeyword(q)
+	if err != nil {
+		return Plan{}, err
+	}
+	return buildPage(q.Definition, keyword, q.Page, q.Kind, keyword == "", len(q.Terms) > 0)
+}
+
 func CatalogPage(ctx context.Context, q CatalogPageRequest, transport http.RoundTripper) ([]any, error) {
 	d := q.Definition
 	base, err := url.Parse(d.Domain)
@@ -73,11 +82,7 @@ func CatalogPage(ctx context.Context, q CatalogPageRequest, transport http.Round
 		}
 		body = []byte(*q.HTML)
 	} else {
-		keyword, err := catalogKeyword(q)
-		if err != nil {
-			return nil, err
-		}
-		plan, err := buildPage(d, keyword, q.Page, q.Kind, keyword == "", len(q.Terms) > 0)
+		plan, err := CatalogPlan(q)
 		if err != nil {
 			return nil, err
 		}

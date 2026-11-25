@@ -59,7 +59,7 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 			for i := range catalog.Indexers {
 				item := &catalog.Indexers[i]
 				host := indexercatalog.Domain(item.Domain)
-				if (item.Parser != "" && item.Parser != "HaiDanSpider" && item.Parser != "TorrentLeech" && item.Parser != "MTeamSpider" && item.Parser != "TNodeSpider") || (item.ID != id && host != domain && !strings.EqualFold(host, id)) {
+				if (item.Parser != "" && item.Parser != "HaiDanSpider" && item.Parser != "RenderSpider" && item.Parser != "TorrentLeech" && item.Parser != "MTeamSpider" && item.Parser != "TNodeSpider") || (item.ID != id && host != domain && !strings.EqualFold(host, id)) {
 					continue
 				}
 				if def != nil {
@@ -104,7 +104,7 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
 		var rows []any
-		catalogPage := def != nil && (def.Parser == "" || def.Parser == "HaiDanSpider" || def.Parser == "TorrentLeech")
+		catalogPage := def != nil && (def.Parser == "" || def.Parser == "HaiDanSpider" || def.Parser == "RenderSpider" || def.Parser == "TorrentLeech")
 		if external || catalogPage {
 			if !slices.Contains(user.Permissions, "资源搜索") {
 				writeAPIError(w, 403, 403, "需要资源搜索权限")

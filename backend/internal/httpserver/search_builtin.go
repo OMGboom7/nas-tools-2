@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"strconv"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
@@ -61,7 +60,7 @@ func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Conte
 			authenticated = key != ""
 		}
 		if page != nil {
-			if !configured || (definition.Parser != "" && definition.Parser != "HaiDanSpider" && definition.Parser != "TorrentLeech") {
+			if !configured || (definition.Parser != "" && definition.Parser != "HaiDanSpider" && definition.Parser != "RenderSpider" && definition.Parser != "TorrentLeech") {
 				return nil, builtinindexer.ErrConfig
 			}
 			started := time.Now()
@@ -115,25 +114,18 @@ func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Conte
 			}
 			continue
 		}
-		empty := ""
-		if value, exists := options["go_indexer_empty_selector"]; exists {
-			var ok bool
-			empty, ok = value.(string)
-			if !ok {
-				return nil, builtinindexer.ErrConfig
-			}
+		empty, err := catalogEmptySelector(options)
+		if err != nil {
+			return nil, err
 		}
 		var plan builtinindexer.Plan
 		limit := 2000 - len(results)
 		if page == nil {
 			plan, err = builtinindexer.Build(definition, keyword, 0, "")
 		} else {
-			limit = 100
-			if raw := text(objectValue(configuration["pt"])["site_search_result_num"]); raw != "" && raw != "0" {
-				limit, err = strconv.Atoi(raw)
-				if err != nil || limit < 1 || limit > 2000 {
-					return nil, builtinindexer.ErrConfig
-				}
+			limit, err = catalogPageLimit(configuration)
+			if err != nil {
+				return nil, err
 			}
 			plan, err = builtinindexer.BuildResourcePage(definition, keyword, *page)
 		}
@@ -149,28 +141,13 @@ func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Conte
 		}
 		var body []byte
 		var session *browserruntime.Session
-		if plan.Form != nil || options["chrome"] == "Y" || truthy(options["chrome"]) {
-			var rules struct {
-				List struct {
-					Selector string `json:"selector"`
-				} `json:"list"`
-			}
-			if json.Unmarshal(definition.Torrents, &rules) != nil {
-				return nil, builtinindexer.ErrConfig
-			}
-			catalogHash := browserruntime.Hash(catalog)
-			guard := func(ctx context.Context) error {
-				current, e := indexercatalog.Load(service.catalogPath)
-				if e != nil || browserruntime.Hash(current) != catalogHash {
-					return browserruntime.ErrScope
-				}
-				return ctx.Err()
-			}
-			page, private, e := (siteBrowser{renderer: service.browser, sites: service.sites, config: service.config, limits: service.siteLimits, transport: service.transport}).render(ctx, originalSite, configuration, plan.URL.String(), plan.Form, rules.List.Selector, empty, guard)
+		if shouldRenderCatalog(plan, options) {
+			browser := siteBrowser{renderer: service.browser, sites: service.sites, config: service.config, limits: service.siteLimits, transport: service.transport}
+			rendered, private, e := browser.renderCatalog(ctx, originalSite, configuration, plan, empty, service.catalogPath, catalog)
 			if e != nil {
 				return nil, e
 			}
-			body, session = page.HTML, private
+			body, session = rendered.HTML, private
 		} else {
 			if configured {
 				if err := service.siteLimits.Wait(ctx, service.sites, siteID); err != nil {

@@ -23,6 +23,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "render-catalog" {
+		if err := httpserver.RenderCatalogCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("browser catalog search unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "catalog-resources" {
 		if err := builtinindexer.CatalogPageCommand(context.Background(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("catalog resource page unavailable")

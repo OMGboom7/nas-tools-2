@@ -1,5 +1,6 @@
 import json
 import subprocess
+from threading import BoundedSemaphore
 
 from config import Config, run_go_helper
 
@@ -117,27 +118,38 @@ def plugin_search(kind, host, api_key, indexer, keyword, page):
         return None
 
 
-def catalog_resources(indexer, keyword=None, page=None, mtype=None, html=None):
-    definition = {"id": indexer.id, "domain": indexer.domain, "parser": indexer.parser or "",
-                  "torrents": indexer.torrents, "search": indexer.search_config,
-                  "category": indexer.category, "browse": indexer.browse}
+_browser_slots = BoundedSemaphore(2)
+
+
+def catalog_resources(indexer, keyword=None, page=None, mtype=None):
     try:
         config = Config()
-        query = {"definition": definition, "limit": int(config.get_config("pt").get("site_search_result_num") or 100)}
-        if html is None:
-            scheme = indexer.domain.partition(":")[0].lower()
-            proxy = (config.get_proxies() or {}).get(scheme) if indexer.proxy else None
-            if indexer.proxy and not proxy:
-                return True, []
-            query.update({"cookie": indexer.cookie or "", "ua": indexer.ua or config.get_ua(),
-                          "proxy": proxy, "page": int(page or 0), "kind": mtype.name.lower() if mtype else ""})
-            if isinstance(keyword, list):
-                query["terms"] = keyword
-            else:
-                query["keyword"] = keyword or ""
+        query = {"page": int(page or 0), "kind": mtype.name.lower() if mtype else ""}
+        if isinstance(keyword, list):
+            query["terms"] = keyword
         else:
-            query["html"] = html
-        page_data = run_go_helper("catalog-resources", payload=json.dumps(query, ensure_ascii=False).encode(), timeout=35)
-        return False, json.loads(page_data)
-    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+            query["keyword"] = keyword or ""
+        paths = (indexer.search_config or {}).get("paths") or []
+        if indexer.parser == "RenderSpider" or indexer.render or any(p.get("method") == "chrome" for p in paths):
+            query.update({"id": indexer.id, "domain": indexer.domain, "siteID": int(indexer.siteid or 0)})
+            with _browser_slots:
+                raw = run_go_helper("render-catalog", config.get_user_sites_bin_path(),
+                                    payload=json.dumps(query, ensure_ascii=False).encode(), timeout=90)
+            result = json.loads(raw)
+            if "cookie" in result:
+                indexer.cookie, indexer.ua = result["cookie"], result["ua"]
+            return False, result["rows"]
+
+        scheme = indexer.domain.partition(":")[0].lower()
+        proxy = (config.get_proxies() or {}).get(scheme) if indexer.proxy else None
+        if indexer.proxy and not proxy:
+            return True, []
+        query.update({"definition": {"id": indexer.id, "domain": indexer.domain, "parser": indexer.parser or "",
+                                     "torrents": indexer.torrents, "search": indexer.search_config,
+                                     "category": indexer.category, "browse": indexer.browse},
+                      "limit": int(config.get_config("pt").get("site_search_result_num") or 100),
+                      "cookie": indexer.cookie or "", "ua": indexer.ua or config.get_ua(), "proxy": proxy})
+        raw = run_go_helper("catalog-resources", payload=json.dumps(query, ensure_ascii=False).encode(), timeout=35)
+        return False, json.loads(raw)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
         return True, []
