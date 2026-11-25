@@ -12,6 +12,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 func TestSiteResourcePageOriginalClientsAndGoOnly(t *testing.T) {
@@ -152,5 +153,108 @@ func TestSiteResourcePageOriginalClientsAndGoOnly(t *testing.T) {
 	res = performFormRequest(mixed, path, token, form)
 	if !strings.Contains(res.Body.String(), `"success":false`) || siteCalls != before || fallbackCalls != 1 {
 		t.Fatal(res.Body.String(), siteCalls, fallbackCalls)
+	}
+}
+
+func TestExternalSiteResourcePageScopeAndPrivateLinks(t *testing.T) {
+	dir := t.TempDir()
+	calls := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Host != "fixture.local" || r.Header.Get("X-Api-Key") != "fixture-key" {
+			t.Fatal("unexpected provider")
+		}
+		switch r.URL.Path {
+		case "/prefix/api/v1/indexerstats":
+			return jsonResponse(r, `{"indexers":[{"indexerName":"Fixture","indexerId":42}]}`), nil
+		case "/prefix/api/v1/search":
+			q := r.URL.Query()
+			if q.Get("query") == "error" {
+				result := jsonResponse(r, "")
+				result.StatusCode = 429
+				return result, nil
+			}
+			if q.Get("query") == "empty" {
+				return jsonResponse(r, "[]"), nil
+			}
+			if q.Get("limit") != "100" || q.Get("offset") != "200" || q.Get("indexerIds") != "42" || q.Get("query") != "" {
+				t.Fatal(q)
+			}
+			return jsonResponse(r, `[{"indexerId":42,"indexer":"Fixture","title":"Third Page","downloadUrl":"https://fixture.local/download?key=private","guid":"https://fixture.local/details?sig=private","size":123}]`), nil
+		default:
+			t.Fatal("unexpected path", r.URL.Path)
+			return nil, nil
+		}
+	})
+	_, _, token := nativeSiteFixtureAt(t, dir, transport)
+	h, err := newHandler(config.Config{ApplicationConfigPath: filepath.Join(dir, "config.yaml"), DisableLegacy: true}, transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	system, err := systemconfig.Open(filepath.Join(dir, "user.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer system.Close()
+	for key, val := range map[string]string{"UserInstalledPlugins": `["Prowlarr"]`, "UserIndexerSites": `["Fixture-prowlarr"]`, "plugin.Prowlarr": `{"host":"http://fixture.local/prefix","api_key":"fixture-key"}`} {
+		if err := system.Set(t.Context(), key, val); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const path = "/api/v1/site/resources"
+	form := url.Values{"id": {"Fixture-prowlarr"}, "page": {"2"}, "domain": {"https://ignored.invalid/"}}
+	reply := performFormRequest(h, path, token, form)
+	body := reply.Body.String()
+	if reply.Code != 200 || !strings.Contains(body, `"title":"Third Page"`) || !strings.Contains(body, `"resourceId":"go-search-`) || strings.Contains(body, "private") || strings.Contains(body, "fixture-key") || calls != 2 {
+		t.Fatal(reply.Code, body, calls)
+	}
+	var parsed struct {
+		Data struct{ Data []struct{ ResourceID string } }
+	}
+	if err := json.Unmarshal(reply.Body.Bytes(), &parsed); err != nil || len(parsed.Data.Data) != 1 {
+		t.Fatal(err, body)
+	}
+	created := performFormRequest(h, "/api/v1/user/manage", token, url.Values{"oper": {"add"}, "name": {"viewer"}, "password": {"strong-password"}, "pris": {"下载管理"}})
+	if created.Code != 200 {
+		t.Fatal(created.Body.String())
+	}
+	viewer := loginForTest(t, h, "viewer", "strong-password")
+	if denied := performFormRequest(h, path, viewer, form); denied.Code != 403 || calls != 2 {
+		t.Fatal(denied.Code, calls)
+	}
+	input, _ := json.Marshal(addResourceRequest{ResourceID: parsed.Data.Data[0].ResourceID})
+	if denied := nativeJSONRequest(h, "POST", "/api/v1/downloads/resource", viewer, string(input)); denied.Code != 404 || calls != 2 {
+		t.Fatal(denied.Code, denied.Body.String(), calls)
+	}
+	for _, bad := range []url.Values{{"id": {"Unselected-prowlarr"}}, {"id": {"Fixture-prowlarr"}, "page": {"10001"}}} {
+		reply = performFormRequest(h, path, token, bad)
+		if strings.Contains(reply.Body.String(), `"success":true`) || calls != 2 {
+			t.Fatal(reply.Body.String(), calls)
+		}
+	}
+	if reply = performFormRequest(h, path, "", form); reply.Code != 401 || calls != 2 {
+		t.Fatal(reply.Code, calls)
+	}
+	for _, keyword := range []string{"empty", "error"} {
+		form.Set("keyword", keyword)
+		reply = performFormRequest(h, path, token, form)
+		if strings.Contains(reply.Body.String(), `"success":true`) != (keyword == "empty") {
+			t.Fatal(reply.Body.String())
+		}
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "user.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var success, failed int
+	if err := db.QueryRow("SELECT SUM(RESULT='Y'), SUM(RESULT='N') FROM INDEXER_STATISTICS WHERE INDEXER=? AND TYPE='builtin'", "Fixture(Prowlarr)").Scan(&success, &failed); err != nil || success != 2 || failed != 1 {
+		t.Fatal(success, failed, err)
+	}
+	if err := system.Set(t.Context(), "UserInstalledPlugins", "[]"); err != nil {
+		t.Fatal(err)
+	}
+	if reply = performFormRequest(h, path, token, form); strings.Contains(reply.Body.String(), `"success":true`) || calls != 6 {
+		t.Fatal(reply.Body.String(), calls)
 	}
 }

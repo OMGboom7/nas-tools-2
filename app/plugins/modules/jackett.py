@@ -1,16 +1,13 @@
-import requests
 from datetime import datetime, timedelta
 from threading import Event
-import xml.dom.minidom
 from jinja2 import Template
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.utils import RequestUtils, Torrent
-from app.indexer.indexerConf import IndexerConf
-from app.utils import ExceptionUtils, DomUtils, StringUtils
+from app.indexer.indexerConf import plugin_indexers, plugin_search
+from app.utils import StringUtils
 
 from app.plugins import EventManager
 from app.plugins.modules._base import _IPluginModule
@@ -248,166 +245,7 @@ class Jackett(_IPluginModule):
         })
 
     def get_indexers(self):
-        """
-        获取配置的jackett indexer
-        :return: indexer 信息 [(indexerId, indexerName, url)]
-        """
-        #获取Cookie
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "User-Agent": Config().get_ua(),
-            "X-Api-Key": self._api_key,
-            "Accept": "application/json, text/javascript, */*; q=0.01"
-        }
-        cookie = None
-        session = requests.session()
-        res = RequestUtils(headers=headers, session=session).post_res(url=f"{self._host}/UI/Dashboard", data={"password": self._password},
-                                                     params={"password": self._password})
-        if res and session.cookies:
-            cookie = session.cookies.get_dict()
-        indexer_query_url = f"{self._host}/api/v2.0/indexers?configured=true"
-        try:
-            ret = RequestUtils(headers=headers, cookies=cookie).get_res(indexer_query_url)
-            if not ret:
-                return []
-            if not RequestUtils.check_response_is_valid_json(ret):
-                self.info(f"【{self.module_name}】参数设置不正确，请检查所有的参数是否填写正确")
-                return []
-            if not ret.json():
-                return []
-            indexers = [IndexerConf({"id": f'{v["id"]}-jackett',
-                                 "name": f'{v["name"]}(Jackett)',
-                                 "domain": f'{self._host}/api/v2.0/indexers/{v["id"]}/results/torznab/',
-                                 "public": True if v['type'] == 'public' else False,
-                                 "builtin": False,
-                                 "proxy": True,
-                                 "parser": self.module_name})
-                    for v in ret.json()]
-            return indexers
-        except Exception as e2:
-            ExceptionUtils.exception_traceback(e2)
-            return []
+        return plugin_indexers(self.module_name, self._host, self._api_key, self._password)
 
-    def search(self, indexer,
-               keyword,
-               page):
-        """
-        根据关键字多线程检索
-        """
-        if not indexer or not keyword:
-            return None
-        self.info(f"【{self.module_name}】开始检索Indexer：{indexer.name} ...")
-        # 特殊符号处理
-        api_url = f"{indexer.domain}?apikey={self._api_key}&t=search&q={keyword}"
-
-        result_array = self.__parse_torznabxml(api_url)
-
-        if len(result_array) == 0:
-            self.warn(f"【{self.module_name}】{indexer.name} 未检索到数据")
-            return []
-        else:
-            self.warn(f"【{self.module_name}】{indexer.name} 返回数据：{len(result_array)}")
-            return result_array
-
-    @staticmethod
-    def __parse_torznabxml(url):
-        """
-        从torznab xml中解析种子信息
-        :param url: URL地址
-        :return: 解析出来的种子信息列表
-        """
-        if not url:
-            return []
-        try:
-            ret = RequestUtils(timeout=10).get_res(url)
-        except Exception as e2:
-            ExceptionUtils.exception_traceback(e2)
-            return []
-        if not ret:
-            return []
-        xmls = ret.text
-        if not xmls:
-            return []
-
-        torrents = []
-        try:
-            # 解析XML
-            dom_tree = xml.dom.minidom.parseString(xmls)
-            root_node = dom_tree.documentElement
-            items = root_node.getElementsByTagName("item")
-            for item in items:
-                try:
-                    # indexer id
-                    indexer_id = DomUtils.tag_value(item, "jackettindexer", "id",
-                                                    default=DomUtils.tag_value(item, "jackettindexer", "id", ""))
-                    # indexer
-                    indexer = DomUtils.tag_value(item, "jackettindexer",
-                                                 default=DomUtils.tag_value(item, "jackettindexer", default=""))
-
-                    # 标题
-                    title = DomUtils.tag_value(item, "title", default="")
-                    if not title:
-                        continue
-                    # 种子链接
-                    enclosure = DomUtils.tag_value(item, "enclosure", "url", default="")
-                    if not enclosure:
-                        continue
-                    # 描述
-                    description = DomUtils.tag_value(item, "description", default="")
-                    # 种子大小
-                    size = DomUtils.tag_value(item, "size", default=0)
-                    # 种子页面
-                    page_url = DomUtils.tag_value(item, "comments", default="")
-
-                    # 做种数
-                    seeders = 0
-                    # 下载数
-                    peers = 0
-                    # 是否免费
-                    freeleech = False
-                    # 下载因子
-                    downloadvolumefactor = 1.0
-                    # 上传因子
-                    uploadvolumefactor = 1.0
-                    # imdbid
-                    imdbid = ""
-
-                    torznab_attrs = item.getElementsByTagName("torznab:attr")
-                    for torznab_attr in torznab_attrs:
-                        name = torznab_attr.getAttribute('name')
-                        value = torznab_attr.getAttribute('value')
-                        if name == "seeders":
-                            seeders = value
-                        if name == "peers":
-                            peers = value
-                        if name == "downloadvolumefactor":
-                            downloadvolumefactor = value
-                            if float(downloadvolumefactor) == 0:
-                                freeleech = True
-                        if name == "uploadvolumefactor":
-                            uploadvolumefactor = value
-                        if name == "imdbid":
-                            imdbid = value
-
-                    tmp_dict = {'indexer_id': indexer_id,
-                                'indexer': indexer,
-                                'title': title,
-                                'enclosure': enclosure,
-                                'description': description,
-                                'size': size,
-                                'seeders': seeders,
-                                'peers': peers,
-                                'freeleech': freeleech,
-                                'downloadvolumefactor': downloadvolumefactor,
-                                'uploadvolumefactor': uploadvolumefactor,
-                                'page_url': page_url,
-                                'imdbid': imdbid}
-                    torrents.append(tmp_dict)
-                except Exception as e:
-                    ExceptionUtils.exception_traceback(e)
-                    continue
-        except Exception as e2:
-            ExceptionUtils.exception_traceback(e2)
-            pass
-
-        return torrents
+    def search(self, indexer, keyword, page):
+        return plugin_search(self.module_name, self._host, self._api_key, indexer, keyword, page)

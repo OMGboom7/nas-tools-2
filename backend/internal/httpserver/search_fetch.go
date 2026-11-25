@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/searchcache"
@@ -19,13 +21,22 @@ var errNativeSearchSelection = errors.New("requested search indexer is not enabl
 // Empty requested means the currently enabled global set, as in legacy RSS.
 // Nonempty requested is a strict subset; unavailable selections never widen it.
 func (service *nativeExternalResourceSearch) fetchResources(ctx context.Context, keyword string, requested []string) ([]externalindexer.Resource, error) {
+	return service.fetchSelectedResources(ctx, keyword, requested, nil)
+}
+
+// A site page is limited to one enabled external indexer. A blank query
+// requests its recent releases, while normal searches require a keyword.
+func (service *nativeExternalResourceSearch) fetchSelectedResources(ctx context.Context, keyword string, requested []string, page *int) ([]externalindexer.Resource, error) {
+	if page != nil && (len(requested) != 1 || (!strings.HasSuffix(requested[0], "-jackett") && !strings.HasSuffix(requested[0], "-prowlarr"))) {
+		return nil, errNativeSearchSelection
+	}
 	if service.system == nil {
 		return nil, errors.New("native indexer configuration is unavailable")
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	if strings.TrimSpace(keyword) == "" || len([]rune(keyword)) > 120 {
+	if page == nil && (strings.TrimSpace(keyword) == "" || len([]rune(keyword)) > 120) {
 		return nil, errors.New("invalid search keyword")
 	}
 	raw, err := service.system.Get(ctx, "UserIndexerSites")
@@ -83,7 +94,7 @@ func (service *nativeExternalResourceSearch) fetchResources(ctx context.Context,
 	}
 	active := map[string]bool{}
 	for _, id := range installed {
-		if !nativeSearchPlugin(id) {
+		if page == nil && !nativeSearchPlugin(id) {
 			return nil, errors.New("installed search plugin is not supported natively")
 		}
 		active[id] = true
@@ -129,7 +140,16 @@ func (service *nativeExternalResourceSearch) fetchResources(ctx context.Context,
 				continue
 			}
 			delete(allowed, indexer.ID)
-			items, err := externalindexer.Search(ctx, configuration, indexer, keyword, service.transport)
+			var items []externalindexer.Resource
+			if page == nil {
+				items, err = externalindexer.Search(ctx, configuration, indexer, keyword, service.transport)
+			} else {
+				started := time.Now()
+				items, err = externalindexer.Page(ctx, configuration, indexer, keyword, *page, service.transport)
+				if recordErr := service.sites.RecordBuiltinRequest(ctx, indexer.Name, started, err == nil); recordErr != nil {
+					slog.Warn("could not record external site resource request statistics")
+				}
+			}
 			if err != nil {
 				return nil, err
 			}

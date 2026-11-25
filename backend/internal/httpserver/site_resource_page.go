@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -45,26 +46,29 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 			writeAPIError(w, 400, 400, "请选择站点")
 			return
 		}
-		catalog, err := indexercatalog.Load(s.catalogPath)
-		if err != nil {
-			writeAPIError(w, 503, 503, "站点目录不可用")
-			return
-		}
-		domain := indexercatalog.Domain(id)
+		external := strings.HasSuffix(id, "-jackett") || strings.HasSuffix(id, "-prowlarr")
 		var def *indexercatalog.Definition
-		for i := range catalog.Indexers {
-			item := &catalog.Indexers[i]
-			host := indexercatalog.Domain(item.Domain)
-			if (item.Parser != "MTeamSpider" && item.Parser != "TNodeSpider") || (item.ID != id && host != domain && !strings.EqualFold(host, id)) {
-				continue
-			}
-			if def != nil {
-				writeAPIError(w, 409, 409, "站点标识匹配多条目录记录")
+		if !external && s.catalogPath != "" {
+			catalog, err := indexercatalog.Load(s.catalogPath)
+			if err != nil {
+				writeAPIError(w, 503, 503, "站点目录不可用")
 				return
 			}
-			def = item
+			domain := indexercatalog.Domain(id)
+			for i := range catalog.Indexers {
+				item := &catalog.Indexers[i]
+				host := indexercatalog.Domain(item.Domain)
+				if (item.Parser != "MTeamSpider" && item.Parser != "TNodeSpider") || (item.ID != id && host != domain && !strings.EqualFold(host, id)) {
+					continue
+				}
+				if def != nil {
+					writeAPIError(w, 409, 409, "站点标识匹配多条目录记录")
+					return
+				}
+				def = item
+			}
 		}
-		if def == nil {
+		if def == nil && !external {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			fallback.ServeHTTP(w, r)
 			return
@@ -74,7 +78,8 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 			writeAPIError(w, 401, 401, "请重新登录")
 			return
 		}
-		if _, err = s.auth.service.FindUser(r.Context(), claims.Username); err != nil {
+		user, err := s.auth.service.FindUser(r.Context(), claims.Username)
+		if err != nil {
 			writeAPIError(w, 401, 401, "当前账户不可用")
 			return
 		}
@@ -97,8 +102,17 @@ func (s *nativeExternalResourceSearch) siteResourcePage(fallback http.Handler) h
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
-		rows, err := s.readSiteResourcePage(ctx, *def, page, keyword)
-		if err != nil || len(rows) == 0 {
+		var rows []any
+		if external {
+			if !slices.Contains(user.Permissions, "资源搜索") {
+				writeAPIError(w, 403, 403, "需要资源搜索权限")
+				return
+			}
+			rows, err = s.externalSitePage(ctx, id, probe.PostForm.Get("keyword"), page, strconv.FormatInt(user.ID, 10)+":"+user.Name)
+		} else {
+			rows, err = s.readSiteResourcePage(ctx, *def, page, keyword)
+		}
+		if err != nil || (!external && len(rows) == 0) {
 			writeJSON(w, 200, map[string]any{"code": 1, "success": false, "message": "获取站点资源出现错误，无法连接到站点！", "data": map[string]any{}})
 			return
 		}
@@ -155,4 +169,27 @@ func (s *nativeExternalResourceSearch) readSiteResourcePage(ctx context.Context,
 		slog.Warn("could not record site resource request statistics")
 	}
 	return rows, err
+}
+
+// External enclosure and details URLs can both carry the provider's API key.
+// The existing downloads endpoint accepts the owner-bound resourceId.
+func (s *nativeExternalResourceSearch) externalSitePage(ctx context.Context, id, keyword string, page int, owner string) ([]any, error) {
+	items, err := s.fetchSelectedResources(ctx, keyword, []string{id}, &page)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.resources.Put(owner, items)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]any, 0, len(items))
+	for i, item := range items {
+		rows = append(rows, map[string]any{
+			"resourceId": ids[i], "indexer": item.Indexer, "indexer_id": item.IndexerID,
+			"title": item.Title, "size": item.Size, "seeders": item.Seeders, "peers": item.Peers,
+			"description": item.Description, "freeleech": item.Freeleech, "imdbid": item.IMDbID,
+			"downloadvolumefactor": item.DownloadFactor, "uploadvolumefactor": item.UploadFactor,
+		})
+	}
+	return rows, nil
 }

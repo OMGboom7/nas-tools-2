@@ -26,11 +26,11 @@ class PluginsSpider(object):
     def search(self, keyword, indexer, page=0):
         try:
             result_array = PluginManager().run_plugin_method(pid=indexer.parser, method='search', keyword=keyword, indexer=indexer, page=page)
-            if not result_array:
-                return False, []
-            return True, result_array
-        except Exception as e:
-            return False, []
+            if not isinstance(result_array, (list, tuple)):
+                return True, []
+            return False, result_array
+        except Exception:
+            return True, []
 
     def sites(self):
         result = []

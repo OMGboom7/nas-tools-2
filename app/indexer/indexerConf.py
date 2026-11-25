@@ -1,4 +1,8 @@
 import json
+import subprocess
+
+from config import run_go_helper
+
 
 class IndexerConf(object):
 
@@ -83,3 +87,31 @@ class IndexerConf(object):
         if formatted:
             return json.dumps(self.to_dict(), ensure_ascii=ensure_ascii, indent=4)
         return json.dumps(self.to_dict(), ensure_ascii=ensure_ascii)
+
+
+def plugin_indexers(kind, host, api_key, password=None):
+    settings = {"Kind": kind, "Host": host, "APIKey": api_key, "Password": password}
+    try:
+        raw = run_go_helper("external-indexer", "discover",
+                            payload=json.dumps({"Config": settings}).encode(), timeout=35)
+        indexers = []
+        for row in json.loads(raw):
+            indexer = IndexerConf({"id": row["ID"], "name": row["Name"], "domain": row["Domain"],
+                                   "public": row["Public"], "builtin": False, "proxy": True,
+                                   "parser": kind})
+            indexers.append(indexer)
+        return indexers
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+
+
+def plugin_search(kind, host, api_key, indexer, keyword, page):
+    if not indexer or not host or not indexer.domain:
+        return None
+    try:
+        query = {"Config": {"Kind": kind, "Host": host, "APIKey": api_key},
+                 "Domain": indexer.domain, "Keyword": keyword or "", "Page": int(page or 0)}
+        raw = run_go_helper("external-indexer", "search", payload=json.dumps(query).encode(), timeout=20)
+        return json.loads(raw)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        return None

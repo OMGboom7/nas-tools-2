@@ -11,7 +11,6 @@ from app.indexer.client._base import _IIndexClient
 from app.indexer.client._haidan import HaiDanSpider
 from app.indexer.client._render_spider import RenderSpider
 from app.indexer.client._spider import TorrentSpider
-from app.indexer.client._spider_new import DefaultSpider
 from app.indexer.client._torrentleech import TorrentLeech
 from app.indexer.client._plugins import PluginsSpider
 from app.sites import Sites
@@ -130,14 +129,13 @@ class BuiltinIndexer(_IIndexClient):
                         _indexer_domains.append(indexer.domain)
                         ret_indexers.append(indexer)
         # 获取插件站点
-        if PluginsSpider().sites():
-            for indexer in PluginsSpider().sites():
-                if indexer:
-                    if check and (not indexer_sites or indexer.id not in indexer_sites):
-                        continue
-                    if indexer.domain not in _indexer_domains:
-                        _indexer_domains.append(indexer.domain)
-                        ret_indexers.append(indexer)
+        for indexer in PluginsSpider().sites():
+            if indexer:
+                if check and (not indexer_sites or indexer.id not in indexer_sites):
+                    continue
+                if indexer.domain not in _indexer_domains:
+                    _indexer_domains.append(indexer.domain)
+                    ret_indexers.append(indexer)
         return ret_indexers
     def is_indebug(self):
         loglevel = Config().get_config('app').get('loglevel') or "info"
@@ -366,13 +364,6 @@ class BuiltinIndexer(_IIndexClient):
                         page=page,
                         mtype=mtype)
         spider.start()
-
-        # spider = DefaultSpider()
-        # spider.setparam(indexer=indexer,
-        #                 keyword=keyword,
-        #                 page=page,
-        #                 mtype=mtype)
-        # spider.start_requests()
 
         # 循环判断是否获取到数据
         sleep_count = 0

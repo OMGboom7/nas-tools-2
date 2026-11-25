@@ -57,6 +57,39 @@ func validRemoteID(kind, id string) bool {
 // Search constructs its endpoint from configured host and verified remote ID;
 // it never executes an arbitrary Indexer.Domain supplied by a caller.
 func Search(ctx context.Context, cfg Config, indexer Indexer, keyword string, transport http.RoundTripper) ([]Resource, error) {
+	if !validText(strings.TrimSpace(keyword), 1024) {
+		return nil, ErrConfig
+	}
+	return resources(ctx, cfg, indexer, keyword, nil, transport)
+}
+
+// Page requests up to 100 releases at a zero-based page, optionally filtered by keyword.
+func Page(ctx context.Context, cfg Config, indexer Indexer, keyword string, page int, transport http.RoundTripper) ([]Resource, error) {
+	return resources(ctx, cfg, indexer, keyword, &page, transport)
+}
+
+func resources(ctx context.Context, cfg Config, indexer Indexer, keyword string, page *int, transport http.RoundTripper) ([]Resource, error) {
+	items, err := searchRows(ctx, cfg, indexer, keyword, page, transport)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]Resource, len(items))
+	for i := range items {
+		rows[i] = items[i].Resource
+	}
+	return rows, nil
+}
+
+// Keep provider-specific values for the old in-process plugin protocol.
+// Only Resource enters the native search cache.
+type providerResult struct {
+	Resource
+	sourceID                               any
+	sourceName                             string
+	size, seeders, peers, upload, download any
+}
+
+func searchRows(ctx context.Context, cfg Config, indexer Indexer, keyword string, page *int, transport http.RoundTripper) ([]providerResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -64,16 +97,20 @@ func Search(ctx context.Context, cfg Config, indexer Indexer, keyword string, tr
 	if err != nil {
 		return nil, err
 	}
-	if indexer.Kind != cfg.Kind || !validRemoteID(cfg.Kind, indexer.RemoteID) || !validText(strings.TrimSpace(keyword), 1024) {
+	if indexer.Kind != cfg.Kind || !validRemoteID(cfg.Kind, indexer.RemoteID) || (keyword != "" && !validText(keyword, 1024)) || (page != nil && (*page < 0 || *page > 10000)) {
 		return nil, ErrConfig
 	}
 	query := url.Values{"type": {"search"}, "query": {keyword}, "indexerIds": {indexer.RemoteID}, "limit": {"100"}, "offset": {"0"}}
 	u := endpoint(base, "/api/v1/search")
 	if cfg.Kind == "Jackett" {
-		u = endpoint(base, "/api/v2.0/indexers/"+indexer.RemoteID+"/results/torznab/")
+		u = indexerEndpoint(base, cfg.Kind, indexer.RemoteID)
 		// Jackett ResultsController.RequiresApiKey reads query parameters, not
 		// X-Api-Key: https://github.com/Jackett/Jackett/blob/master/src/Jackett.Server/Controllers/ResultsController.cs
 		query = url.Values{"apikey": {cfg.APIKey}, "t": {"search"}, "q": {keyword}}
+	}
+	if page != nil {
+		query.Set("limit", "100")
+		query.Set("offset", strconv.Itoa(*page*100))
 	}
 	u.RawQuery = query.Encode()
 	r, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -143,7 +180,7 @@ func validDownloadURL(raw string) bool {
 // indexers. Callers still enforce the configured tracker origin for HTTP URLs.
 func ValidDownloadURL(raw string) bool { return validDownloadURL(raw) }
 
-func parseProwlarr(ctx context.Context, body []byte, indexer Indexer) ([]Resource, error) {
+func parseProwlarr(ctx context.Context, body []byte, indexer Indexer) ([]providerResult, error) {
 	var rows []struct {
 		ID          int64  `json:"indexerId"`
 		Indexer     string `json:"indexer"`
@@ -157,7 +194,7 @@ func parseProwlarr(ctx context.Context, body []byte, indexer Indexer) ([]Resourc
 	if json.Unmarshal(body, &rows) != nil || rows == nil || len(rows) > 1000 {
 		return nil, ErrResponse
 	}
-	items := []Resource{}
+	items := []providerResult{}
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -168,12 +205,23 @@ func parseProwlarr(ctx context.Context, body []byte, indexer Indexer) ([]Resourc
 		if !validText(row.Title, 4096) || !validDownloadURL(row.Download) {
 			continue
 		}
-		items = append(items, Resource{IndexerID: indexer.ID, Indexer: indexer.Name, Public: indexer.Public, Title: row.Title, DownloadURL: row.Download, Description: row.Description, Size: *row.Size, Seeders: row.Seeders, PageURL: row.Guid})
+		items = append(items, providerResult{
+			Resource: Resource{
+				IndexerID: indexer.ID, Indexer: indexer.Name, Public: indexer.Public,
+				Title: row.Title, Description: row.Description, DownloadURL: row.Download,
+				PageURL: row.Guid, Size: *row.Size, Seeders: row.Seeders,
+			},
+			sourceID: row.ID, sourceName: row.Indexer, size: row.Size, seeders: row.Seeders,
+		})
 	}
 	return items, nil
 }
 
 type torznabItem struct {
+	Source struct {
+		ID   string `xml:"id,attr"`
+		Name string `xml:",chardata"`
+	} `xml:"jackettindexer"`
 	Title       string `xml:"title"`
 	Description string `xml:"description"`
 	Size        string `xml:"size"`
@@ -200,7 +248,7 @@ func nonnegativeInteger(raw string) (int64, error) {
 	return n, nil
 }
 
-func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]Resource, error) {
+func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]providerResult, error) {
 	// Validate the entire bounded document before decoding items. Disallow
 	// DTD directives and bound nesting, including inside otherwise ignored tags.
 	d := xml.NewDecoder(bytes.NewReader(body))
@@ -246,7 +294,7 @@ func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]Resource
 		return nil, ErrResponse
 	}
 	d = xml.NewDecoder(bytes.NewReader(body))
-	items := []Resource{}
+	items := []providerResult{}
 	path := []string{}
 	count := 0
 	for {
@@ -290,6 +338,10 @@ func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]Resource
 			download, upload := 1.0, 1.0
 			free := false
 			item := Resource{IndexerID: indexer.ID, Indexer: indexer.Name, Public: indexer.Public, Title: row.Title, DownloadURL: row.Enclosure.URL, Description: row.Description, PageURL: row.Comments, Size: amount, Seeders: &seeders, Peers: &peers, DownloadFactor: &download, UploadFactor: &upload, Freeleech: &free}
+			result := providerResult{Resource: item, sourceID: row.Source.ID, sourceName: row.Source.Name, size: 0, seeders: 0, peers: 0, download: 1.0, upload: 1.0}
+			if row.Size != "" {
+				result.size = row.Size
+			}
 			seen := map[string]bool{}
 			for _, attribute := range row.Attributes {
 				if attribute.XMLName.Space != "" && attribute.XMLName.Space != "http://torznab.com/schemas/2015/feed" && attribute.XMLName.Space != "http://www.newznab.com/DTD/2010/feeds/attributes/" {
@@ -311,8 +363,10 @@ func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]Resource
 					}
 					if name == "seeders" {
 						seeders = n
+						result.seeders = value
 					} else {
 						peers = n
+						result.peers = value
 					}
 				case "downloadvolumefactor", "uploadvolumefactor":
 					n, err := strconv.ParseFloat(value, 64)
@@ -321,15 +375,17 @@ func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]Resource
 					}
 					if name == "downloadvolumefactor" {
 						download = n
+						result.download = value
 						free = n == 0
 					} else {
 						upload = n
+						result.upload = value
 					}
 				case "imdbid":
-					item.IMDbID = value
+					result.IMDbID = value
 				}
 			}
-			items = append(items, item)
+			items = append(items, result)
 		case xml.EndElement:
 			if len(path) > 0 {
 				path = path[:len(path)-1]

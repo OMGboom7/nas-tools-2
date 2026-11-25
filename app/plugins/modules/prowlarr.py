@@ -1,17 +1,13 @@
-import requests
 from datetime import datetime, timedelta
 from threading import Event
-import xml.dom.minidom
 from jinja2 import Template
-import re
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.utils import RequestUtils
-from app.indexer.indexerConf import IndexerConf
-from app.utils import ExceptionUtils, StringUtils
+from app.indexer.indexerConf import plugin_indexers, plugin_search
+from app.utils import StringUtils
 
 from app.plugins.modules._base import _IPluginModule
 from config import Config
@@ -149,8 +145,6 @@ class Prowlarr(_IPluginModule):
         return "索引列表", Template(template).render(IndexersCount=len(self._sites), Indexers=self._sites), None
 
     def init_config(self, config=None):
-        self.info(f"初始化配置{config}")
-
         if config:
             self._host = config.get("host")
             if self._host:
@@ -231,102 +225,7 @@ class Prowlarr(_IPluginModule):
         })
 
     def get_indexers(self, check=True, indexer_id=None, public=True, plugins=True):
-        """
-        获取配置的prowlarr indexer
-        :return: indexer 信息 [(indexerId, indexerName, url)]
-        """
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "User-Agent": Config().get_ua(),
-            "X-Api-Key": self._api_key,
-            "Accept": "application/json, text/javascript, */*; q=0.01"
-        }
-        indexer_query_url = f"{self._host}/api/v1/indexerstats"
-        try:
-            ret = RequestUtils(headers=headers).get_res(indexer_query_url)
-            if not ret:
-                return []
-            if not RequestUtils.check_response_is_valid_json(ret):
-                self.info(f"【{self.module_name}】参数设置不正确，请检查所有的参数是否填写正确")
-                return []
-            if not ret.json():
-                return []
-            ret_indexers = ret.json()["indexers"]
-            if not ret or ret_indexers == [] or ret is None:
-                return []
+        return plugin_indexers(self.module_name, self._host, self._api_key)
 
-            indexers = [IndexerConf({"id": f'{v["indexerName"]}-prowlarr',
-                                 "name": f'{v["indexerName"]}(Prowlarr)',
-                                 "domain": f'{self._host}/api/v1/indexer/{v["indexerId"]}',
-                                 "public": True,
-                                 "builtin": False,
-                                 "proxy": True,
-                                 "parser": self.module_name})
-                    for v in ret_indexers]
-            return indexers
-        except Exception as e2:
-            ExceptionUtils.exception_traceback(e2)
-            return []
-
-    def search(self, indexer,
-               keyword,
-               page):
-        """
-        根据关键字多线程检索
-        """
-        if not indexer or not keyword:
-            return None
-        self.info(f"【{self.module_name}】开始检索Indexer：{indexer.name} ...")
-
-        # 获取indexerId
-        indexerId_pattern = r"/indexer/([^/]+)"
-        indexerId_match = re.search(indexerId_pattern, indexer.domain)
-        indexerId = ""
-        if indexerId_match:
-            indexerId = indexerId_match.group(1)
-
-        if not StringUtils.is_string_and_not_empty(indexerId):
-            self.info(f"【{self.module_name}】{indexer.name} 索引id为空")
-            return []
-
-        try:
-            headers = {
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "User-Agent": Config().get_ua(),
-                "X-Api-Key": self._api_key,
-                "Accept": "application/json, text/javascript, */*; q=0.01"
-            }
-            api_url = f"{self._host}/api/v1/search?query={keyword}&indexerIds={indexerId}&type=search&limit=100&offset=0"
-            ret = RequestUtils(headers=headers).get_res(api_url)
-            if not ret:
-                return []
-            if not RequestUtils.check_response_is_valid_json(ret):
-                self.info(f"【{self.module_name}】参数设置不正确，请检查所有的参数是否填写正确")
-                return []
-            if not ret.json():
-                return []
-
-            ret_indexers = ret.json()
-            if not ret or ret_indexers == [] or ret is None:
-                return []
-
-            torrents = []
-            for entry in ret_indexers:
-                tmp_dict = {'indexer_id': entry["indexerId"],
-                            'indexer': entry["indexer"],
-                            'title': entry["title"],
-                            'enclosure': entry["downloadUrl"],
-                            'description': entry["sortTitle"],
-                            'size': entry["size"],
-                            'seeders': entry["seeders"],
-                            'peers': None,
-                            'freeleech': None,
-                            'downloadvolumefactor': None,
-                            'uploadvolumefactor': None,
-                            'page_url': entry["guid"],
-                            'imdbid': None}
-                torrents.append(tmp_dict)
-            return torrents
-        except Exception as e2:
-            ExceptionUtils.exception_traceback(e2)
-            return []
+    def search(self, indexer, keyword, page):
+        return plugin_search(self.module_name, self._host, self._api_key, indexer, keyword, page)

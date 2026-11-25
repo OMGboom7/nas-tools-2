@@ -56,6 +56,13 @@ func endpoint(base *url.URL, path string) *url.URL {
 	return &next
 }
 
+func indexerEndpoint(base *url.URL, kind, remoteID string) *url.URL {
+	if kind == "Jackett" {
+		return endpoint(base, "/api/v2.0/indexers/"+remoteID+"/results/torznab/")
+	}
+	return endpoint(base, "/api/v1/indexer/"+remoteID)
+}
+
 // Administrator-selected endpoints may be local services. Never follow
 // redirects or put credentials in error messages, response DTOs, or URLs.
 func Discover(ctx context.Context, cfg Config, transport http.RoundTripper) ([]Indexer, error) {
@@ -146,7 +153,7 @@ func Discover(ctx context.Context, cfg Config, transport http.RoundTripper) ([]I
 			if row.Type != "public" && row.Type != "private" && row.Type != "semi-private" {
 				return nil, ErrResponse
 			}
-			items = append(items, Indexer{ID: row.ID + "-jackett", Name: row.Name + "(Jackett)", Domain: endpoint(base, "/api/v2.0/indexers/"+row.ID+"/results/torznab/").String(), RemoteID: row.ID, Kind: cfg.Kind, Public: row.Type == "public"})
+			items = append(items, Indexer{ID: row.ID + "-jackett", Name: row.Name + "(Jackett)", Domain: indexerEndpoint(base, cfg.Kind, row.ID).String(), RemoteID: row.ID, Kind: cfg.Kind, Public: row.Type == "public"})
 		}
 	} else {
 		var document struct {
@@ -163,7 +170,7 @@ func Discover(ctx context.Context, cfg Config, transport http.RoundTripper) ([]I
 				return nil, ErrResponse
 			}
 			id := strconv.FormatInt(row.ID, 10)
-			items = append(items, Indexer{ID: row.Name + "-prowlarr", Name: row.Name + "(Prowlarr)", Domain: endpoint(base, "/api/v1/indexer/"+id).String(), RemoteID: id, Kind: cfg.Kind, Public: true})
+			items = append(items, Indexer{ID: row.Name + "-prowlarr", Name: row.Name + "(Prowlarr)", Domain: indexerEndpoint(base, cfg.Kind, id).String(), RemoteID: id, Kind: cfg.Kind, Public: true})
 		}
 	}
 	seen := map[string]bool{}
