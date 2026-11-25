@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
 )
 
 type torrentTransferAPI struct {
+	system      *systemconfig.Store
+	organizer   *organizationAPI
 	downloaders *downloaderconfig.Store
 	database    string
 	login       *siteLoginAPI

@@ -1740,3 +1740,28 @@ export async function getTorrentTransferReceipt(token: string, id: string, signa
   }
   return record;
 }
+
+export type TorrentTransferReview = {
+  source: string;
+  target: string;
+  existing: number;
+  failed: number;
+  items: { receipt: string; name: string; sourceId: string; targetId: string; directory: string }[];
+};
+
+export async function reviewTorrentTransfers(token: string, signal: AbortSignal): Promise<TorrentTransferReview> {
+  const response = await fetch("/api/v1/torrent-transfer/review", {
+    method: "POST", headers: { Authorization: token, "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmRead: true }), signal,
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new ApiError(body?.message || "转种审核失败", response.status);
+  const review: TorrentTransferReview = body?.result;
+  if (body?.code !== 0 || !review || typeof review.source !== "string" || typeof review.target !== "string" ||
+      !Number.isSafeInteger(review.existing) || review.existing < 0 || !Number.isSafeInteger(review.failed) || review.failed < 0 ||
+      !Array.isArray(review.items) || !review.items.every(item => item && typeof item.receipt === "string" && /^[a-f0-9]{64}$/.test(item.receipt) &&
+        typeof item.name === "string" && typeof item.directory === "string" && /^[a-f0-9]{40}$/.test(item.sourceId) && /^[a-f0-9]{40}$/.test(item.targetId))) {
+    throw new ApiError("转种审核结果无效", 502);
+  }
+  return review;
+}
