@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/0xforee/nas-tools/backend/internal/fsutil"
 )
 
 type Entry struct {
@@ -203,7 +205,7 @@ func (w Workspace) newTransaction(ctx context.Context, id string) (Transaction, 
 }
 
 func checkedMove(from, to string) error {
-	if err := moveExclusive(from, to); err != nil {
+	if err := fsutil.RenameExclusive(from, to); err != nil {
 		return err
 	}
 	return errors.Join(syncDir(filepath.Dir(from)), syncDir(filepath.Dir(to)))

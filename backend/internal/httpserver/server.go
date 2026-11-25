@@ -212,7 +212,11 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		if err != nil {
 			return nil, err
 		}
-		if _, err := database.EnsureMigrationBackup(application.UserDatabasePath()); err != nil {
+		if cfg.DisableLegacy {
+			if err := database.PrepareNativeUserDatabase(application.UserDatabasePath()); err != nil {
+				return nil, fmt.Errorf("prepare native user database: %w", err)
+			}
+		} else if _, err := database.EnsureMigrationBackup(application.UserDatabasePath()); err != nil {
 			return nil, fmt.Errorf("create pre-Go database backup: %w", err)
 		}
 		nativeUserDatabasePath = application.UserDatabasePath()
