@@ -1,5 +1,6 @@
 import os
 import signal
+import subprocess
 import sys
 import warnings
 
@@ -23,6 +24,11 @@ if is_executable:
             os.makedirs(config_path, exist_ok=True)
     except Exception as err:
         print(str(err))
+
+go_initializes_db = os.environ.get("NASTOOL_GO_INIT_DATA") == "1"
+if go_initializes_db:
+    # Run before loading configuration singletons, database clients or web plugins.
+    subprocess.run(["/usr/local/bin/nas-tools-go", "init-db"], check=True)
 
 from config import Config
 import log
@@ -97,9 +103,9 @@ def init_system():
     # 配置
     log.console('NAStool 当前版本号：%s' % APP_VERSION)
     # 数据库初始化
-    init_db()
-    # 数据库更新
-    update_db()
+    if not go_initializes_db:
+        init_db()
+        update_db()
     # 数据初始化
     init_data()
     # 升级配置文件

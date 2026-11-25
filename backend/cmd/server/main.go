@@ -20,10 +20,10 @@ import (
 
 func main() {
 	if len(os.Args) > 1 {
-		if os.Args[1] == "init-data" && len(os.Args) == 2 {
+		if (os.Args[1] == "init-db" || os.Args[1] == "init-data") && len(os.Args) == 2 {
 			path := config.ApplicationPath()
-			if err := initializeData(path); err != nil {
-				slog.Error("initialize user data", "error", err)
+			if err := initializeDatabase(path, os.Args[1]); err != nil {
+				slog.Error(os.Args[1], "error", err)
 				os.Exit(1)
 			}
 			return
@@ -95,17 +95,41 @@ func main() {
 	}
 }
 
-func initializeData(path string) error {
+func initializeDatabase(path, command string) error {
+	dir := filepath.Dir(path)
+	if command == "init-db" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+	}
 	release, err := backuprestore.HoldStartup(path)
 	if err != nil {
 		return err
 	}
 	defer release()
-	dbPath := filepath.Join(filepath.Dir(path), "user.db")
-	if _, err := database.EnsureMigrationBackup(dbPath); err != nil {
+	dbPath := filepath.Join(dir, "user.db")
+	var created bool
+	if command == "init-db" {
+		created, err = config.InitializeApplication(path)
+		if err != nil {
+			return err
+		}
+		if _, err := config.NewStore(path).SyncInitializationFiles(); err != nil {
+			return err
+		}
+		if err := database.PrepareApplicationDatabases(dir); err != nil {
+			return err
+		}
+	} else if _, err := database.EnsureMigrationBackup(dbPath); err != nil {
 		return err
 	}
-	return database.InitializeUserData(dbPath, path)
+	if err := database.InitializeUserData(dbPath, path); err != nil {
+		return err
+	}
+	if created {
+		slog.Info("initial configuration created; read the initial sign-in settings from the private config backup", "path", path+".bak")
+	}
+	return nil
 }
 
 func holdApplication(cfg config.Config) (func(), error) {

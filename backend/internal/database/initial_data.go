@@ -184,7 +184,7 @@ func updateInitialRows(tx *sql.Tx, table, assignment, condition string) error {
 
 func hasInitialTable(tx *sql.Tx, table string) (bool, error) {
 	var kind string
-	err := tx.QueryRow("SELECT type FROM main.sqlite_schema WHERE name=? COLLATE NOCASE", table).Scan(&kind)
+	err := tx.QueryRow("SELECT type FROM main.sqlite_schema WHERE name=? COLLATE NOCASE AND type IN ('table','view','index')", table).Scan(&kind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

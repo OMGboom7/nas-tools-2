@@ -247,7 +247,7 @@ func TestCookieCloudPublicationRequiresOriginalReceipt(t *testing.T) {
 	if err := f.signin.system.Set(t.Context(), cookiecloud.ConfigKey, `{"server":"https://receiver.fixture.test","key":"fixture","password":"fixture","notify":true}`); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", f.path)
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: f.path, RawQuery: "mode=rw&_pragma=busy_timeout(5000)"}).String())
 	if err != nil {
 		t.Fatal(err)
 	}

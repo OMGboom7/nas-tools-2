@@ -49,13 +49,37 @@ func PrepareNativeUserDatabase(path string) error {
 	} else if err != nil {
 		return err
 	}
+	return prepareSchema(path, "rw", nil, true)
+}
+
+// PrepareApplicationDatabases replaces the original ORM create_all followed
+// by Alembic in deployments that still serve legacy clients. Both original
+// databases are backed up before either can be changed.
+func PrepareApplicationDatabases(dir string) error {
+	user := filepath.Join(dir, "user.db")
+	media := filepath.Join(dir, "media.db")
+	for _, path := range []string{user, media} {
+		if _, err := EnsureMigrationBackup(path); err != nil {
+			return fmt.Errorf("back up %s: %w", filepath.Base(path), err)
+		}
+	}
+	if err := prepareSchema(user, "rwc", userTables, true); err != nil {
+		return fmt.Errorf("prepare user.db: %w", err)
+	}
+	if err := prepareSchema(media, "rwc", mediaTables, false); err != nil {
+		return fmt.Errorf("prepare media.db: %w", err)
+	}
+	return nil
+}
+
+func prepareSchema(path, mode string, tables []initialTable, upgradeUser bool) error {
 	dsn, err := sqliteFileURL(path)
 	if err != nil {
 		return err
 	}
 	// Dropping a table during a type rebuild must not cascade into child
 	// rows. The private migration connection checks the affected keys itself.
-	dsn.RawQuery = "mode=rw&_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=foreign_keys(OFF)"
+	dsn.RawQuery = "mode=" + mode + "&_txlock=immediate&_pragma=busy_timeout(10000)&_pragma=foreign_keys(OFF)"
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return err
@@ -66,6 +90,26 @@ func PrepareNativeUserDatabase(path string) error {
 		return err
 	}
 	defer tx.Rollback()
+	for _, table := range tables {
+		present, err := hasInitialTable(tx, table.name)
+		if err != nil {
+			return err
+		}
+		if !present {
+			if _, err := tx.Exec(table.ddl); err != nil {
+				return fmt.Errorf("create %s: %w", table.name, err)
+			}
+		}
+	}
+	if upgradeUser {
+		if err := upgradeUserTables(tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func upgradeUserTables(tx *sql.Tx) error {
 	for _, table := range userTableUpgrades {
 		if err := table.apply(tx); err != nil {
 			return fmt.Errorf("upgrade %s: %w", table.name, err)
@@ -76,7 +120,7 @@ func PrepareNativeUserDatabase(path string) error {
 			return fmt.Errorf("upgrade %s column types: %w", change.table, err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func sqliteFileURL(path string) (*url.URL, error) {

@@ -1282,6 +1282,8 @@ class WebAction:
         """
         重置数据库版本
         """
+        if os.environ.get("NASTOOL_GO_INIT_DATA") == "1":
+            return {"code": 1, "msg": "Go 会在启动时按实际表结构升级数据库，无需重置版本号"}
         try:
             DbHelper().drop_table("alembic_version")
             return {"code": 0}

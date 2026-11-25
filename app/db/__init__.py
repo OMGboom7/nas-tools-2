@@ -4,8 +4,6 @@ from config import Config
 from .main_db import MainDb
 from .main_db import DbPersist
 from .media_db import MediaDb
-from alembic.config import Config as AlembicConfig
-from alembic.command import upgrade as alembic_upgrade
 
 
 def init_db():
@@ -31,6 +29,8 @@ def update_db():
     """
     更新数据库
     """
+    from alembic.config import Config as AlembicConfig
+    from alembic.command import upgrade as alembic_upgrade
     db_location = os.path.normpath(os.path.join(Config().get_config_path(), 'user.db'))
     script_location = os.path.normpath(os.path.join(Config().get_root_path(), 'scripts'))
     log.console('开始更新数据库...')

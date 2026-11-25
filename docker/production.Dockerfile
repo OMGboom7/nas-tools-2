@@ -12,8 +12,13 @@ RUN go mod download
 COPY backend/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/nas-tools-go ./cmd/server
 
+FROM golang:1.24-alpine AS production-requirements
+COPY requirements.txt /source-requirements.txt
+RUN sed '/^alembic==/d' /source-requirements.txt > /requirements.txt
+
 FROM python:3.10.11-alpine
-COPY package_list.txt requirements.txt /tmp/nas-tools-build/
+COPY package_list.txt /tmp/nas-tools-build/
+COPY --from=production-requirements /requirements.txt /tmp/nas-tools-build/requirements.txt
 RUN apk add --no-cache --virtual .build-deps \
         libffi-dev \
         gcc \
@@ -73,6 +78,7 @@ RUN mkdir ${HOME} \
     && echo "nt ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 COPY --chown=nt:nt . ${WORKDIR}
+COPY --from=production-requirements --chown=nt:nt /requirements.txt ./requirements.txt
 COPY --from=frontend-builder --chown=nt:nt /build/frontend/dist ${WORKDIR}/frontend/dist
 COPY --from=backend-builder /out/nas-tools-go /usr/local/bin/nas-tools-go
 COPY --chmod=755 docker/rootfs /
