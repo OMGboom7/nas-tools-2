@@ -347,6 +347,8 @@ func startSiteStatisticsWorker(ctx context.Context, api *siteStatisticsAPI) func
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		clock := nativeStatsClock{api: api}
+		defer clock.close()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
@@ -354,7 +356,7 @@ func startSiteStatisticsWorker(ctx context.Context, api *siteStatisticsAPI) func
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				api.tick(ctx, time.Now())
+				clock.tick(ctx, time.Now())
 			}
 		}
 	}()
@@ -369,11 +371,38 @@ func startSiteStatisticsWorker(ctx context.Context, api *siteStatisticsAPI) func
 		api.wait.Wait()
 	}
 }
-func (api *siteStatisticsAPI) tick(ctx context.Context, now time.Time) {
+
+type nativeStatsClock struct {
+	api   *siteStatisticsAPI
+	guard *organization.JobGuard
+}
+
+func (clock *nativeStatsClock) close() {
+	clock.guard.Close()
+	clock.guard = nil
+}
+
+func (clock *nativeStatsClock) tick(ctx context.Context, now time.Time) {
+	api := clock.api
 	api.recover(ctx)
 	c, e := api.store.Control(ctx)
-	if e != nil || !c.Enabled || c.Cron == "" || c.NextRun == "" {
+	if e != nil {
 		return
+	}
+	if !c.Enabled || c.Cron == "" || c.NextRun == "" {
+		clock.close()
+		return
+	}
+	// An active Go-only scheduler owns the clock for this database. A legacy
+	// host can take over after shutdown without a stale process ID or timeout.
+	if clock.guard == nil && organization.CopySupported {
+		if api.login.guards == nil || *api.login.guards == nil {
+			return
+		}
+		clock.guard, e = (*api.login.guards).AcquireJob(ctx, statsTimerGuard)
+		if e != nil {
+			return
+		}
 	}
 	due, e := time.Parse(time.RFC3339Nano, c.NextRun)
 	if e != nil || now.Before(due) {

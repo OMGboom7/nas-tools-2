@@ -25,8 +25,27 @@ func StatisticsRunCommand(ctx context.Context, path, mode string, in io.Reader, 
 	}
 	lines := bufio.NewScanner(in)
 	lines.Buffer(make([]byte, 4096), 4<<20)
+	readLine := func() ([]byte, error) {
+		if !lines.Scan() {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return lines.Bytes(), nil
+	}
+	return runStatistics(ctx, path, mode, readLine, json.NewEncoder(out), nil)
+}
+
+type statisticsOccurrence struct {
+	cron  string
+	claim func(context.Context) error
+}
+
+func runStatistics(ctx context.Context, path, mode string, readLine func() ([]byte, error), encoder *json.Encoder, occurrence *statisticsOccurrence) error {
+	raw, err := readLine()
+	if err != nil {
+		return err
+	}
 	var targets []scheduledStatsTarget
-	if !lines.Scan() || json.Unmarshal(lines.Bytes(), &targets) != nil || targets == nil {
+	if json.Unmarshal(raw, &targets) != nil || targets == nil {
 		return sitestats.ErrState
 	}
 	id := sitelogin.Random()
@@ -39,7 +58,7 @@ func StatisticsRunCommand(ctx context.Context, path, mode string, in io.Reader, 
 		return err
 	}
 	defer release()
-	rows, err := collectScheduledStatistics(ctx, path, targets, reference, mode == "summary")
+	rows, err := collectScheduledStatistics(ctx, path, targets, reference, mode == "summary", occurrence)
 	if err != nil {
 		return err
 	}
@@ -56,7 +75,6 @@ func StatisticsRunCommand(ctx context.Context, path, mode string, in io.Reader, 
 		return err
 	}
 	defer db.Close()
-	encoder := json.NewEncoder(out)
 	if err := writeStatsCenter(ctx, db, reference, encoder); err != nil {
 		return err
 	}
@@ -67,10 +85,11 @@ func StatisticsRunCommand(ctx context.Context, path, mode string, in io.Reader, 
 		var reply struct {
 			Body *string `json:"body"`
 		}
-		if !lines.Scan() {
+		raw, err := readLine()
+		if err != nil {
 			return nil, io.ErrUnexpectedEOF
 		}
-		if json.Unmarshal(lines.Bytes(), &reply) != nil || reply.Body == nil || *reply.Body == "" {
+		if json.Unmarshal(raw, &reply) != nil || reply.Body == nil || *reply.Body == "" {
 			return nil, sitestats.ErrState
 		}
 		return []byte(*reply.Body), nil

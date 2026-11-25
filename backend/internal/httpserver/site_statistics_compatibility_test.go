@@ -41,7 +41,9 @@ func TestSiteStatisticsOriginalScheduleFormatsAndHours(t *testing.T) {
 				t.Fatal("startup delay", c.NextRun, e)
 			}
 			if raw == "6" {
-				api.tick(t.Context(), first.Add(time.Second))
+				clock := nativeStatsClock{api: api}
+				defer clock.close()
+				clock.tick(t.Context(), first.Add(time.Second))
 				jobs, e := api.store.Jobs(t.Context())
 				if e != nil || len(jobs) != 1 {
 					t.Fatal(jobs, e)

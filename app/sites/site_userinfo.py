@@ -1,6 +1,6 @@
 import json
 import subprocess
-from threading import Lock
+from threading import Event, Lock, Thread
 
 import log
 from app.helper import DbHelper
@@ -26,6 +26,102 @@ def read_site_statistics(action, data=None):
         return {"code": 1, "msg": "站点统计查询不可用"}
 
 
+def _serve_refresh(worker, selected=None):
+    sites = Sites()
+    targets = [{"id": site["id"], "name": site["name"], "url": site["strict_url"]}
+               for site in sites.get_sites(statistic=True)
+               if (not selected or site["name"] in selected) and not sites.check_ratelimit(site["id"])]
+    worker.stdin.write(json.dumps(targets) + "\n")
+    worker.stdin.flush()
+    try:
+        for line in worker.stdout:
+            item = json.loads(line)
+            if item["kind"] == "center":
+                MessageCenter().insert_system_message(item["title"], item["text"])
+            elif item["kind"] == "render":
+                try:
+                    template = SandboxedEnvironment().from_string(item["template"])
+                    body = template.render(title=item["title"], text=item["text"], image="", url="", user_id="")
+                except Exception:
+                    body = None
+                    log.error("【Sites】统计通知模板渲染失败")
+                worker.stdin.write(json.dumps({"body": body}, ensure_ascii=False) + "\n")
+                worker.stdin.flush()
+            elif item["kind"] == "done":
+                if item["failed"]:
+                    log.warn(f"【Sites】{item['failed']} 个站点未能完整刷新")
+                return
+            elif item["kind"] == "failed":
+                log.warn("【Sites】本次定时统计未能完成")
+                return
+        raise ValueError("incomplete statistics refresh")
+    finally:
+        sites.init_favicons()
+
+
+class StatisticsScheduler:
+    """Connect the Go scheduler to the running client's site limiter and message center."""
+
+    def __init__(self):
+        self._stopped = Event()
+        self._state = Lock()
+        self._worker = None
+        self._thread = Thread(target=self._serve, name="site-statistics", daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._stopped.set()
+        with self._state:
+            worker = self._worker
+            if worker is not None:
+                try:
+                    worker.stdin.close()
+                except BrokenPipeError:
+                    pass
+        if worker is not None:
+            try:
+                worker.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                worker.kill()
+                worker.wait()
+        self._thread.join()
+
+    def _serve(self):
+        while not self._stopped.is_set():
+            try:
+                with self._state:
+                    if self._stopped.is_set():
+                        return
+                    worker = subprocess.Popen([go_helper_path(), "site-statistics-scheduler"],
+                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                              text=True, encoding="utf-8")
+                    self._worker = worker
+                with worker:
+                    for line in worker.stdout:
+                        if json.loads(line).get("kind") != "targets":
+                            raise ValueError("unexpected scheduler response")
+                        while not self._stopped.is_set():
+                            if lock.acquire(timeout=0.25):
+                                try:
+                                    _serve_refresh(worker)
+                                finally:
+                                    lock.release()
+                                break
+                        if self._stopped.is_set():
+                            break
+            except Exception:
+                if not self._stopped.is_set():
+                    log.error("【Sites】统计定时服务连接中断")
+            finally:
+                with self._state:
+                    self._worker = None
+            if not self._stopped.is_set():
+                log.error("【Sites】统计定时服务已退出，5 秒后重试")
+                self._stopped.wait(5)
+
+
 @singleton
 class SiteUserInfo(object):
     def refresh_site_data_now(self):
@@ -33,45 +129,17 @@ class SiteUserInfo(object):
 
     @staticmethod
     def refresh_statistics(specify_sites=None, summary=False):
-        sites = Sites()
+        mode = "summary" if summary else "refresh"
         with lock:
-            selected = set(specify_sites or [])
-            targets = [{"id": site["id"], "name": site["name"], "url": site["strict_url"]}
-                       for site in sites.get_sites(statistic=True)
-                       if (not selected or site["name"] in selected) and not sites.check_ratelimit(site["id"])]
-            mode = "summary" if summary else "refresh"
             try:
                 with subprocess.Popen([go_helper_path(), "site-statistics-run", mode],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       text=True, encoding="utf-8") as worker:
-                    worker.stdin.write(json.dumps(targets) + "\n")
-                    worker.stdin.flush()
-                    done = False
-                    for line in worker.stdout:
-                        item = json.loads(line)
-                        if item["kind"] == "center":
-                            MessageCenter().insert_system_message(item["title"], item["text"])
-                        elif item["kind"] == "render":
-                            # Existing installations can have custom Jinja webhook bodies.
-                            try:
-                                template = SandboxedEnvironment().from_string(item["template"])
-                                body = template.render(title=item["title"], text=item["text"],
-                                                       image="", url="", user_id="")
-                            except Exception:
-                                body = None
-                                log.error("【Sites】统计通知模板渲染失败")
-                            worker.stdin.write(json.dumps({"body": body}, ensure_ascii=False) + "\n")
-                            worker.stdin.flush()
-                        elif item["kind"] == "done":
-                            done = True
-                            if item["failed"]:
-                                log.warn(f"【Sites】{item['failed']} 个站点未能完整刷新")
-                    if worker.wait() or not done:
+                    _serve_refresh(worker, set(specify_sites or []))
+                    if worker.wait():
                         raise ValueError("incomplete statistics refresh")
             except (OSError, ValueError, subprocess.SubprocessError):
                 log.error("【Sites】统计刷新或消息投递未完成，请查看任务回执")
-            finally:
-                sites.init_favicons()
 
     def update_site_name(self, old_name, name):
         """

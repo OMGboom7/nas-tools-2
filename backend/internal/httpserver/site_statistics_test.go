@@ -112,7 +112,9 @@ func TestSiteStatisticsNativeHTTPCompleteFailureDedupAndLegacyReads(t *testing.T
 	var fail atomic.Bool
 	f.api.transport = statsTransport(t, &calls, &fail)
 	// No original schedule or browser opening may run without Go ownership.
-	api.tick(t.Context(), time.Now().Add(time.Hour))
+	clock := nativeStatsClock{api: api}
+	defer clock.close()
+	clock.tick(t.Context(), time.Now().Add(time.Hour))
 	if calls.Load() != 0 {
 		t.Fatal("statistics ran before takeover")
 	}

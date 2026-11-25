@@ -1,6 +1,5 @@
 import datetime
 
-import pytz
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -8,10 +7,10 @@ import log
 from app.helper import MetaHelper
 from app.mediaserver import MediaServer
 from app.rss import Rss
-from app.sites import SiteUserInfo
+from app.sites.site_userinfo import StatisticsScheduler
 from app.subscribe import Subscribe
 from app.sync import Sync
-from app.utils import ExceptionUtils, SchedulerUtils
+from app.utils import ExceptionUtils
 from app.utils.commons import singleton
 from config import METAINFO_SAVE_INTERVAL, \
     SYNC_TRANSFER_INTERVAL, RSS_CHECK_INTERVAL, \
@@ -22,6 +21,7 @@ from web.backend.wallpaper import get_login_wallpaper
 @singleton
 class Scheduler:
     SCHEDULER = None
+    _statistics_timer = None
     _pt = None
     _douban = None
     _media = None
@@ -32,7 +32,7 @@ class Scheduler:
     def init_config(self):
         self._pt = Config().get_config('pt')
         self._media = Config().get_config('media')
-        self.stop_service()
+        self._stop_jobs()
         self.run_service()
 
     def run_service(self):
@@ -46,16 +46,6 @@ class Scheduler:
         if not self.SCHEDULER:
             return
         if self._pt:
-            # 数据统计
-            ptrefresh_date_cron = self._pt.get('ptrefresh_date_cron')
-            if ptrefresh_date_cron:
-                tz = pytz.timezone(Config().get_timezone())
-                SchedulerUtils.start_job(scheduler=self.SCHEDULER,
-                                         func=SiteUserInfo().refresh_site_data_now,
-                                         func_desc="数据统计",
-                                         cron=str(ptrefresh_date_cron),
-                                         next_run_time=datetime.datetime.now(tz) + datetime.timedelta(minutes=1))
-
             # RSS下载器
             pt_check_interval = self._pt.get('pt_check_interval')
             if pt_check_interval:
@@ -148,6 +138,9 @@ class Scheduler:
         if self._is_scheduler_valid():
             self.SCHEDULER.print_jobs()
             self.SCHEDULER.start()
+            if self._statistics_timer is None:
+                self._statistics_timer = StatisticsScheduler()
+                self._statistics_timer.start()
         else:
             log.error("【SCHEDULE】任务调度器未成功初始化或已关闭，无法执行打印job任务和开始任务")
 
@@ -158,6 +151,12 @@ class Scheduler:
         """
         停止定时服务
         """
+        if self._statistics_timer is not None:
+            self._statistics_timer.stop()
+            self._statistics_timer = None
+        self._stop_jobs()
+
+    def _stop_jobs(self):
         try:
             if self.SCHEDULER:
                 self.SCHEDULER.remove_all_jobs()

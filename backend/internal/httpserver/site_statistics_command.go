@@ -48,14 +48,14 @@ func ScheduledStatisticsCommand(ctx context.Context, path string, in io.Reader, 
 		return err
 	}
 	defer release()
-	rows, err := collectScheduledStatistics(ctx, path, targets, "", false)
+	rows, err := collectScheduledStatistics(ctx, path, targets, "", false, nil)
 	if err != nil {
 		return err
 	}
 	return json.NewEncoder(out).Encode(rows)
 }
 
-func collectScheduledStatistics(ctx context.Context, path string, targets []scheduledStatsTarget, reference string, summary bool) ([]scheduledStatsResult, error) {
+func collectScheduledStatistics(ctx context.Context, path string, targets []scheduledStatsTarget, reference string, summary bool, occurrence *statisticsOccurrence) ([]scheduledStatsResult, error) {
 	seen := map[int64]bool{}
 	for _, target := range targets {
 		if target.ID <= 0 || seen[target.ID] || target.Name == "" || target.URL == "" {
@@ -82,6 +82,39 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 	cfg, err := app.Snapshot()
 	if err != nil {
 		return nil, err
+	}
+	if occurrence != nil {
+		if statsTimerCron(cfg) != occurrence.cron {
+			return nil, errStatsScheduleChanged
+		}
+		if err = occurrence.claim(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if occurrence != nil {
+		// Rate-limited requests can wait longer than a config reload. Cancel
+		// them when the administrator disables or replaces this schedule.
+		run, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-run.Done():
+					return
+				case <-ticker.C:
+					latest, e := app.Snapshot()
+					if e != nil || statsTimerCron(latest) != occurrence.cron {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+		defer func() { cancel(); <-done }()
+		ctx = run
 	}
 	sites, err := siteconfig.Open(db)
 	if err != nil {
@@ -134,7 +167,7 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 					return sitestats.ErrState
 				}
 				latest, err := app.Snapshot()
-				if err != nil || statsNetworkConfig(latest) != fingerprint {
+				if err != nil || statsNetworkConfig(latest) != fingerprint || (occurrence != nil && statsTimerCron(latest) != occurrence.cron) {
 					return sitestats.ErrState
 				}
 				return ctx.Err()
@@ -176,6 +209,15 @@ func collectScheduledStatistics(ctx context.Context, path string, targets []sche
 	}
 	if summary {
 		err = store.ScheduledSummary(ctx, time.Now(), reference, func(ctx context.Context, tx *sql.Tx) ([]string, error) {
+			if occurrence != nil {
+				current, err := app.Snapshot()
+				if err != nil {
+					return nil, err
+				}
+				if statsTimerCron(current) != occurrence.cron {
+					return nil, errStatsScheduleChanged
+				}
+			}
 			all, err := siteconfig.ListIn(ctx, tx)
 			if err != nil {
 				return nil, err
