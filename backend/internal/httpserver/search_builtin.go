@@ -61,7 +61,7 @@ func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Conte
 			authenticated = key != ""
 		}
 		if page != nil {
-			if !configured || (definition.Parser != "" && definition.Parser != "HaiDanSpider") {
+			if !configured || (definition.Parser != "" && definition.Parser != "HaiDanSpider" && definition.Parser != "TorrentLeech") {
 				return nil, builtinindexer.ErrConfig
 			}
 			started := time.Now()
@@ -78,7 +78,7 @@ func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Conte
 		if err != nil {
 			return nil, err
 		}
-		if definition.Parser == "MTeamSpider" || definition.Parser == "TNodeSpider" {
+		if definition.Parser == "MTeamSpider" || definition.Parser == "TNodeSpider" || definition.Parser == "TorrentLeech" {
 			transport := service.transport
 			if truthy(options["proxy"]) || options["proxy"] == "Y" {
 				transport, err = siteProxyTransport(transport, objectValue(app["proxies"]), "https")
@@ -92,7 +92,13 @@ func (service *nativeExternalResourceSearch) searchBuiltinPage(ctx context.Conte
 					return nil, err
 				}
 			}
-			if definition.Parser == "TNodeSpider" {
+			if definition.Parser == "TorrentLeech" {
+				number := 0
+				if page != nil {
+					number = *page
+				}
+				items, err = builtinindexer.SearchTorrentLeech(ctx, definition, cookie, ua, keyword, number, transport)
+			} else if definition.Parser == "TNodeSpider" {
 				items, err = builtinindexer.SearchTNode(ctx, definition, cookie, ua, keyword, 0, 100, transport)
 			} else {
 				items, err = builtinindexer.SearchMTeam(ctx, definition, key, ua, keyword, 0, transport)

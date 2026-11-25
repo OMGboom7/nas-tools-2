@@ -264,13 +264,19 @@ func TestExternalSiteResourcePageScopeAndPrivateLinks(t *testing.T) {
 func TestCatalogSiteResourcePageWithoutLegacy(t *testing.T) {
 	dir := t.TempDir()
 	catalog := filepath.Join(dir, "catalog.bin")
-	const definitions = `{"indexer":[{"id":"generic","name":"Catalog","domain":"https://tracker.test/","search":{"paths":[{"path":"search"}],"params":{"q":"{keyword}"}},"browse":{"path":"recent/{page}","start":1},"torrents":{"list":{"selector":"article"},"fields":{"title":{"selector":"h2"},"download":{"selector":"a","attribute":"href"},"size":{"selector":"span"}}}}]}`
+	const definitions = `{"indexer":[{"id":"installed-tl","name":"TL","domain":"https://tl.test/","parser":"TorrentLeech"},{"id":"generic","name":"Catalog","domain":"https://tracker.test/","search":{"paths":[{"path":"search"}],"params":{"q":"{keyword}"}},"browse":{"path":"recent/{page}","start":1},"torrents":{"list":{"selector":"article"},"fields":{"title":{"selector":"h2"},"download":{"selector":"a","attribute":"href"},"size":{"selector":"span"}}}}]}`
 	if err := os.WriteFile(catalog, []byte(base64.StdEncoding.EncodeToString([]byte(definitions))), 0600); err != nil {
 		t.Fatal(err)
 	}
 	hits := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		hits++
+		if r.URL.Host == "tl.test" {
+			if r.URL.Path != "/torrents/browse/list/query/film/page/3" || r.Header.Get("Cookie") != "tl-session" {
+				t.Fatal(r.URL)
+			}
+			return jsonResponse(r, `{"page":3,"torrentList":[{"fid":23,"filename":"private-file.torrent","name":"Film","seeders":"3","size":"9007199254740993","download_multiplier":"0.5"}]}`), nil
+		}
 		if r.URL.Host != "tracker.test" || r.Header.Get("Cookie") != "fixture-session" {
 			t.Fatal(r.URL)
 		}
@@ -295,7 +301,16 @@ func TestCatalogSiteResourcePageWithoutLegacy(t *testing.T) {
 			t.Fatal(reply.Code, body)
 		}
 	}
-	if hits != 2 {
+	if _, err := sites.Upsert(t.Context(), siteconfig.Site{Name: "Installed TL", SignURL: "https://tl.test/login", Cookie: "tl-session"}); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"site": {"tl.test"}, "page": {"2"}, "keyword": {"film"}}
+	reply := performFormRequest(handler, "/api/v1/site/resources", token, form)
+	body := reply.Body.String()
+	if reply.Code != 200 || !strings.Contains(body, "go-search-") || !strings.Contains(body, `"size":9007199254740993`) || strings.Contains(body, "private-file") || strings.Contains(body, "tl-session") {
+		t.Fatal(reply.Code, body)
+	}
+	if hits != 3 {
 		t.Fatal(hits)
 	}
 }

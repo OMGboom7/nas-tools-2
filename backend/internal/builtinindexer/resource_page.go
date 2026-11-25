@@ -44,6 +44,18 @@ func ResourcePage(ctx context.Context, parser string, q ResourcePageRequest, tra
 				"page_url": item.PageURL, "imdbid": item.IMDbID,
 			})
 		}
+	case "TorrentLeech":
+		keyword := ""
+		if q.Keyword != nil {
+			keyword = *q.Keyword
+		}
+		items, err := torrentLeechPage(ctx, definition, q.Cookie, q.UA, keyword, q.Page, transport)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			rows = append(rows, item.clientRow())
+		}
 	case "TNodeSpider":
 		keyword := ""
 		if q.Keyword != nil {
@@ -72,6 +84,8 @@ func ResourcePageCommand(ctx context.Context, command string, in io.Reader, out 
 	}
 	var parser string
 	switch command {
+	case "torrentleech-resources":
+		parser = "TorrentLeech"
 	case "tnode-resources":
 		parser = "TNodeSpider"
 	case "mteam-resources":

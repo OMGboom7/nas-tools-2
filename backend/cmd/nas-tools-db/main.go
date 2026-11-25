@@ -67,7 +67,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) == 2 && (os.Args[1] == "tnode-resources" || os.Args[1] == "mteam-resources") {
+	if len(os.Args) == 2 && (os.Args[1] == "torrentleech-resources" || os.Args[1] == "tnode-resources" || os.Args[1] == "mteam-resources") {
 		if err := builtinindexer.ResourcePageCommand(context.Background(), os.Args[1], os.Stdin, os.Stdout); err != nil {
 			slog.Error("site resource request failed")
 			os.Exit(1)

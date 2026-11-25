@@ -9,7 +9,6 @@ from app.helper import ProgressHelper, ChromeHelper, DbHelper
 from app.indexer.client._base import _IIndexClient
 from app.indexer.indexerConf import catalog_resources
 from app.indexer.client._render_spider import RenderSpider
-from app.indexer.client._torrentleech import TorrentLeech
 from app.indexer.client._plugins import PluginsSpider
 from app.sites import Sites
 from app.utils import MteamUtils, StringUtils
@@ -181,7 +180,7 @@ class BuiltinIndexer(_IIndexClient):
         # 开始索引
         result_array = []
         try:
-            if indexer.parser in ("TNodeSpider", "MTeamSpider"):
+            if indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech"):
                 if indexer.parser == "MTeamSpider" and not search_word:
                     error_flag = True
                 else:
@@ -190,8 +189,6 @@ class BuiltinIndexer(_IIndexClient):
                 error_flag, result_array = RenderSpider(indexer).search(
                     keyword=search_word,
                     mtype=match_media.type if match_media and match_media.tmdb_info else None)
-            elif indexer.parser == "TorrentLeech":
-                error_flag, result_array = TorrentLeech(indexer).search(keyword=search_word)
             elif indexer.parser != "HaiDanSpider" and PluginsSpider().status(indexer=indexer):
                 error_flag, result_array = PluginsSpider().search(keyword=search_word, indexer=indexer)
             else:
@@ -274,11 +271,8 @@ class BuiltinIndexer(_IIndexClient):
         if indexer.parser == "RenderSpider":
             error_flag, result_array = RenderSpider(indexer).search(keyword=keyword,
                                                                     page=page)
-        elif indexer.parser in ("TNodeSpider", "MTeamSpider"):
+        elif indexer.parser in ("TNodeSpider", "MTeamSpider", "TorrentLeech"):
             error_flag, result_array = self.__site_resources(indexer, keyword, page)
-        elif indexer.parser == "TorrentLeech":
-            error_flag, result_array = TorrentLeech(indexer).search(keyword=keyword,
-                                                            page=page)
         elif indexer.parser != "HaiDanSpider" and PluginsSpider().status(indexer=indexer):
             error_flag, result_array = PluginsSpider().search(keyword=keyword, indexer=indexer, page=page)
         else:
@@ -304,7 +298,12 @@ class BuiltinIndexer(_IIndexClient):
                 "ua": indexer.ua or Config().get_ua(),
                 "keyword": keyword, "page": int(page or 0), "proxy": proxy,
             }
-            if indexer.parser == "MTeamSpider":
+            if indexer.parser == "TorrentLeech":
+                command = "torrentleech-resources"
+                query["cookie"] = indexer.cookie
+                if isinstance(keyword, list):
+                    query["keyword"] = " ".join(keyword)
+            elif indexer.parser == "MTeamSpider":
                 command = "mteam-resources"
                 query["apiKey"] = MteamUtils.get_api_key(indexer.domain)
             else:
