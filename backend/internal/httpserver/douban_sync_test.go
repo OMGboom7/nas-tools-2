@@ -111,7 +111,7 @@ func TestDoubanSyncHistoryAndSubscriptionTransactionAcrossRestart(t *testing.T) 
 	if calls != 0 {
 		t.Fatal("inherited flags executed")
 	}
-	save(`{"auto_search":true,"auto_rss":false,"onlyonce":true}`, 501)
+	save(`{"auto_search":true,"auto_rss":false,"onlyonce":true}`, 200)
 	save(`{"onlyonce":true,"auto_search":false,"auto_rss":false}`, 200)
 	c := control()
 	if c.Next.Sub(c.Once) < 296*time.Second || c.Next.Sub(c.Once) > 298*time.Second {

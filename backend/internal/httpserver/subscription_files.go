@@ -158,6 +158,9 @@ func selectionOptions(d downloaderconfig.FileSelectionDefinition) (downloadAddOp
 }
 func (api *subscriptionSearchRunner) checkSelectionSource(ctx context.Context, tx *sql.Tx, p downloaderconfig.FileSelection) error {
 	d := p.Definition
+	if d.Version == 3 {
+		return api.checkDirectFiles(ctx, tx, d)
+	}
 	proof, plan, err := decodeSubscriptionProof(d.Proof)
 	if err != nil || proof.FileSelectionID != d.ID || proof.ProfileDigest != d.ProfileFingerprint() || proof.DownloaderID != d.DownloaderID || proof.DownloaderType != d.DownloaderType || proof.InfoHash != d.InfoHash || proof.Season != d.Season || !slices.Equal(proof.Episodes, d.Episodes) || text(plan.raw["ID"]) != strconv.FormatInt(d.SubscriptionID, 10) {
 		return downloaderconfig.ErrFileSelectionPending

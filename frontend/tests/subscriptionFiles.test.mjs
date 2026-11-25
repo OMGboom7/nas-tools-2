@@ -14,6 +14,17 @@ const api=await import(apiURL);
 const receipt={id:"a".repeat(32),downloaderId:"9223372036854775806",downloaderType:"qbittorrent",title:"Show",subscriptionId:"2",season:1,episodes:[2],infoHash:"b".repeat(40),state:"added",sourceRecorded:false,files:[{index:0,path:"Show/S01E01.mkv",size:"9007199254740993",selected:false},{index:1,path:"Show/S01E02.mkv",size:"12",selected:true}]};
 const review={receipt,current:{hash:receipt.infoHash,directory:"/downloads",labels:["NASTOOL-FILES-"+receipt.id],state:"stoppedDL",paused:true,files:receipt.files.map(f=>({...f,selected:true}))},next:"select",actor:"admin",presetEvidence:"",fingerprint:"c".repeat(64)};
 const response=data=>new Response(JSON.stringify({code:0,success:true,data}));
+test("direct file selections preserve their source and episode scope across recovery",async t=>{
+ const direct={...receipt,direct:true,subscriptionId:"0"};
+ assert.ok(api.validFileSelection(direct));
+ for(const invalid of [{...direct,direct:false},{...direct,direct:undefined},{...direct,subscriptionId:"2"},{...direct,seasons:[]}]){
+  assert.equal(api.validFileSelection(invalid),false);
+ }
+ for(const changed of [{...direct,episodes:[1]},{...direct,season:2},receipt]){
+  t.mock.method(globalThis,"fetch",async()=>response({...changed,state:"selected"}));
+  await assert.rejects(api.recoverFileSelection("token",{...review,receipt:direct},true,{files:true}));
+ }
+});
 test("file-selection reads use stable IDs and bounded pages without side effects",async t=>{
  let count=0;t.mock.method(globalThis,"fetch",async(path,o)=>{count++;assert.equal(o.method,undefined);return response(path.includes("?page=")?[receipt]:receipt)});
  assert.equal((await api.getFileSelection("token",receipt.id)).files[0].size,"9007199254740993");assert.equal((await api.getFileSelections("token",2)).length,1);

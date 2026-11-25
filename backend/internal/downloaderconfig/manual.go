@@ -7,6 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +20,8 @@ import (
 var ErrManualPending = errors.New("manual submission is pending or conflicts with its original scope")
 
 type ManualDefinition struct {
-	ProfileDigest                                               string `json:"profileDigest,omitempty"`
+	Direct                                                      *DirectMedia `json:"direct,omitempty"`
+	ProfileDigest                                               string       `json:"profileDigest,omitempty"`
 	DownloaderID                                                int64
 	DownloaderName, DownloaderType, ConfigDigest, OptionsDigest string
 	InfoHash, Actor, Title, Source, SavePath                    string
@@ -76,6 +80,16 @@ func scanManual(row interface{ Scan(...any) error }) (ManualSubmission, error) {
 // ReserveManual returns created=false only for an identical acknowledged scope.
 // Pending records never expire; source URL/token/torrent bytes are not stored.
 func (s *Store) ReserveManual(ctx context.Context, d ManualDefinition) (ManualSubmission, bool, error) {
+	return s.reserveManual(ctx, d, nil)
+}
+
+func (s *Store) ReserveDirectFiles(ctx context.Context, d ManualDefinition, selection FileSelectionDefinition) (ManualSubmission, bool, error) {
+	if d.Direct == nil || selection.Version != 3 || d.ProfileDigest != selection.ProfileFingerprint() || d.InfoHash != selection.InfoHash || d.ConfigDigest != selection.ConfigDigest || d.DownloaderID != selection.DownloaderID {
+		return ManualSubmission{}, false, ErrManualPending
+	}
+	return s.reserveManual(ctx, d, &selection)
+}
+func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection *FileSelectionDefinition) (ManualSubmission, bool, error) {
 	if d.DownloaderID < 1 || d.Actor == "" || d.Title == "" || len(d.InfoHash) != 40 && len(d.InfoHash) != 64 || len(d.ConfigDigest) != 64 || len(d.OptionsDigest) != 64 {
 		return ManualSubmission{}, false, ErrManualPending
 	}
@@ -93,6 +107,27 @@ func (s *Store) ReserveManual(ctx context.Context, d ManualDefinition) (ManualSu
 	if err := manualSchema(ctx, tx); err != nil {
 		return ManualSubmission{}, false, err
 	}
+	if m := d.Direct; m != nil {
+		if !m.valid() {
+			return ManualSubmission{}, false, ErrManualPending
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS GO_MANUAL_DIRECT_MEDIA ON GO_MANUAL_DOWNLOAD_SUBMISSIONS(json_extract(DOCUMENT,'$.direct.TMDBID'),json_extract(DOCUMENT,'$.direct.Kind'),json_extract(DOCUMENT,'$.direct.Season')) WHERE json_extract(DOCUMENT,'$.direct.TMDBID') IS NOT NULL`); err != nil {
+			return ManualSubmission{}, false, err
+		}
+		bySeason := map[int][]int{m.Season: m.Units}
+		maps.Copy(bySeason, m.ExtraSeasons)
+		for season, units := range bySeason {
+			covered, err := readDirectCoverage(ctx, tx, m.Kind, m.TMDBID, season)
+			if err != nil {
+				return ManualSubmission{}, false, err
+			}
+			for _, n := range units {
+				if covered[n] {
+					return ManualSubmission{}, false, ErrManualPending
+				}
+			}
+		}
+	}
 	var pending bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_MANUAL_DOWNLOAD_SUBMISSIONS WHERE STATE='pending' AND json_extract(DOCUMENT,'$.InfoHash')=?)`, d.InfoHash).Scan(&pending); err != nil {
 		return ManualSubmission{}, false, err
@@ -107,7 +142,7 @@ func (s *Store) ReserveManual(ctx context.Context, d ManualDefinition) (ManualSu
 		if err != nil {
 			return r, false, err
 		}
-		if r.State != "submitted" || r.Definition.Actor != d.Actor || r.Definition.ConfigDigest != d.ConfigDigest || r.Definition.OptionsDigest != d.OptionsDigest {
+		if d.Direct != nil || r.State != "submitted" || r.Definition.Actor != d.Actor || r.Definition.ConfigDigest != d.ConfigDigest || r.Definition.OptionsDigest != d.OptionsDigest {
 			return r, false, ErrManualPending
 		}
 		return r, false, nil
@@ -139,12 +174,17 @@ func (s *Store) ReserveManual(ctx context.Context, d ManualDefinition) (ManualSu
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return r, false, ErrManualPending
 	}
+	if selection != nil {
+		if err := ReserveFileSelectionTx(ctx, tx, *selection); err != nil {
+			return r, false, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return r, false, err
 	}
 	return r, true, nil
 }
-func (s *Store) RejectManual(ctx context.Context, r ManualSubmission) error {
+func (s *Store) RejectManual(ctx context.Context, r ManualSubmission, attempted bool) error {
 	tx, err := s.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -163,6 +203,13 @@ func (s *Store) RejectManual(ctx context.Context, r ManualSubmission) error {
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return ErrManualPending
+	}
+	if m := r.Definition.Direct; attempted && m != nil {
+		reason := "下载器未接收这次提交，请核对下载设置和连接状态。"
+		data := map[string]any{"media_info": map[string]any{"title": m.Name, "year": m.Year, "tmdb_id": m.TMDBID}, "reason": reason}
+		if err := bus.EmitData(ctx, tx, "download_fail", r.ID, "manual-download:"+r.ID, "添加下载任务失败："+m.Name, reason, data); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -203,9 +250,47 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS DOWNLOAD_HISTORY(ID INTEGER PRIMARY KEY,TITLE TEXT,YEAR TEXT,TYPE TEXT,TMDBID TEXT,SE TEXT,VOTE TEXT,POSTER TEXT,OVERVIEW TEXT,TORRENT TEXT,ENCLOSURE TEXT,SITE TEXT,DESC TEXT,DOWNLOADER TEXT,DOWNLOAD_ID TEXT,SAVE_PATH TEXT,DATE TEXT)`); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO DOWNLOAD_HISTORY(TITLE,TORRENT,DOWNLOADER,DOWNLOAD_ID,SAVE_PATH,DATE) VALUES(?,?,?,?,?,?)`, d.Title, d.Title, strconv.FormatInt(d.DownloaderID, 10), taskID, d.SavePath, time.Now().Format("2006-01-02 15:04:05")); err != nil {
+	date := time.Now().Format("2006-01-02 15:04:05")
+	mediaInfo := map[string]any{"title": d.Title}
+	if m := d.Direct; m != nil {
+		if !m.valid() {
+			return ErrManualPending
+		}
+		mediaType, se := "电影", ""
+		if m.Kind == "tv" {
+			mediaType = "电视剧"
+			bySeason := map[int][]int{m.Season: m.Units}
+			maps.Copy(bySeason, m.ExtraSeasons)
+			var label strings.Builder
+			for _, season := range slices.Sorted(maps.Keys(bySeason)) {
+				fmt.Fprintf(&label, "S%02d", season)
+				for _, n := range bySeason[season] {
+					fmt.Fprintf(&label, "E%02d", n)
+				}
+			}
+			se = label.String()
+		}
+		mediaInfo = map[string]any{"title": m.Name, "year": m.Year, "type": mediaType, "tmdb_id": m.TMDBID, "season_episode": se}
+		result, err := tx.ExecContext(ctx, `INSERT INTO DOWNLOAD_HISTORY(TITLE,YEAR,TYPE,TMDBID,SE,TORRENT,DOWNLOADER,DOWNLOAD_ID,SAVE_PATH,DATE) VALUES(?,?,?,?,?,?,?,?,?,?)`, m.Name, m.Year, mediaType, m.TMDBID, se, d.Title, strconv.FormatInt(d.DownloaderID, 10), taskID, d.SavePath, date)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil || n != 1 {
+			return ErrManualPending
+		}
+		if id, ok := strings.CutPrefix(d.ProfileDigest, "files:"); ok {
+			p, err := FileSelectionTx(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			if err = CommitFileSelectionTx(ctx, tx, id, p.Definition.Proof); err != nil {
+				return err
+			}
+		}
+	} else if _, err := tx.ExecContext(ctx, `INSERT INTO DOWNLOAD_HISTORY(TITLE,TORRENT,DOWNLOADER,DOWNLOAD_ID,SAVE_PATH,DATE) VALUES(?,?,?,?,?,?)`, d.Title, d.Title, strconv.FormatInt(d.DownloaderID, 10), taskID, d.SavePath, date); err != nil {
 		return err
 	}
+
 	res, err := tx.ExecContext(ctx, `UPDATE GO_MANUAL_DOWNLOAD_SUBMISSIONS SET STATE='submitted',TASK_ID=?,REASON=?,UPDATED=? WHERE ID=? AND STATE='pending'`, taskID, proof, time.Now().UTC().Format(time.RFC3339Nano), r.ID)
 	if err != nil {
 		return err
@@ -220,7 +305,7 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 		message = "管理员只读核实原 Hash 当前存在；不证明本次新建任务或全部设置已生效，不代表文件完成或入库。"
 	}
 	if err := bus.EmitData(ctx, tx, "download_start", r.ID, "manual-download:"+r.ID, title, "来自："+d.Source+"；下载器："+d.DownloaderName+"。"+message, map[string]any{
-		"media_info": map[string]any{"title": d.Title}, "downloader_id": d.DownloaderID, "download_dir": d.SavePath,
+		"media_info": mediaInfo, "downloader_id": d.DownloaderID, "download_dir": d.SavePath,
 		"native_download": map[string]any{"task_id": taskID, "info_hash": d.InfoHash, "proof": proof, "source": d.Source},
 	}); err != nil {
 		return err

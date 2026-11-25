@@ -105,6 +105,9 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 			if err != nil {
 				return nil, err
 			}
+			for i := range items {
+				items[i].Public = definition.Public
+			}
 			results = append(results, items...)
 			if len(results) > 2000 {
 				return nil, errors.New("builtin search capacity exceeded")
@@ -170,6 +173,7 @@ func (service *nativeExternalResourceSearch) searchBuiltin(ctx context.Context, 
 			return nil, err
 		}
 		for i := range items {
+			items[i].Public = definition.Public
 			items[i].Browser = session
 		}
 		results = append(results, items...)

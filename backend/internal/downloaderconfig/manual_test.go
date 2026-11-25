@@ -68,7 +68,7 @@ func TestManualSubmissionKnownRejectionRetainsAuditButAllowsNewAttempt(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RejectManual(t.Context(), first); err != nil {
+	if err := s.RejectManual(t.Context(), first, true); err != nil {
 		t.Fatal(err)
 	}
 	second, created, err := s.ReserveManual(t.Context(), d)

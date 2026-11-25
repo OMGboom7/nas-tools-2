@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 )
 
 func TestSubscriptionOptionsAndLegacyIndexerRouteUseNativeCatalog(t *testing.T) {
 	var calls atomic.Int32
-	handler, store, token := nativeSiteFixture(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	dir := t.TempDir()
+	handler, store, token := nativeSiteFixtureAt(t, dir, roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls.Add(1)
 		if request.URL.Path != "/api/v1/site/indexers" {
 			t.Errorf("unexpected request: %s", request.URL.Path)
@@ -44,17 +47,28 @@ func TestSubscriptionOptionsAndLegacyIndexerRouteUseNativeCatalog(t *testing.T) 
 	if compat.Code != http.StatusOK || !strings.Contains(compat.Body.String(), `"id":"zhuzhu"`) || calls.Load() != 0 {
 		t.Fatalf("legacy indexer route used Python: calls=%d %s", calls.Load(), compat.Body.String())
 	}
-	response = performFormRequest(handler, "/api/v1/config/set", token, url.Values{"key": {"UserInstalledPlugins"}, "value": {`["CustomReleaseGroups","Customization"]`}})
-	if response.Code != 200 {
-		t.Fatal(response.Body.String())
+	for _, id := range []string{"CustomReleaseGroups", "Customization"} {
+		response = performFormRequest(handler, "/api/v1/plugin/install", token, url.Values{"id": {id}})
+		if response.Code != 200 {
+			t.Fatal(id, response.Body.String())
+		}
 	}
 	compat = performFormRequest(handler, "/api/v1/site/indexers", token, nil)
 	if compat.Code != 200 || calls.Load() != 0 || !strings.Contains(compat.Body.String(), `"id":"zhuzhu"`) {
 		t.Fatalf("native metadata plugins blocked indexers: %d %s", compat.Code, compat.Body.String())
 	}
 	response = performFormRequest(handler, "/api/v1/config/set", token, url.Values{"key": {"UserInstalledPlugins"}, "value": {`["Plugin"]`}})
-	if response.Code != 200 {
-		t.Fatal("set installed plugins failed")
+	if response.Code != http.StatusBadRequest {
+		t.Fatal("generic configuration must not change plugin installations", response.Code)
+	}
+	// An upgrade can retain an external provider that the Go catalog cannot discover.
+	legacy, err := systemconfig.Open(filepath.Join(dir, "user.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	if err := legacy.Set(t.Context(), "UserInstalledPlugins", `["Plugin"]`); err != nil {
+		t.Fatal(err)
 	}
 	response = nativeJSONRequest(handler, http.MethodGet, "/api/v1/subscriptions/options", token, "")
 	if response.Code != 200 || !strings.Contains(response.Body.String(), "searchSites unavailable") || calls.Load() != 0 {

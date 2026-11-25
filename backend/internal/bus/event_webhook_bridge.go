@@ -21,7 +21,7 @@ func finishBusinessSignal(ctx context.Context, tx *sql.Tx, kind, key, reference,
 			return ErrState
 		}
 	}
-	legacy := map[string]string{"download_start": "download.add", "rss_added": "subscribe.add", "rss_finished": "subscribe.finished", "source_file_deleted": "sourcefile.deleted", "library_file_deleted": "libraryfile.deleted"}[kind]
+	legacy := map[string]string{"download_start": "download.add", "download_fail": "download.fail", "rss_added": "subscribe.add", "rss_finished": "subscribe.finished", "source_file_deleted": "sourcefile.deleted", "library_file_deleted": "libraryfile.deleted"}[kind]
 	if legacy == "" {
 		return nil
 	}

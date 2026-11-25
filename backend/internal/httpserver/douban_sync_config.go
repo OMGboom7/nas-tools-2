@@ -2,8 +2,8 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -39,6 +39,7 @@ func doubanState(raw string) (doubanControl, error) {
 }
 
 type doubanSyncAPI struct {
+	runner        *rssRunAPI
 	plugins       *pluginService
 	subscriptions subscriptionService
 	login         *siteLoginAPI
@@ -51,7 +52,7 @@ func (api *doubanSyncAPI) available() bool {
 func (s pluginService) nativeDouban(id string) bool {
 	return id == douban.SyncPlugin && s.doubanSync.available()
 }
-func (api *doubanSyncAPI) scope(actor string, raw map[string]string) (string, error) {
+func (api *doubanSyncAPI) scope(ctx context.Context, actor string, raw map[string]string) (string, error) {
 	auth, cfg, err := api.login.authority(actor)
 	if err != nil {
 		return "", err
@@ -61,7 +62,18 @@ func (api *doubanSyncAPI) scope(actor string, raw map[string]string) (string, er
 		return "", err
 	}
 	scope := []any{auth, raw[doubanSettingsKey]}
-	if settings.Subscribe {
+	if settings.Search && !settings.Subscribe {
+		err := api.plugins.system.Transaction(ctx, func(tx *sql.Tx) error {
+			digest, err := nativeSubscriptionConfiguration(ctx, tx, api.subscriptions)
+			if err == nil {
+				scope = append(scope, digest)
+			}
+			return err
+		})
+		if err != nil {
+			return "", err
+		}
+	} else if settings.Subscribe {
 		app := objectValue(cfg["app"])
 		media := objectValue(cfg["media"])
 		scope = append(scope, app["tmdb_domain"], app["rmt_tmdbkey"], media["tmdb_language"])
@@ -85,7 +97,7 @@ func (api *doubanSyncAPI) summary(ctx context.Context, raw map[string]string) (b
 			return false, e == nil
 		}
 	}
-	s, err := api.scope(c.Actor, raw)
+	s, err := api.scope(ctx, c.Actor, raw)
 	return err == nil && s == c.Scope, err == nil
 }
 
@@ -148,9 +160,6 @@ func (api *doubanSyncAPI) changes(ctx context.Context, actor string, raw map[str
 		if !cfg.Valid() || (cfg.Enabled || cfg.Remote) && cfg.Interval() == 0 {
 			return nil, douban.ErrSettings
 		}
-		if cfg.Search && !cfg.Subscribe {
-			return nil, errDoubanDirectSearch
-		}
 		if cfg.Remote {
 			_, digest, e := api.commandSources(ctx)
 			if e != nil {
@@ -173,7 +182,7 @@ func (api *doubanSyncAPI) changes(ctx context.Context, actor string, raw map[str
 		c.Actor = actor
 		next := maps.Clone(raw)
 		next[doubanSettingsKey] = string(b)
-		c.Scope, err = api.scope(actor, next)
+		c.Scope, err = api.scope(ctx, actor, next)
 		if err != nil {
 			return nil, err
 		}
@@ -181,8 +190,6 @@ func (api *doubanSyncAPI) changes(ctx context.Context, actor string, raw map[str
 	control, err := json.Marshal(c)
 	return map[string]string{doubanSettingsKey: string(b), doubanControlKey: string(control)}, err
 }
-
-var errDoubanDirectSearch = errors.New("direct download from Douban is not yet supported")
 
 func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action string) {
 	if !api.plugins.historyReader(w, r) {
@@ -264,10 +271,6 @@ func (api *doubanSyncAPI) serve(w http.ResponseWriter, r *http.Request, action s
 				return
 			}
 			changes, err = api.changes(ctx, claims.Username, raw, in.Values, in.ClearConfig, time.Now())
-			if errors.Is(err, errDoubanDirectSearch) {
-				writeAPIError(w, 501, 501, "仅搜索并直接下载的模式尚待迁移")
-				return
-			}
 			if err != nil {
 				writeAPIError(w, 400, 400, "请核对豆瓣同步账号、标记和间隔")
 				return

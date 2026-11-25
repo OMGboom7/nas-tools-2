@@ -24,12 +24,13 @@ type subscriptionFilesPublic struct {
 	State          string                                 `json:"state"`
 	Recorded       bool                                   `json:"sourceRecorded"`
 	Files          []torrentfiles.File                    `json:"files"`
+	Direct         bool                                   `json:"direct,omitempty"`
 	Seasons        []downloaderconfig.FileSelectionSource `json:"seasons,omitempty"`
 }
 
 func publicSubscriptionFiles(p downloaderconfig.FileSelection) subscriptionFilesPublic {
 	d := p.Definition
-	return subscriptionFilesPublic{d.ID, strconv.FormatInt(d.DownloaderID, 10), d.DownloaderType, d.Title, strconv.FormatInt(d.SubscriptionID, 10), d.Season, append([]int{}, d.Episodes...), d.InfoHash, p.State, p.Committed, append([]torrentfiles.File{}, d.Files...), append([]downloaderconfig.FileSelectionSource{}, d.Sources...)}
+	return subscriptionFilesPublic{d.ID, strconv.FormatInt(d.DownloaderID, 10), d.DownloaderType, d.Title, strconv.FormatInt(d.SubscriptionID, 10), d.Season, append([]int{}, d.Episodes...), d.InfoHash, p.State, p.Committed, append([]torrentfiles.File{}, d.Files...), d.Version == 3, append([]downloaderconfig.FileSelectionSource{}, d.Sources...)}
 }
 
 type subscriptionFilesReview struct {
@@ -448,6 +449,14 @@ func (api *subscriptionSearchRunner) serveSubscriptionFiles(w http.ResponseWrite
 	case "acknowledge":
 		err = api.acknowledgeSelection(ctx, item, &p, review)
 	case "record":
+		if p.Definition.Version == 3 {
+			var receipt downloaderconfig.ManualSubmission
+			receipt, err = s.downloaders.DirectFileSubmission(ctx, p.Definition)
+			if err == nil {
+				err = s.downloaders.CompleteManual(ctx, receipt, p.Definition.InfoHash, "verified_present", actor)
+			}
+			break
+		}
 		var failure *recognitionFailure
 		_, failure = api.reconcile(ctx, "TV", p.Definition.SubscriptionID)
 		if failure != nil {

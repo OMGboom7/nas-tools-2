@@ -24,6 +24,7 @@ import (
 type Resource struct {
 	IndexerID, Indexer, Title, Description, PageURL, IMDbID string
 	DownloadURL                                             string                  `json:"-"`
+	Public                                                  bool                    `json:"-"`
 	DownloadResolver                                        string                  `json:"-"`
 	Browser                                                 *browserruntime.Session `json:"-"`
 	Size                                                    int64
@@ -167,7 +168,7 @@ func parseProwlarr(ctx context.Context, body []byte, indexer Indexer) ([]Resourc
 		if !validText(row.Title, 4096) || !validDownloadURL(row.Download) {
 			continue
 		}
-		items = append(items, Resource{IndexerID: indexer.ID, Indexer: indexer.Name, Title: row.Title, DownloadURL: row.Download, Description: row.Description, Size: *row.Size, Seeders: row.Seeders, PageURL: row.Guid})
+		items = append(items, Resource{IndexerID: indexer.ID, Indexer: indexer.Name, Public: indexer.Public, Title: row.Title, DownloadURL: row.Download, Description: row.Description, Size: *row.Size, Seeders: row.Seeders, PageURL: row.Guid})
 	}
 	return items, nil
 }
@@ -288,7 +289,7 @@ func parseTorznab(ctx context.Context, body []byte, indexer Indexer) ([]Resource
 			seeders := int64(0)
 			download, upload := 1.0, 1.0
 			free := false
-			item := Resource{IndexerID: indexer.ID, Indexer: indexer.Name, Title: row.Title, DownloadURL: row.Enclosure.URL, Description: row.Description, PageURL: row.Comments, Size: amount, Seeders: &seeders, Peers: &peers, DownloadFactor: &download, UploadFactor: &upload, Freeleech: &free}
+			item := Resource{IndexerID: indexer.ID, Indexer: indexer.Name, Public: indexer.Public, Title: row.Title, DownloadURL: row.Enclosure.URL, Description: row.Description, PageURL: row.Comments, Size: amount, Seeders: &seeders, Peers: &peers, DownloadFactor: &download, UploadFactor: &upload, Freeleech: &free}
 			seen := map[string]bool{}
 			for _, attribute := range row.Attributes {
 				if attribute.XMLName.Space != "" && attribute.XMLName.Space != "http://torznab.com/schemas/2015/feed" && attribute.XMLName.Space != "http://www.newznab.com/DTD/2010/feeds/attributes/" {

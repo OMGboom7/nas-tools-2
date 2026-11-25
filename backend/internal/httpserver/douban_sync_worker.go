@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/douban"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
@@ -123,13 +124,13 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 	if c.Running {
 		return save(doubanControl{Last: "上次同步中断。已提交的历史和订阅可在页面核对，重新保存设置后可继续。"})
 	}
-	scope, err := api.scope(c.Actor, raw)
+	scope, err := api.scope(ctx, c.Actor, raw)
 	if err != nil || scope != c.Scope {
 		return save(doubanControl{Last: "账号或同步设置已变化，请重新保存设置。"})
 	}
 	cfg, err := douban.ReadSettings(raw[doubanSettingsKey])
-	if err != nil || !cfg.Valid() || cfg.Search && !cfg.Subscribe {
-		return save(doubanControl{Last: "同步设置无效或需要直接搜索下载。"})
+	if err != nil || !cfg.Valid() {
+		return save(doubanControl{Last: "同步设置无效。"})
 	}
 	if due(c.Once) {
 		c.Once = time.Time{}
@@ -146,7 +147,7 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 		if err != nil {
 			return err
 		}
-		scope, err := api.scope(c.Actor, actual)
+		scope, err := api.scope(ctx, c.Actor, actual)
 		if err != nil || scope != c.Scope || !sameDoubanRun(raw, actual) {
 			return douban.ErrSettings
 		}
@@ -178,7 +179,7 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 		c.Last = "读取豆瓣片单或动态失败，请核对账号和访问状态。"
 		return save(c)
 	}
-	var changed, skipped, failed int
+	var changed, skipped, failed, incomplete, uncertain int
 	for _, id := range ids {
 		if err := current(); err != nil {
 			return err
@@ -188,7 +189,7 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 			failed++
 			continue
 		}
-		if state != "" && (state != "NEW" || !cfg.Subscribe) {
+		if state != "" && (state != "NEW" || !cfg.Subscribe && !cfg.Search) {
 			skipped++
 			continue
 		}
@@ -201,7 +202,11 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 			continue
 		}
 		ok, err := api.process(ctx, raw, cfg, subject, now.In(loc), current)
-		if err != nil {
+		if errors.Is(err, errDoubanIncomplete) {
+			incomplete++
+		} else if errors.Is(err, downloaderconfig.ErrManualPending) {
+			uncertain++
+		} else if err != nil {
 			failed++
 		} else if ok {
 			changed++
@@ -210,6 +215,9 @@ func (api *doubanSyncAPI) tick(ctx context.Context, now time.Time) error {
 		}
 	}
 	c.Last = fmt.Sprintf("同步完成，写入 %d 条，已处理 %d 条，失败 %d 条。", changed, skipped, failed)
+	if incomplete > 0 || uncertain > 0 {
+		c.Last += fmt.Sprintf(" 未下齐 %d 条，下载回执待核对 %d 条。", incomplete, uncertain)
+	}
 	return save(c)
 }
 
@@ -260,7 +268,7 @@ func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, cf
 			}
 			if season := parsed.Episodes.Season; season != nil {
 				n := strconv.Itoa(*season)
-				if input.Season != "" && input.Season != n || parsed.Episodes.EndSeason != nil && *parsed.Episodes.EndSeason != *season {
+				if input.Season != "" && input.Season != n || parsed.Episodes.EndSeason != nil && *parsed.Episodes.EndSeason != *season && !(cfg.Search && !cfg.Subscribe) {
 					return false, douban.ErrResponse
 				}
 				input.Season = n
@@ -269,7 +277,13 @@ func (api *doubanSyncAPI) process(ctx context.Context, raw map[string]string, cf
 	}
 	var metadata *nativeSubscriptionMetadata
 	var err error
-	if cfg.Subscribe {
+	if cfg.Search && !cfg.Subscribe {
+		metadata, err = api.directDownload(ctx, raw, s, input, current)
+		if err != nil {
+			return false, err
+		}
+		target = "DOWNLOADED"
+	} else if cfg.Subscribe {
 		if err = applyStoredSubscriptionDefaults(raw["DefaultRssSetting"+input.Type], &input); err != nil {
 			return false, err
 		}

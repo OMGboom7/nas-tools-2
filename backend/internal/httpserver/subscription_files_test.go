@@ -394,6 +394,12 @@ func (w *subscriptionFilesFixture) acceptAdd(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].State != "adding" || !slices.Contains(w.labels, rows[0].Definition.Marker()) {
 		t.Fatal("missing durable file selection before add", rows, err)
 	}
+	if rows[0].Definition.Version == 3 {
+		if _, err := w.runner.download.downloaders.DirectFileSubmission(t.Context(), rows[0].Definition); err != nil {
+			t.Fatal("direct intent was not committed before add", err)
+		}
+		return
+	}
 	var n int
 	if err := w.db.QueryRow(`SELECT COUNT(*) FROM GO_SUBSCRIPTION_SUBMISSION_PROOFS WHERE PAYLOAD LIKE '%fileSelectionId%'`).Scan(&n); err != nil || n != 1 {
 		t.Fatal("shared intent not committed", n, err)

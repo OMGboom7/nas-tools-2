@@ -111,7 +111,7 @@ export function PluginConfigEditor({ session, plugin, onClose, onSaved, onSessio
     {state.kind === "ready" && plugin.id === "TorrentRemover" && <p className="editor-note">保存会撤销原联动删除授权。请回到插件页审核下载器范围，启用后仅接收新的源文件删除事实。</p>}
     {state.kind === "ready" && plugin.id === "TorrentMark" && <p className="editor-note">保存会撤销原种子标记授权。请回到插件页核对下载器后启用。</p>}
     {state.kind === "ready" && plugin.id === "SyncTimer" && <p className="editor-note">保存会撤销此前的定时授权。请到整理页的自动同步区域审核来源并启用。</p>}
-    {state.kind === "ready" && plugin.id === "DoubanSync" && plugin.native && <p className="editor-note">保存后按所选设置读取豆瓣标记。关闭自动搜索和订阅会将新条目记入历史。开启订阅会沿用电影或电视剧的默认订阅设置；同时开启搜索会先查媒体库存。仅开启搜索的直接下载模式仍待迁移。</p>}
+    {state.kind === "ready" && plugin.id === "DoubanSync" && plugin.native && <p className="editor-note">仅开启自动搜索时，会先查媒体库，再将缺少的电影或剧集直接提交到下载器。仅开启订阅会沿用电影或电视剧的默认订阅设置。两项都开启时先查库存，再为缺少的媒体创建订阅。两项都关闭时只记录豆瓣标记。</p>}
     {state.kind === "ready" && plugin.id === "MediaLibraryArchive" && plugin.native && <p className="editor-note">保存后会按所选周期或单次设置生成归档。每次成功后按数量清理最早的归档，包括旧版生成的文件。留空默认保留 10 份，填写 0 会清理全部。</p>}
     {state.kind === "ready" && plugin.id === "AutoBackup" && <p className="editor-note">保存配置后请在自动备份管理中单独确认执行。保留数量只用于校验通过且有记录的 Go 自动备份。</p>}
     {state.kind === "ready" && plugin.id === "CookieCloud" && <p className="editor-note">修改配置会撤销旧的同步授权。保存后可在 CookieCloud 同步管理中确认接收方，单独测试、同步或启用周期。</p>}

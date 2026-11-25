@@ -48,7 +48,7 @@ func (api *doubanSyncAPI) remoteScope(ctx context.Context) (sitesignin.Control, 
 	if err != nil || installErr != nil || !installed || c.RemoteSince.IsZero() {
 		return none, nil, sitesignin.ErrScope
 	}
-	scope, err := api.scope(c.Actor, raw)
+	scope, err := api.scope(ctx, c.Actor, raw)
 	if err != nil || c.Scope != scope {
 		return none, nil, sitesignin.ErrScope
 	}

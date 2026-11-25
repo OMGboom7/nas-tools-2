@@ -35,6 +35,25 @@ func Episodes(title, subtitle string) (EpisodeInfo, error) {
 	return episodesWithPartPolicy(title, subtitle, false)
 }
 
+// ExplicitEpisodeChain returns the listed episodes in titles like S01E01E03.
+// The enclosing EpisodeInfo range also contains E02, which was never requested.
+func ExplicitEpisodeChain(title string) ([]int, error) {
+	_, clean, err := scanReleaseParts(title, false, false)
+	if err != nil {
+		return nil, err
+	}
+	chain := chainedEpisodePattern.FindString(clean)
+	var units []int
+	for _, match := range chainNumberPattern.FindAllStringSubmatch(chain, -1) {
+		n, err := episodeNumber(match[1])
+		if err != nil || n < 1 || len(units) > 0 && n <= units[len(units)-1] {
+			return nil, errors.New("invalid explicit episode sequence")
+		}
+		units = append(units, n)
+	}
+	return units, nil
+}
+
 func episodesWithPartPolicy(title, subtitle string, explicitPart bool) (EpisodeInfo, error) {
 	if len(title)+len(subtitle) > 128<<10 {
 		return EpisodeInfo{}, errors.New("release metadata too large")

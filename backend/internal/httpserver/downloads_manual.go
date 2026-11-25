@@ -69,11 +69,16 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 	if err != nil {
 		return "", true, err
 	}
+	return service.submitRecorded(ctx, actor, magnet, torrent, selected, options, title, source, nil, nil)
+}
+
+func (service downloadService) submitRecorded(ctx context.Context, actor, magnet string, torrent []byte, selected *downloaderconfig.Downloader, options downloadAddOptions, title, source string, media *downloaderconfig.DirectMedia, current func() error) (string, bool, error) {
 	var item downloaderconfig.Downloader
 	if selected != nil {
 		item = *selected
 	} else {
 		var handled bool
+		var err error
 		item, _, handled, err = service.configuredDownloader(ctx, "")
 		if err != nil || !handled {
 			return "", handled, err
@@ -117,8 +122,13 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 		title = "手动任务 " + hash[:12]
 	}
 	title = bus.Bounded(title, 600)
-	d := downloaderconfig.ManualDefinition{DownloaderID: item.ID, DownloaderName: item.Name, DownloaderType: item.Type, ConfigDigest: bus.Hash(item), OptionsDigest: bus.Hash(options), InfoHash: hash, Actor: actor, Title: title, Source: source, SavePath: options.SavePath}
+	d := downloaderconfig.ManualDefinition{Direct: media, DownloaderID: item.ID, DownloaderName: item.Name, DownloaderType: item.Type, ConfigDigest: bus.Hash(item), OptionsDigest: bus.Hash(options), InfoHash: hash, Actor: actor, Title: title, Source: source, SavePath: options.SavePath}
 	d.ProfileDigest = downloadProfileFingerprint(item, hash, options)
+	if current != nil {
+		if err := current(); err != nil {
+			return "", true, err
+		}
+	}
 	receipt, created, err := service.downloaders.ReserveManual(ctx, d)
 	if err != nil {
 		return "", true, err
@@ -126,12 +136,20 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 	if !created {
 		return receipt.TaskID, true, nil
 	}
+	if current != nil {
+		if err := current(); err != nil {
+			if releaseErr := service.downloaders.RejectManual(context.WithoutCancel(ctx), receipt, false); releaseErr != nil {
+				return "", true, downloaderconfig.ErrManualPending
+			}
+			return "", true, err
+		}
+	}
 	id, handled, err := service.nativeAddConfiguredDownload(ctx, item, magnet, torrent, options)
 	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err != nil || !handled {
 		if downloadDefinitelyNotSubmitted(handled, err) {
-			if rejectErr := service.downloaders.RejectManual(persist, receipt); rejectErr != nil {
+			if rejectErr := service.downloaders.RejectManual(persist, receipt, true); rejectErr != nil {
 				return "", true, downloaderconfig.ErrManualPending
 			}
 			return id, handled, err

@@ -66,7 +66,7 @@ func validSelectionID(id string) bool {
 	return true
 }
 func validSelection(d FileSelectionDefinition) bool {
-	if d.Version != 1 && d.Version != 2 || !validSelectionID(d.ID) || d.DownloaderID < 1 || d.SubscriptionID < 1 || d.DownloaderType != "qbittorrent" && d.DownloaderType != "transmission" || !validSeedingDigest(d.ConfigDigest) || !validSeedingDigest(d.Scope) || !validSeedingDigest(d.InfoHash) && len(d.InfoHash) != 40 || len(d.InfoHash) == 64 && d.DownloaderType != "qbittorrent" || len(d.Title) == 0 || len(d.Title) > 4096 || d.Season < 0 || d.Season > 1000 || len(d.Episodes) == 0 || len(d.Episodes) > 10000 || !slices.IsSorted(d.Episodes) || len(d.Options) > 32<<10 || !json.Valid(d.Options) || len(d.Proof) > 2<<20 || !json.Valid([]byte(d.Proof)) {
+	if d.Version != 1 && d.Version != 2 && d.Version != 3 || !validSelectionID(d.ID) || d.DownloaderID < 1 || d.Version != 3 && d.SubscriptionID < 1 || d.Version == 3 && d.SubscriptionID != 0 || d.DownloaderType != "qbittorrent" && d.DownloaderType != "transmission" || !validSeedingDigest(d.ConfigDigest) || !validSeedingDigest(d.Scope) || !validSeedingDigest(d.InfoHash) && len(d.InfoHash) != 40 || len(d.InfoHash) == 64 && d.DownloaderType != "qbittorrent" || len(d.Title) == 0 || len(d.Title) > 4096 || d.Season < 0 || d.Season > 1000 || len(d.Episodes) == 0 || len(d.Episodes) > 10000 || !slices.IsSorted(d.Episodes) || len(d.Options) > 32<<10 || !json.Valid(d.Options) || len(d.Proof) > 2<<20 || !json.Valid([]byte(d.Proof)) {
 		return false
 	}
 	for i, n := range d.Episodes {
@@ -81,10 +81,10 @@ func validSelection(d FileSelectionDefinition) bool {
 			}
 		}
 	}
-	if d.Version == 1 && len(d.Sources) != 0 || d.Version == 2 && (len(d.Sources) == 0 || len(d.Sources) > 100) {
+	if d.Version != 2 && len(d.Sources) != 0 || d.Version == 2 && (len(d.Sources) == 0 || len(d.Sources) > 100) {
 		return false
 	}
-	lead := d.Version == 1
+	lead := d.Version != 2
 	for i, source := range d.Sources {
 		if source.SubscriptionID < 1 || i > 0 && d.Sources[i-1].SubscriptionID >= source.SubscriptionID || source.Season < 0 || source.Season > 1000 || source.Total < 1 || source.Total > 10000 || len(source.Episodes) == 0 || !slices.IsSorted(source.Episodes) {
 			return false

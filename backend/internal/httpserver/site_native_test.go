@@ -19,7 +19,11 @@ import (
 
 func nativeSiteFixture(t *testing.T, transport http.RoundTripper, catalogPaths ...string) (http.Handler, *siteconfig.Store, string) {
 	t.Helper()
-	directory := t.TempDir()
+	return nativeSiteFixtureAt(t, t.TempDir(), transport, catalogPaths...)
+}
+
+func nativeSiteFixtureAt(t *testing.T, directory string, transport http.RoundTripper, catalogPaths ...string) (http.Handler, *siteconfig.Store, string) {
+	t.Helper()
 	path := filepath.Join(directory, "config.yaml")
 	if err := os.WriteFile(path, []byte("app:\n  login_user: admin\n  login_password: password\nsecurity:\n  api_key: native-sites-secret\n"), 0o600); err != nil {
 		t.Fatal(err)

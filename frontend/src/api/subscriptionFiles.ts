@@ -1,7 +1,7 @@
 import {ApiError} from "./client";
 export type TorrentFile={index:number;path:string;size:string;selected:boolean;padding?:boolean};
 export type FileSeason={subscriptionId:string;season:number;total:number;episodes:number[]};
-export type FileSelection={id:string;downloaderId:string;downloaderType:"qbittorrent"|"transmission";title:string;subscriptionId:string;season:number;episodes:number[];infoHash:string;state:"adding"|"added"|"unwanting"|"unwanted"|"wanting"|"selected"|"starting"|"ready"|"rejected";sourceRecorded:boolean;files:TorrentFile[];seasons?:FileSeason[]};
+export type FileSelection={id:string;downloaderId:string;downloaderType:"qbittorrent"|"transmission";title:string;subscriptionId:string;season:number;episodes:number[];infoHash:string;state:"adding"|"added"|"unwanting"|"unwanted"|"wanting"|"selected"|"starting"|"ready"|"rejected";sourceRecorded:boolean;direct?:boolean;files:TorrentFile[];seasons?:FileSeason[]};
 export type FileReview={receipt:FileSelection;current:{hash:string;directory:string;labels:string[];state:string;paused:boolean;files:TorrentFile[]}|null;next:"none"|"adopt-add"|"settings"|"adopt-settings"|"select"|"adopt-unwanted"|"adopt-selected"|"start"|"acknowledge"|"record";actor:string;presetEvidence:string;fingerprint:string};
 const hex=(v:unknown,n:number):v is string=>typeof v==="string"&&new RegExp("^[a-f0-9]{"+n+"}$").test(v);
 const bounded=(v:unknown,n=4096):v is string=>typeof v==="string"&&v.length<=n&&!/[\x00-\x1f\x7f]/.test(v);
@@ -16,7 +16,11 @@ export function validFileSelection(v:FileSelection):boolean{
   const sources=v.seasons;
   if(!Array.isArray(sources)||sources.length<1||sources.length>100||!sources.every((s,i)=>!!s&&integer(s.subscriptionId)&&(!i||BigInt(s.subscriptionId)>BigInt(sources[i-1].subscriptionId))&&Number.isSafeInteger(s.season)&&s.season>=0&&s.season<=1000&&Number.isSafeInteger(s.total)&&s.total>0&&s.total<=10000&&eps(s.episodes)&&s.episodes.every(n=>n<=s.total))||!sources.some(s=>s.subscriptionId===v.subscriptionId&&s.season===v.season&&JSON.stringify(s.episodes)===JSON.stringify(v.episodes)))return false;
  }
- return !!v&&hex(v.id,32)&&integer(v.downloaderId)&&integer(v.subscriptionId)&&["qbittorrent","transmission"].includes(v.downloaderType)&&bounded(v.title)&&!!v.title&&Number.isSafeInteger(v.season)&&v.season>=0&&v.season<=1000&&eps(v.episodes)&&(hex(v.infoHash,40)||v.downloaderType==="qbittorrent"&&hex(v.infoHash,64))&&["adding","added","unwanting","unwanted","wanting","selected","starting","ready","rejected"].includes(v.state)&&typeof v.sourceRecorded==="boolean"&&(!v.sourceRecorded||v.state==="ready")&&validTorrentFiles(v.files)&&v.files.some(f=>f.selected);
+ if(!v)return false;
+ const validSource=v.direct===true
+  ? v.subscriptionId==="0"&&v.seasons===undefined
+  : (v.direct===undefined||v.direct===false)&&integer(v.subscriptionId);
+ return validSource&&hex(v.id,32)&&integer(v.downloaderId)&&["qbittorrent","transmission"].includes(v.downloaderType)&&bounded(v.title)&&!!v.title&&Number.isSafeInteger(v.season)&&v.season>=0&&v.season<=1000&&eps(v.episodes)&&(hex(v.infoHash,40)||v.downloaderType==="qbittorrent"&&hex(v.infoHash,64))&&["adding","added","unwanting","unwanted","wanting","selected","starting","ready","rejected"].includes(v.state)&&typeof v.sourceRecorded==="boolean"&&(!v.sourceRecorded||v.state==="ready")&&validTorrentFiles(v.files)&&v.files.some(f=>f.selected);
 }
 export function validFileReview(v:FileReview):boolean{
  if(!v||!validFileSelection(v.receipt)||!["none","adopt-add","settings","adopt-settings","select","adopt-unwanted","adopt-selected","start","acknowledge","record"].includes(v.next)||!bounded(v.actor,256)||!v.actor||!hex(v.fingerprint,64)||v.presetEvidence!==""&&!hex(v.presetEvidence,64))return false;
@@ -51,5 +55,5 @@ export async function recoverFileSelection(token:string,v:FileReview,confirm=fal
  if(!validFileReview(v)||!!v.receipt.seasons?.length&&!flags.seasons||v.next==="none"||!confirm||v.next==="select"&&!flags.files||v.next==="settings"&&!flags.settings||v.next==="start"&&!flags.start||v.next==="record"&&!flags.record)throw new ApiError("先重新审核原范围并独立确认下一阶段",400);
  const out=await request<FileSelection>(token,endpoint(v.receipt.id)+"/recover",{fingerprint:v.fingerprint,confirm:true,confirmFiles:flags.files===true,confirmSettings:flags.settings===true,confirmStart:flags.start===true,confirmRecord:flags.record===true,confirmSeasons:flags.seasons===true});
  const states:Record<string,FileSelection["state"]>={"adopt-add":"added","adopt-unwanted":"unwanted","adopt-selected":"selected","adopt-settings":"added",settings:"added",select:"selected",start:"ready",acknowledge:"ready",record:"ready"};
- if(!validFileSelection(out)||out.state!==states[v.next]||v.next==="record"&&!out.sourceRecorded||JSON.stringify(out.seasons)!==JSON.stringify(v.receipt.seasons)||out.id!==v.receipt.id||out.infoHash!==v.receipt.infoHash||out.subscriptionId!==v.receipt.subscriptionId||out.downloaderId!==v.receipt.downloaderId||JSON.stringify(out.files)!==JSON.stringify(v.receipt.files))throw new ApiError("恢复回执未核实，只读查回原编号，不要重发",503);return out;
+ if(!validFileSelection(out)||out.state!==states[v.next]||v.next==="record"&&!out.sourceRecorded||JSON.stringify(out.seasons)!==JSON.stringify(v.receipt.seasons)||out.id!==v.receipt.id||out.infoHash!==v.receipt.infoHash||out.direct!==v.receipt.direct||out.season!==v.receipt.season||JSON.stringify(out.episodes)!==JSON.stringify(v.receipt.episodes)||out.subscriptionId!==v.receipt.subscriptionId||out.downloaderId!==v.receipt.downloaderId||JSON.stringify(out.files)!==JSON.stringify(v.receipt.files))throw new ApiError("恢复回执未核实，只读查回原编号，不要重发",503);return out;
 }

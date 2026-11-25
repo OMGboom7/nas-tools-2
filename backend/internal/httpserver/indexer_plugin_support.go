@@ -1,11 +1,13 @@
 package httpserver
 
-// These providers either supply native indexers or have no indexer capability.
-// Unknown plugins still prevent silently running a partial provider set.
+// Jackett and Prowlarr supply the bundled plugin indexers. The other bundled
+// plugins have no get_indexers implementation, so installing one does not
+// change the providers used by a search. An unknown plugin may supply more.
 func nativeSearchPlugin(id string) bool {
-	switch id {
-	case "Jackett", "Prowlarr", "CustomReleaseGroups", "Customization", "CustomHosts", "ChineseSubFinder", "LibraryScraper", "LibraryRefresh", "Webhook", "SpeedLimiter", "MediaSyncDel", "MovieLike", "OpenSubtitles":
-		return true
+	catalog, err := bundledPluginCatalog()
+	if err != nil {
+		return false
 	}
-	return false
+	_, known := catalog[id]
+	return known
 }

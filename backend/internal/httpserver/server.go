@@ -736,7 +736,7 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	plugins.torrentMark = markAPI
 	plugins.torrentTransfer = &transferAPI
 	plugins.torrentRemover = removalAPI
-	plugins.doubanSync = &doubanSyncAPI{plugins: &plugins, subscriptions: subscriptions, login: nativeSiteLogin, pause: waitDouban}
+	plugins.doubanSync = &doubanSyncAPI{runner: rssRunner, plugins: &plugins, subscriptions: subscriptions, login: nativeSiteLogin, pause: waitDouban}
 	nativeSiteSignin.douban = plugins.doubanSync
 	plugins.archiveMedia = &mediaSync
 	rssRunner.archivePlugin = &plugins
