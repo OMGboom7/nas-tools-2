@@ -1,4 +1,5 @@
-import time
+import json
+import subprocess
 from threading import Event, Lock
 from urllib.parse import urlencode
 
@@ -7,8 +8,8 @@ import requests
 import log
 from app.helper import ThreadHelper
 from app.message.client._base import _IMessageClient
-from app.utils import RequestUtils, ExceptionUtils, StringUtils
-from config import Config
+from app.utils import RequestUtils, ExceptionUtils
+from config import Config, run_go_helper
 
 lock = Lock()
 WEBHOOK_STATUS = False
@@ -86,158 +87,39 @@ class Telegram(_IMessageClient):
         """
         return self._telegram_user_ids
 
+    def _send(self, kind, user_id, thread_id, **fields):
+        fields.update(token=self._telegram_token, chat_id=str(user_id or self._telegram_chat_id),
+                      thread_id=str(thread_id or self._telegram_thread_id or ""))
+        try:
+            payload = json.dumps(fields, ensure_ascii=False).encode()
+            run_go_helper("send-telegram", kind, payload=payload, timeout=70)
+            return True, ""
+        except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+            return False, "Telegram 消息发送失败或未收到确认"
+
     def send_msg(self, title, text="", image="", url="", user_id="", thread_id=""):
-        """
-        发送Telegram消息
-        :param title: 消息标题
-        :param text: 消息内容
-        :param image: 消息图片地址
-        :param url: 点击消息转转的URL
-        :param user_id: 用户ID，如有则只发消息给该用户
-        :user_id: 发送消息的目标用户ID，为空则发给管理员
-        :thread_id: 目标群组的话题ID
-        """
         if not title and not text:
             return False, "标题和内容不能同时为空"
-        try:
-            if not self._telegram_token or not self._telegram_chat_id:
-                return False, "参数未配置"
-
-            # text中的Markdown特殊字符转义
-            text = text.replace("[", r"\[").replace(
-                "_", r"\_").replace("*", r"\*").replace("`", r"\`")
-            # 拼装消息内容
-            titles = str(title).split('\n')
-            if len(titles) > 1:
-                title = titles[0]
-                if not text:
-                    text = "\n".join(titles[1:])
-                else:
-                    text = "%s\n%s" % ("\n".join(titles[1:]), text)
-            if text:
-                caption = "*%s*\n%s" % (title, text.replace("\n\n", "\n"))
-            else:
-                caption = title
-            if image and url:
-                caption = "%s\n\n[查看详情](%s)" % (caption, url)
-            if user_id:
-                chat_id = user_id
-            else:
-                chat_id = self._telegram_chat_id
-
-            if thread_id:
-                _thread_id = thread_id
-            else:
-                _thread_id = self._telegram_thread_id
-
-            return self.__send_request(chat_id=chat_id, image=image, caption=caption, thread_id=_thread_id)
-
-        except Exception as msg_e:
-            ExceptionUtils.exception_traceback(msg_e)
-            return False, str(msg_e)
+        if not self._telegram_token or not self._telegram_chat_id:
+            return False, "参数未配置"
+        return self._send("single", user_id, thread_id, title=title, text=text, image=image, url=url)
 
     def send_list_msg(self, medias: list, user_id="", title="", thread_id="", **kwargs):
-        """
-        发送列表类消息
-        """
+        if not self._telegram_token or not self._telegram_chat_id:
+            return False, "参数未配置"
+        if not title or not isinstance(medias, list):
+            return False, "数据错误"
+        items, image = [], ""
         try:
-            if not self._telegram_token or not self._telegram_chat_id:
-                return False, "参数未配置"
-            if not title or not isinstance(medias, list):
-                return False, "数据错误"
-            index, image, caption = 1, "", "*%s*" % title
             for media in medias:
                 if not image:
                     image = media.get_message_image()
-                if media.get_vote_string():
-                    caption = "%s\n%s. [%s](%s)\n%s，%s" % (caption,
-                                                           index,
-                                                           media.get_title_string(),
-                                                           media.get_detail_url(),
-                                                           media.get_type_string(),
-                                                           media.get_vote_string())
-                else:
-                    caption = "%s\n%s. [%s](%s)\n%s" % (caption,
-                                                        index,
-                                                        media.get_title_string(),
-                                                        media.get_detail_url(),
-                                                        media.get_type_string())
-                index += 1
-
-            if user_id:
-                chat_id = user_id
-            else:
-                chat_id = self._telegram_chat_id
-
-            if thread_id:
-                _thread_id = thread_id
-            else:
-                _thread_id = self._telegram_thread_id
-
-            return self.__send_request(chat_id=chat_id, image=image, caption=caption, thread_id=_thread_id)
-
-        except Exception as msg_e:
-            ExceptionUtils.exception_traceback(msg_e)
-            return False, str(msg_e)
-
-    def __send_request(self, chat_id="", image="", caption="", thread_id=""):
-        """
-        向Telegram发送报文
-        """
-        def _res_parse(result):
-            if result and result.status_code == 200:
-                ret_json = result.json()
-                status = ret_json.get("ok")
-                if status:
-                    return True, ""
-                else:
-                    return False, ret_json.get("description")
-            elif result is not None:
-                return False, f"错误码：{result.status_code}，错误原因：{result.reason}"
-            else:
-                return False, "未获取到返回信息"
-
-        proxies = Config().get_proxies()
-        if image:
-            # 发送图文消息
-            values = {"chat_id": chat_id, "photo": image, "caption": caption,
-                      "parse_mode": "Markdown"}
-            if StringUtils.is_string_and_not_empty(thread_id):
-                values.update({"message_thread_id": thread_id})
-
-            sc_url = "%s/bot%s/sendPhoto?" % (self._telegram_domain,
-                                              self._telegram_token)
-            res = RequestUtils(proxies=proxies).get_res(
-                sc_url + urlencode(values))
-            flag, msg = _res_parse(res)
-            if flag:
-                return flag, msg
-            else:
-                photo_req = RequestUtils(proxies=proxies).get_res(image)
-                if photo_req and photo_req.content:
-                    sc_url = "%s/bot%s/sendPhoto" % (
-                        self._telegram_domain, self._telegram_token)
-                    data = {"chat_id": chat_id, "caption": caption,
-                            "parse_mode": "Markdown"}
-                    if StringUtils.is_string_and_not_empty(thread_id):
-                        data.update({"message_thread_id": thread_id})
-                    files = {"photo": photo_req.content}
-                    res = requests.post(
-                        sc_url, proxies=proxies, data=data, files=files)
-                    flag, msg = _res_parse(res)
-                    if flag:
-                        return flag, msg
-        # 发送文本消息
-        values = {"chat_id": chat_id, "text": caption,
-                  "parse_mode": "Markdown"}
-        if StringUtils.is_string_and_not_empty(thread_id):
-            values.update({"message_thread_id": thread_id})
-        sc_url = "%s/bot%s/sendMessage?" % (
-            self._telegram_domain, self._telegram_token)
-        res = RequestUtils(proxies=proxies).get_res(
-            sc_url + urlencode(values), raise_exception=True)
-        flag, msg = _res_parse(res)
-        return flag, msg
+                items.append({"title": media.get_title_string(), "url": media.get_detail_url(),
+                              "type": media.get_type_string(), "vote": media.get_vote_string()})
+        except Exception as exc:
+            ExceptionUtils.exception_traceback(exc)
+            return False, "Telegram 媒体列表读取失败"
+        return self._send("list", user_id, thread_id, title=title, image=image, medias=items)
 
     def __set_bot_webhook(self):
         """

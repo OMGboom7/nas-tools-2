@@ -30,6 +30,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 3 && os.Args[1] == "send-telegram" {
+		if err := httpserver.SendTelegramCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin); err != nil {
+			slog.Error("Telegram notification failed")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "send-webhook" {
 		if err := httpserver.SendWebhookCommand(context.Background(), os.Args[2], os.Stdin); err != nil {
 			slog.Error("webhook notification failed")
