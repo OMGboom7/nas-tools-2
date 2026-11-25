@@ -1,6 +1,5 @@
 import hashlib
 import json
-import re
 import time
 from enum import Enum
 
@@ -11,7 +10,7 @@ from app.message.message_center import MessageCenter
 from app.utils import StringUtils, ExceptionUtils
 from app.utils.commons import singleton
 from app.utils.types import SearchType, MediaType
-from config import Config
+from config import Config, run_go_helper
 from web.backend.web_utils import WebUtils
 
 
@@ -224,49 +223,22 @@ class Message(object):
             return state
         return False
 
-    def send_download_message(self, in_from: SearchType, can_item, download_setting_name=None, downloader_name=None):
-        """
-        发送下载的消息
-        :param in_from: 下载来源
-        :param can_item: 下载的媒体信息
-        :param download_setting_name: 下载设置名称
-        :param downloader_name: 下载器名称
-        :return: 发送状态、错误信息
-        """
-        msg_title = f"{can_item.get_title_ep_string()} 开始下载"
-        msg_text = f"{can_item.get_star_string()}"
-        msg_text = f"{msg_text}\n来自：{in_from.value}"
-        if download_setting_name:
-            msg_text = f"{msg_text}\n下载设置：{download_setting_name}"
-        if downloader_name:
-            msg_text = f"{msg_text}\n下载器：{downloader_name}"
-        if can_item.user_name:
-            msg_text = f"{msg_text}\n用户：{can_item.user_name}"
-        if can_item.site:
-            if in_from == SearchType.USERRSS:
-                msg_text = f"{msg_text}\n任务：{can_item.site}"
-            else:
-                msg_text = f"{msg_text}\n站点：{can_item.site}"
-        if can_item.get_resource_type_string():
-            msg_text = f"{msg_text}\n质量：{can_item.get_resource_type_string()}"
-        if can_item.size:
-            if str(can_item.size).isdigit():
-                size = StringUtils.str_filesize(can_item.size)
-            else:
-                size = can_item.size
-            msg_text = f"{msg_text}\n大小：{size}"
-        if can_item.org_string:
-            msg_text = f"{msg_text}\n种子：{can_item.org_string}"
-        if can_item.seeders:
-            msg_text = f"{msg_text}\n做种数：{can_item.seeders}"
-        msg_text = f"{msg_text}\n促销：{can_item.get_volume_factor_string()}"
-        if can_item.hit_and_run:
-            msg_text = f"{msg_text}\nHit&Run：是"
-        if can_item.description:
-            html_re = re.compile(r'<[^>]+>', re.S)
-            description = html_re.sub('', can_item.description)
-            can_item.description = re.sub(r'<[^>]+>', '', description)
-            msg_text = f"{msg_text}\n描述：{can_item.description}"
+    @staticmethod
+    def download_notice_fields(in_from, media, setting_name=None, downloader_name=None):
+        size = media.size
+        if size and str(size).isdigit():
+            size = StringUtils.str_filesize(size)
+        return {"title": media.get_title_ep_string(), "stars": media.get_star_string(), "source": in_from.value,
+                "setting": setting_name or "", "downloader": downloader_name or "", "user": media.user_name or "",
+                "site": media.site or "", "taskSite": in_from == SearchType.USERRSS,
+                "quality": media.get_resource_type_string() or "", "size": str(size) if size else "",
+                "torrent": media.org_string or "", "seeders": str(media.seeders) if media.seeders else "",
+                "promotion": media.get_volume_factor_string(), "hr": bool(media.hit_and_run),
+                "description": media.description or ""}
+
+    def send_download_message(self, in_from, can_item, download_setting_name=None, downloader_name=None):
+        fields = self.download_notice_fields(in_from, can_item, download_setting_name, downloader_name)
+        msg_title, msg_text = json.loads(run_go_helper("download-history", "notice", payload=json.dumps(fields).encode()))
         # 插入消息中心
         self.messagecenter.insert_system_message(title=msg_title, content=msg_text)
         # 发送消息

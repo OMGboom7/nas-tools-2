@@ -81,6 +81,29 @@ func MagnetInfoHash(raw string) string {
 	return v1TopicHash(u.Query().Get("xt"))
 }
 
+// MagnetTopics checks conflicting v1/v2 identities and normalizes base32 btih.
+func MagnetTopics(topics []string) (string, string, error) {
+	var v1, v2 string
+	for _, topic := range topics {
+		topic = strings.ToLower(topic)
+		switch {
+		case strings.HasPrefix(topic, "urn:btih:"):
+			h := v1TopicHash(topic)
+			if h == "" || v1 != "" && v1 != h {
+				return "", "", ErrInvalid
+			}
+			v1 = h
+		case strings.HasPrefix(topic, "urn:btmh:"):
+			h, ok := strings.CutPrefix(topic, "urn:btmh:1220")
+			if _, err := hex.DecodeString(h); !ok || err != nil || len(h) != 64 || v2 != "" && v2 != h {
+				return "", "", ErrInvalid
+			}
+			v2 = h
+		}
+	}
+	return v1, v2, nil
+}
+
 // ResolveLink checks every advertised identity before returning metadata.
 func ResolveLink(ctx context.Context, raw string) ([]byte, error) {
 	u, err := url.Parse(raw)
@@ -91,23 +114,9 @@ func ResolveLink(ctx context.Context, raw string) ([]byte, error) {
 	if err != nil {
 		return nil, ErrInvalid
 	}
-	var v1, v2 string
-	for _, topic := range q["xt"] {
-		topic = strings.ToLower(topic)
-		switch {
-		case strings.HasPrefix(topic, "urn:btih:"):
-			h := v1TopicHash(topic)
-			if h == "" || v1 != "" && v1 != h {
-				return nil, ErrInvalid
-			}
-			v1 = h
-		case strings.HasPrefix(topic, "urn:btmh:"):
-			h, ok := strings.CutPrefix(topic, "urn:btmh:1220")
-			if _, err := hex.DecodeString(h); !ok || err != nil || len(h) != 64 || v2 != "" && v2 != h {
-				return nil, ErrInvalid
-			}
-			v2 = h
-		}
+	v1, v2, err := MagnetTopics(q["xt"])
+	if err != nil {
+		return nil, err
 	}
 	rawTorrent, err := ResolveMagnet(ctx, raw, v1)
 	if err != nil {

@@ -105,7 +105,7 @@ class PikPak(_IDownloadClient):
         try:
             task = asyncio.run(self._client.offline_download(content, download_dir))
             taskId = task.get('task', {}).get('id')
-            return taskId is not None and bool(taskId)
+            return taskId if isinstance(taskId, str) and taskId else None
         except Exception as e:
             log.error("PikPak 添加离线下载任务失败: %s" % str(e))
             return None

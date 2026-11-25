@@ -48,6 +48,25 @@ def _search_row(media, title, identified):
     }
 
 
+def _download_history(operation, **query):
+    body = json.dumps(query, ensure_ascii=False, allow_nan=False).encode()
+    return json.loads(run_go_helper("download-history", operation, payload=body, timeout=30))
+
+
+def download_history_media(media):
+    if not media or not media.title or not media.tmdb_id:
+        return None
+    values = {"TITLE": media.title, "YEAR": media.year, "TYPE": media.type.value, "TMDBID": media.tmdb_id,
+              "SE": media.get_season_episode_string(), "VOTE": media.vote_average, "POSTER": media.get_poster_image(),
+              "OVERVIEW": media.overview, "TORRENT": media.org_string, "ENCLOSURE": media.enclosure,
+              "SITE": media.site, "DESC": media.description}
+    return {key: str(value) if value is not None else None for key, value in values.items()}
+
+
+def _history_rows(operation, **query):
+    return [DOWNLOADHISTORY(**row) for row in _download_history(operation, **query)]
+
+
 class DbHelper:
     _db = MainDb()
 
@@ -1146,116 +1165,32 @@ class DbHelper:
         )
 
     def is_exists_download_history(self, enclosure, downloader, download_id):
-        """
-        查询下载历史是否存在
-        """
-        if enclosure:
-            count = self._db.query(DOWNLOADHISTORY).filter(
-                DOWNLOADHISTORY.ENCLOSURE == enclosure
-            ).count()
-        else:
-            count = self._db.query(DOWNLOADHISTORY).filter(
-                DOWNLOADHISTORY.DOWNLOADER == downloader,
-                DOWNLOADHISTORY.DOWNLOAD_ID == download_id
-            ).count()
-        if count > 0:
-            return True
-        else:
-            return False
+        return _download_history("exists", enclosure=enclosure,
+                                 downloader=str(downloader) if downloader is not None else None,
+                                 task=str(download_id) if download_id is not None else None)
 
-    @DbPersist(_db)
     def insert_download_history(self, media_info, downloader, download_id, save_dir):
-        """
-        新增下载历史
-        """
-        if not media_info:
-            return
-        if not media_info.title or not media_info.tmdb_id:
-            return
-        if self.is_exists_download_history(enclosure=media_info.enclosure,
-                                           downloader=downloader,
-                                           download_id=download_id):
-            self._db.query(DOWNLOADHISTORY).filter(DOWNLOADHISTORY.ENCLOSURE == media_info.enclosure,
-                                                   DOWNLOADHISTORY.DOWNLOADER == downloader,
-                                                   DOWNLOADHISTORY.DOWNLOAD_ID == download_id).update(
-                {
-                    "TORRENT": media_info.org_string,
-                    "ENCLOSURE": media_info.enclosure,
-                    "DESC": media_info.description,
-                    "SITE": media_info.site,
-                    "DOWNLOADER": downloader,
-                    "DOWNLOAD_ID": download_id,
-                    "SAVE_PATH": save_dir,
-                    "SE": media_info.get_season_episode_string(),
-                    "DATE": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
-                }
-            )
-        else:
-            self._db.insert(DOWNLOADHISTORY(
-                TITLE=media_info.title,
-                YEAR=media_info.year,
-                TYPE=media_info.type.value,
-                TMDBID=media_info.tmdb_id,
-                VOTE=media_info.vote_average,
-                POSTER=media_info.get_poster_image(),
-                OVERVIEW=media_info.overview,
-                TORRENT=media_info.org_string,
-                ENCLOSURE=media_info.enclosure,
-                DESC=media_info.description,
-                DATE=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
-                SITE=media_info.site,
-                DOWNLOADER=downloader,
-                DOWNLOAD_ID=download_id,
-                SAVE_PATH=save_dir,
-                SE=media_info.get_season_episode_string()
-            ))
+        media = download_history_media(media_info)
+        if media and downloader is not None and download_id and not isinstance(download_id, bool):
+            _download_history("record", media=media, downloader=str(downloader), task=str(download_id), path=save_dir)
 
     def get_download_history(self, date=None, hid=None, num=30, page=1):
-        """
-        查询下载历史
-        """
         if hid:
-            return self._db.query(DOWNLOADHISTORY).filter(DOWNLOADHISTORY.ID == int(hid)).all()
-        sub_query = self._db.query(DOWNLOADHISTORY,
-                                   func.max(DOWNLOADHISTORY.DATE)
-                                   ).group_by(DOWNLOADHISTORY.TITLE).subquery()
+            return _history_rows("id", id=int(hid))
         if date:
-            return self._db.query(DOWNLOADHISTORY).filter(
-                DOWNLOADHISTORY.DATE > date).join(
-                sub_query,
-                and_(sub_query.c.ID == DOWNLOADHISTORY.ID)
-            ).order_by(DOWNLOADHISTORY.DATE.desc()).all()
-        else:
-            offset = (int(page) - 1) * int(num)
-            return self._db.query(DOWNLOADHISTORY).join(
-                sub_query,
-                and_(sub_query.c.ID == DOWNLOADHISTORY.ID)
-            ).order_by(
-                DOWNLOADHISTORY.DATE.desc()
-            ).limit(num).offset(offset).all()
+            return _history_rows("list", date=str(date))
+        return _history_rows("list", page=int(page or 1), num=int(num))
 
     def get_download_history_by_title(self, title):
-        """
-        根据标题查找下载历史
-        """
-        return self._db.query(DOWNLOADHISTORY).filter(DOWNLOADHISTORY.TITLE == title).all()
+        return _history_rows("title", title=title)
 
     def get_download_history_by_path(self, path):
-        """
-        根据路径查找下载历史
-        """
-        return self._db.query(DOWNLOADHISTORY).filter(
-            DOWNLOADHISTORY.SAVE_PATH == os.path.normpath(path)
-        ).order_by(DOWNLOADHISTORY.DATE.desc()).first()
+        rows = _history_rows("path", path=os.path.normpath(path))
+        return rows[0] if rows else None
 
     def get_download_history_by_downloader(self, downloader, download_id):
-        """
-        根据下载器查找下载历史
-        """
-        return self._db.query(DOWNLOADHISTORY).filter(
-            DOWNLOADHISTORY.DOWNLOADER == downloader,
-            DOWNLOADHISTORY.DOWNLOAD_ID == download_id
-        ).order_by(DOWNLOADHISTORY.DATE.desc()).first()
+        rows = _history_rows("task", downloader=str(downloader), task=str(download_id))
+        return rows[0] if rows else None
 
     @DbPersist(_db)
     def update_brushtask(self, brush_id, item):

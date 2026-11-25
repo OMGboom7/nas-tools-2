@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/0xforee/nas-tools/backend/internal/downloadhistory"
 	_ "modernc.org/sqlite"
 )
 
@@ -74,13 +75,11 @@ func (store *Store) ListDownloadHistory(ctx context.Context, page, pageSize int)
 		WITH ranked AS (
 			SELECT COALESCE(TMDBID,'') AS TMDBID, COALESCE(TITLE,'') AS TITLE, COALESCE(TYPE,'') AS TYPE, COALESCE(YEAR,'') AS YEAR,
 			       COALESCE(POSTER,'') AS POSTER, COALESCE(TORRENT,'') AS TORRENT, COALESCE(DATE,'') AS DATE, COALESCE(SITE,'') AS SITE,
-			       ROW_NUMBER() OVER (PARTITION BY TITLE ORDER BY DATE DESC, ID DESC) AS position
+			       ID, `+downloadhistory.LatestPerTitle+` AS position
 			FROM DOWNLOAD_HISTORY
 		)
-		SELECT * FROM (
-			SELECT TMDBID, TITLE, TYPE, YEAR, POSTER, TORRENT, DATE, SITE
-			FROM ranked WHERE position = 1
-		) ORDER BY DATE DESC LIMIT ? OFFSET ?`, pageSize, (page-1)*pageSize)
+		SELECT TMDBID, TITLE, TYPE, YEAR, POSTER, TORRENT, DATE, SITE
+		FROM ranked WHERE position = 1 ORDER BY DATE DESC, ID DESC LIMIT ? OFFSET ?`, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("list download history: %w", err)
 	}

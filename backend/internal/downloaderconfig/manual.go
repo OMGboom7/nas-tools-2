@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/downloadhistory"
 )
 
 var ErrManualPending = errors.New("manual submission is pending or conflicts with its original scope")
@@ -215,6 +216,18 @@ func (s *Store) RejectManual(ctx context.Context, r ManualSubmission, attempted 
 }
 func manualDocument(r ManualSubmission) string { b, _ := json.Marshal(r.Definition); return string(b) }
 func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, proof, actor string) error {
+	return s.CompleteWithHistory(ctx, r, taskID, proof, actor, nil)
+}
+
+// ClassicAcknowledgement contains private history fields for the original table.
+// They never enter the public receipt or the notification data.
+type ClassicAcknowledgement struct {
+	Media                    downloadhistory.Media
+	Path                     *string
+	Title, Text, Image, Link string
+}
+
+func (s *Store) CompleteWithHistory(ctx context.Context, r ManualSubmission, taskID, proof, actor string, classic *ClassicAcknowledgement) error {
 	if proof != "acknowledged" && proof != "verified_present" || taskID == "" || len(taskID) > 128 {
 		return ErrManualPending
 	}
@@ -252,7 +265,12 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 	}
 	date := time.Now().Format("2006-01-02 15:04:05")
 	mediaInfo := map[string]any{"title": d.Title}
-	if m := d.Direct; m != nil {
+	if classic != nil && classic.Media != nil {
+		if err := downloadhistory.RecordTx(ctx, tx, classic.Media, strconv.FormatInt(d.DownloaderID, 10), taskID, classic.Path); err != nil {
+			return err
+		}
+		mediaInfo = map[string]any{"title": classic.Media["TITLE"], "year": classic.Media["YEAR"], "type": classic.Media["TYPE"], "tmdb_id": classic.Media["TMDBID"], "season_episode": classic.Media["SE"]}
+	} else if m := d.Direct; m != nil {
 		if !m.valid() {
 			return ErrManualPending
 		}
@@ -304,10 +322,16 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 		title = d.Title + " 已核实任务存在"
 		message = "管理员只读核实原 Hash 当前存在；不证明本次新建任务或全部设置已生效，不代表文件完成或入库。"
 	}
-	if err := bus.EmitData(ctx, tx, "download_start", r.ID, "manual-download:"+r.ID, title, "来自："+d.Source+"；下载器："+d.DownloaderName+"。"+message, map[string]any{
-		"media_info": mediaInfo, "downloader_id": d.DownloaderID, "download_dir": d.SavePath,
-		"native_download": map[string]any{"task_id": taskID, "info_hash": d.InfoHash, "proof": proof, "source": d.Source},
-	}); err != nil {
+	reference := "manual-download:" + r.ID
+	event := map[string]any{"media_info": mediaInfo, "downloader_id": d.DownloaderID, "download_dir": d.SavePath,
+		"native_download": map[string]any{"task_id": taskID, "info_hash": d.InfoHash, "proof": proof, "source": d.Source}}
+	body := "来自：" + d.Source + "；下载器：" + d.DownloaderName + "。" + message
+	if classic != nil {
+		reference = "classic-download:" + r.ID
+		title, body = classic.Title, classic.Text
+		event["classic_notice"] = map[string]string{"image": classic.Image, "link": classic.Link}
+	}
+	if err := bus.EmitData(ctx, tx, "download_start", r.ID, reference, title, body, event); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS GO_MANUAL_DOWNLOAD_CONFIRMATIONS(SUBMISSION_ID TEXT PRIMARY KEY,ACTOR TEXT NOT NULL,PROOF TEXT NOT NULL,CREATED TEXT NOT NULL)`); err != nil {

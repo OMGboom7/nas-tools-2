@@ -236,6 +236,10 @@ func (s *Store) PendingLegacyStatistics(ctx context.Context) ([]Delivery, error)
 	return s.pending(ctx, " AND EVENT_ID IN (SELECT ID FROM GO_BUSINESS_EVENTS WHERE REFERENCE GLOB 'legacy-stats:*' AND KIND IN ('ptrefresh_date_message','site_message'))")
 }
 
+func (s *Store) PendingClassicDownloads(ctx context.Context) ([]Delivery, error) {
+	return s.pending(ctx, " AND EVENT_ID IN (SELECT ID FROM GO_BUSINESS_EVENTS WHERE REFERENCE GLOB 'classic-download:*' AND KIND='download_start')")
+}
+
 func (s *Store) pending(ctx context.Context, scope string) ([]Delivery, error) {
 	result := []Delivery{}
 	exists, err := s.exists(ctx)

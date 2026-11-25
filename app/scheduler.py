@@ -14,7 +14,7 @@ from app.utils import ExceptionUtils
 from app.utils.commons import singleton
 from config import METAINFO_SAVE_INTERVAL, \
     SYNC_TRANSFER_INTERVAL, RSS_CHECK_INTERVAL, \
-    RSS_REFRESH_TMDB_INTERVAL, META_DELETE_UNKNOWN_INTERVAL, REFRESH_WALLPAPER_INTERVAL, Config
+    RSS_REFRESH_TMDB_INTERVAL, META_DELETE_UNKNOWN_INTERVAL, REFRESH_WALLPAPER_INTERVAL, Config, run_go_helper
 from web.backend.wallpaper import get_login_wallpaper
 
 
@@ -45,6 +45,8 @@ class Scheduler:
                                              })
         if not self.SCHEDULER:
             return
+        self.SCHEDULER.add_job(run_go_helper, "interval", seconds=60, args=["classic-download", "notices"],
+                               kwargs={"timeout": 60}, next_run_time=datetime.datetime.now(), max_instances=1)
         if self._pt:
             # RSS下载器
             pt_check_interval = self._pt.get('pt_check_interval')

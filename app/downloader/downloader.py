@@ -1,4 +1,5 @@
 import os
+import base64
 from threading import Lock
 from enum import Enum
 import json
@@ -9,7 +10,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import log
 from app.conf import ModuleConf
 from app.conf import SystemConfig
+from app.downloader.client._base import _IDownloadClient
 from app.filetransfer import FileTransfer
+from app.helper.db_helper import download_history_media
 from app.helper import DbHelper, ThreadHelper, SubmoduleHelper
 from app.media import Media
 from app.media.meta import MetaInfo
@@ -20,7 +23,7 @@ from app.sites import Sites, SiteSubtitle
 from app.utils import Torrent, StringUtils, SystemUtils, ExceptionUtils, NumberUtils
 from app.utils.commons import singleton
 from app.utils.types import MediaType, DownloaderType, SearchType, RmtMode, EventType, SystemConfigKey
-from config import Config, PT_TAG, RMT_MEDIAEXT, PT_TRANSFER_INTERVAL
+from config import Config, run_go_helper, PT_TAG, RMT_MEDIAEXT, PT_TRANSFER_INTERVAL
 
 lock = Lock()
 client_lock = Lock()
@@ -267,7 +270,8 @@ class Downloader:
                  in_from=None,
                  user_name=None,
                  skip_size_check=False,
-                 proxy=None):
+                 proxy=None,
+                 receipt_sender=None):
         """
         添加下载任务，根据当前使用的下载器分别调用不同的客户端处理
         :param media_info: 需下载的媒体信息，含URL地址
@@ -370,9 +374,11 @@ class Downloader:
         if not downloader_id:
             downloader_id = download_attr.get("downloader")
         downloader_conf = self.get_downloader_conf(downloader_id)
-        downloader = self.__get_client(downloader_id)
+        sender = receipt_sender or (user_name if in_from == SearchType.WEB else None)
+        recorded = bool(sender and downloader_conf and downloader_conf.get("type") == "aria2")
+        downloader = None if recorded else self.__get_client(downloader_id)
 
-        if not downloader or not downloader_conf:
+        if not downloader_conf or (not recorded and not downloader):
             __download_fail("请检查下载设置所选下载器是否有效且启用")
             return None, None, None, f"下载设置 {download_setting_name} 所选下载器失效"
         downloader_name = downloader_conf.get("name")
@@ -428,8 +434,23 @@ class Downloader:
                 log.info(f"【Downloader】下载器 after, down_dir: {download_dir}")
                 if not category:
                     category = download_info.get('category')
+            # 计算数据文件保存的路径
+            save_dir = subtitle_dir = None
+            visit_dir, _ = _IDownloadClient.get_replace_path(download_dir, downloader_conf.get("download_dir"))
+            if visit_dir:
+                if dl_files_folder:
+                    # 种子文件带目录
+                    save_dir = os.path.join(visit_dir, dl_files_folder)
+                    subtitle_dir = save_dir
+                elif dl_files:
+                    # 种子文件为单独文件
+                    save_dir = os.path.join(visit_dir, dl_files[0])
+                    subtitle_dir = visit_dir
+                else:
+                    save_dir = None
+                    subtitle_dir = visit_dir
             # 添加下载
-            print_url = content if isinstance(content, str) else url
+            print_url = "磁力链接" if isinstance(content, str) else (os.path.basename(torrent_file) if torrent_file else "站点种子")
             if is_paused:
                 log.info(f"【Downloader】下载器 {downloader_name} 添加任务并暂停：%s，目录：%s，Url：%s" % (
                     title, download_dir, print_url))
@@ -438,8 +459,24 @@ class Downloader:
                     title, download_dir, print_url))
             # 下载ID
             download_id = None
-            downloader_type = downloader.get_type()
-            if downloader_type == DownloaderType.TR:
+            if recorded:
+                try:
+                    receipt = self.__submit_recorded_aria2(
+                        media_info, content, in_from, sender, user_name, downloader_conf, download_setting_name,
+                        download_dir, save_dir, is_paused, upload_limit, download_limit)
+                except (OSError, subprocess.SubprocessError, ValueError):
+                    return downloader_id, None, None, "无法确认下载提交结果，请检查下载回执"
+                if receipt.get("rejected"):
+                    reason = "下载设置无效或已变更，下载器未接收任务"
+                    __download_fail(reason)
+                    return downloader_id, None, None, reason
+                if receipt.get("pending"):
+                    return downloader_id, None, None, "已有下载回执待核对，未重复提交"
+                download_id = receipt["task"]
+                if receipt["reused"]:
+                    return downloader_id, download_id, container_path, f"已提交过此下载，原任务编号：{download_id}"
+                ret = bool(download_id)
+            elif downloader.get_type() == DownloaderType.TR:
                 ret = downloader.add_torrent(content,
                                              is_paused=is_paused,
                                              download_dir=download_dir,
@@ -453,7 +490,7 @@ class Downloader:
                                               ratio_limit=ratio_limit,
                                               seeding_time_limit=seeding_time_limit)
 
-            elif downloader_type == DownloaderType.QB:
+            elif downloader.get_type() == DownloaderType.QB:
                 # 加标签以获取添加下载后的编号
                 torrent_tag = "NT" + StringUtils.generate_random_str(5)
                 if tags:
@@ -482,51 +519,48 @@ class Downloader:
                                              download_dir=download_dir,
                                              category=category)
                 download_id = ret
+            if ret and (not download_id or isinstance(download_id, bool)):
+                return downloader_id, None, None, "下载器已响应，任务编号尚未确认，请先核对原任务"
             # 添加下载成功
             if ret:
-                # 计算数据文件保存的路径
-                save_dir = subtitle_dir = None
-                visit_dir = self.get_download_visit_dir(download_dir)
-                if visit_dir:
-                    if dl_files_folder:
-                        # 种子文件带目录
-                        save_dir = os.path.join(visit_dir, dl_files_folder)
-                        subtitle_dir = save_dir
-                    elif dl_files:
-                        # 种子文件为单独文件
-                        save_dir = os.path.join(visit_dir, dl_files[0])
-                        subtitle_dir = visit_dir
-                    else:
-                        save_dir = None
-                        subtitle_dir = visit_dir
                 # 登记下载历史，记录下载目录
-                self.dbhelper.insert_download_history(media_info=media_info,
-                                                      downloader=downloader_id,
-                                                      download_id=download_id,
-                                                      save_dir=save_dir)
+                warning = ""
+                if not recorded:
+                    try:
+                        self.dbhelper.insert_download_history(media_info=media_info, downloader=downloader_id,
+                                                              download_id=download_id, save_dir=save_dir)
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        warning = "下载器已接收任务，历史记录尚未保存"
+                        log.warn(f"【Downloader】{warning}")
                 # 下载站点字幕文件
                 if page_url \
                         and subtitle_dir \
                         and site_info \
                         and site_info.get("subtitle"):
-                    ThreadHelper().start_thread(
-                        self.sitesubtitle.download,
-                        (
-                            media_info,
-                            site_info.get("id"),
-                            site_info.get("cookie"),
-                            site_info.get("ua"),
-                            subtitle_dir
+                    try:
+                        ThreadHelper().start_thread(
+                            self.sitesubtitle.download,
+                            (
+                                media_info,
+                                site_info.get("id"),
+                                site_info.get("cookie"),
+                                site_info.get("ua"),
+                                subtitle_dir
+                            )
                         )
-                    )
+                    except Exception as err:
+                        log.warn(f"【Downloader】下载器已接收任务，启动字幕任务失败：{err}")
                 # 发送下载消息
-                if in_from:
+                if in_from and not recorded:
                     media_info.user_name = user_name
-                    self.message.send_download_message(in_from=in_from,
-                                                       can_item=media_info,
-                                                       download_setting_name=download_setting_name,
-                                                       downloader_name=downloader_name)
-                return downloader_id, download_id, container_path, ""
+                    try:
+                        self.message.send_download_message(in_from=in_from, can_item=media_info,
+                                                           download_setting_name=download_setting_name,
+                                                           downloader_name=downloader_name)
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        warning = (warning + "；" if warning else "") + "下载器已接收任务，通知尚未确认"
+                        log.warn(f"【Downloader】{warning}")
+                return downloader_id, download_id, container_path, warning
             else:
                 __download_fail("请检查下载任务是否已存在")
                 return downloader_id, None, None, f"下载器 {downloader_name} 添加下载任务失败，请检查下载任务是否已存在"
@@ -535,6 +569,25 @@ class Downloader:
             __download_fail(str(e))
             log.error(f"【Downloader】下载器 {downloader_name} 添加任务出错：%s" % str(e))
             return None, None, None, str(e)
+
+    def __submit_recorded_aria2(self, media_info, content, in_from, sender, user_name, downloader_conf,
+                                download_setting_name, download_dir, save_dir, is_paused, upload_limit, download_limit):
+        media_info.user_name = user_name
+        notice = self.message.download_notice_fields(in_from, media_info, download_setting_name, downloader_conf["name"])
+        domain = Config().get_domain()
+        request = {
+            "downloader": int(downloader_conf["id"]), "config": downloader_conf["config"],
+            "directories": downloader_conf["download_dir"], "sender": str(sender), "channel": in_from.name,
+            "source": in_from.value, "title": media_info.org_string, "directory": download_dir or "", "paused": is_paused,
+            "uploadLimitKB": int(upload_limit or 0), "downloadLimitKB": int(download_limit or 0), "notice": notice,
+            "history": {"media": download_history_media(media_info), "path": save_dir,
+                        "image": media_info.get_message_image() or "", "link": domain + "?next=downloading" if domain else ""},
+        }
+        if isinstance(content, str):
+            request["magnet"] = content
+        else:
+            request["torrent"] = base64.b64encode(content).decode("ascii")
+        return json.loads(run_go_helper("classic-download", "submit", payload=json.dumps(request).encode(), timeout=75))
 
     def transfer(self, downloader_id=None):
         """

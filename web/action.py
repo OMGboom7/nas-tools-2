@@ -578,8 +578,7 @@ class WebAction:
         else:
             user_name = "API"
         res = results[0]
-        dl_enclosure = res.ENCLOSURE if Sites().get_sites_by_url_domain(res.ENCLOSURE) else Torrent.format_enclosure(res.ENCLOSURE)
-        if not dl_enclosure:
+        if not res.ENCLOSURE or not (Torrent.is_magnet(res.ENCLOSURE) or Torrent.maybe_torrent_url(res.ENCLOSURE)):
             return {"retcode": -1, "retmsg": "未发现当前种子下载链接，请前往站点下载"}
         media = Media().get_media_info(title=res.TORRENT_NAME, subtitle=res.DESCRIPTION)
         if not media:
@@ -596,7 +595,7 @@ class WebAction:
                                                    user_name=user_name)
         if not ret:
             return {"retcode": -1, "retmsg": ret_msg}
-        return {"retcode": 0, "retmsg": ""}
+        return {"retcode": 0, "retmsg": ret_msg or "", "task_id": ret}
 
     @staticmethod
     def __download_link(data):
@@ -617,12 +616,16 @@ class WebAction:
         if not title or not enclosure:
             return {"code": -1, "msg": "种子信息有误"}
         media = Media().get_media_info(title=title, subtitle=description)
+        if not media:
+            return {"code": -1, "msg": "无法识别所选资源"}
         media.site = site
-        media.enclosure = enclosure if Sites().get_sites_by_url_domain(enclosure) else Torrent.format_enclosure(enclosure)
+        if not (Torrent.is_magnet(enclosure) or Torrent.maybe_torrent_url(enclosure)):
+            return {"code": -1, "msg": "下载链接无效"}
+        media.enclosure = enclosure
         media.page_url = page_url
         media.size = size
-        media.upload_volume_factor = float(uploadvolumefactor)
-        media.download_volume_factor = float(downloadvolumefactor)
+        media.upload_volume_factor = float(uploadvolumefactor) if uploadvolumefactor is not None else None
+        media.download_volume_factor = float(downloadvolumefactor) if downloadvolumefactor is not None else None
         media.seeders = seeders
         # 添加下载
         _, ret, dir, ret_msg = Downloader().download(media_info=media,
@@ -632,7 +635,7 @@ class WebAction:
                                                 user_name=current_user.username)
         if not ret:
             return {"code": 1, "msg": ret_msg or "如连接正常，请检查下载任务是否存在"}
-        return {"code": 0, "msg": "下载成功"}
+        return {"code": 0, "msg": ret_msg or "下载成功", "task_id": ret}
 
     @staticmethod
     def __download_torrent(data):
@@ -646,22 +649,31 @@ class WebAction:
         urls = data.get("urls") or []
         if not files and not urls:
             return {"code": -1, "msg": "没有种子文件或者种子链接"}
+        accepted = []
         # 下载种子
         for file_item in files:
             if not file_item:
                 continue
             file_name = file_item.get("upload", {}).get("filename")
+            if not file_name or file_name != os.path.basename(file_name) or file_name in (".", ".."):
+                return {"code": -1, "tasks": accepted, "msg": "上传种子文件名无效"}
             file_path = os.path.join(Config().get_temp_path(), file_name)
+            if os.path.islink(file_path):
+                return {"code": -1, "tasks": accepted, "msg": "上传种子文件无效"}
             media_info = Media().get_media_info(title=file_name)
-            if media_info:
-                media_info.site = "WEB"
+            if not media_info:
+                return {"code": -1, "tasks": accepted, "msg": "无法识别种子文件名"}
+            media_info.site = "WEB"
             # 添加下载
-            Downloader().download(media_info=media_info,
+            _, task, _, error = Downloader().download(media_info=media_info,
                                   download_dir=dl_dir,
                                   download_setting=dl_setting,
                                   torrent_file=file_path,
                                   in_from=SearchType.WEB,
                                   user_name=current_user.username)
+            if not task:
+                return {"code": -1, "tasks": accepted, "msg": error or "下载器未返回任务编号"}
+            accepted.append(task)
         # 下载链接
         if urls and not isinstance(urls, list):
             urls = [urls]
@@ -671,7 +683,7 @@ class WebAction:
             # 查询站点
             site_info = Sites().get_sites(siteurl=url)
             if not site_info:
-                return {"code": -1, "msg": "根据链接地址未匹配到站点"}
+                return {"code": -1, "tasks": accepted, "msg": "根据链接地址未匹配到站点"}
             # 下载种子文件，并读取信息
             file_path, _, _, _, retmsg = Torrent().get_torrent_info(
                 url=url,
@@ -680,19 +692,23 @@ class WebAction:
                 proxy=site_info.get("proxy")
             )
             if not file_path:
-                return {"code": -1, "msg": f"下载种子文件失败： {retmsg}"}
+                return {"code": -1, "tasks": accepted, "msg": f"下载种子文件失败： {retmsg}"}
             media_info = Media().get_media_info(title=os.path.basename(file_path))
-            if media_info:
-                media_info.site = "WEB"
+            if not media_info:
+                return {"code": -1, "tasks": accepted, "msg": "无法识别种子文件名"}
+            media_info.site = "WEB"
             # 添加下载
-            Downloader().download(media_info=media_info,
+            _, task, _, error = Downloader().download(media_info=media_info,
                                   download_dir=dl_dir,
                                   download_setting=dl_setting,
                                   torrent_file=file_path,
                                   in_from=SearchType.WEB,
                                   user_name=current_user.username)
+            if not task:
+                return {"code": -1, "tasks": accepted, "msg": error or "下载器未返回任务编号"}
+            accepted.append(task)
 
-        return {"code": 0, "msg": "添加下载完成！"}
+        return {"code": 0, "tasks": accepted, "msg": "添加下载完成！"}
 
     @staticmethod
     def __pt_start(data):

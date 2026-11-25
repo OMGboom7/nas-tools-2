@@ -73,6 +73,15 @@ func (service downloadService) submitManual(ctx context.Context, r *http.Request
 }
 
 func (service downloadService) submitRecorded(ctx context.Context, actor, magnet string, torrent []byte, selected *downloaderconfig.Downloader, options downloadAddOptions, title, source string, media *downloaderconfig.DirectMedia, current func() error) (string, bool, error) {
+	return service.submitWithReceipt(ctx, actor, magnet, torrent, selected, options, title, source, media, current, nil)
+}
+
+type classicDownloadResult struct {
+	history downloaderconfig.ClassicAcknowledgement
+	reused  bool
+}
+
+func (service downloadService) submitWithReceipt(ctx context.Context, actor, magnet string, torrent []byte, selected *downloaderconfig.Downloader, options downloadAddOptions, title, source string, media *downloaderconfig.DirectMedia, current func() error, classic *classicDownloadResult) (string, bool, error) {
 	var item downloaderconfig.Downloader
 	if selected != nil {
 		item = *selected
@@ -134,6 +143,9 @@ func (service downloadService) submitRecorded(ctx context.Context, actor, magnet
 		return "", true, err
 	}
 	if !created {
+		if classic != nil {
+			classic.reused = true
+		}
 		return receipt.TaskID, true, nil
 	}
 	if current != nil {
@@ -170,7 +182,11 @@ func (service downloadService) submitRecorded(ctx context.Context, actor, magnet
 	} else if item.Type != "pikpak" && id != hash {
 		return "", true, downloaderconfig.ErrManualPending
 	}
-	if err := service.downloaders.CompleteManual(persist, receipt, id, "acknowledged", actor); err != nil {
+	var history *downloaderconfig.ClassicAcknowledgement
+	if classic != nil {
+		history = &classic.history
+	}
+	if err := service.downloaders.CompleteWithHistory(persist, receipt, id, "acknowledged", actor, history); err != nil {
 		return "", true, downloaderconfig.ErrManualPending
 	}
 	return id, true, nil

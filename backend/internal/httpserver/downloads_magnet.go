@@ -253,7 +253,11 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 			return "", true, errDownloadOptionsUnsupported
 		}
 		addOptions := aria2.AddOptions{DownloadDir: options.SavePath, Paused: options.Paused, UploadLimitKB: options.UploadLimitKB, DownloadLimitKB: options.DownloadLimitKB}
-		client, err := aria2.New(host, port, text(configuration["secret"]), service.client.Transport)
+		open := aria2.New
+		if service.classicAria2 {
+			open = aria2.NewClassic
+		}
+		client, err := open(host, port, text(configuration["secret"]), service.client.Transport)
 		if err != nil {
 			return "", true, err
 		}

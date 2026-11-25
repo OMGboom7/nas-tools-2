@@ -22,6 +22,7 @@ import (
 )
 
 type downloadService struct {
+	classicAria2 bool
 	manualGuards **organization.Store
 	pureGo       bool
 	client       *http.Client

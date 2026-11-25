@@ -16,6 +16,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/database"
 	"github.com/0xforee/nas-tools/backend/internal/dbinit"
+	"github.com/0xforee/nas-tools/backend/internal/downloadhistory"
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/filterconfig"
 	"github.com/0xforee/nas-tools/backend/internal/httpserver"
@@ -27,6 +28,20 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "classic-download" {
+		if err := httpserver.ClassicDownloadCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("classic download unavailable")
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "download-history" {
+		if err := downloadhistory.Command(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("download history unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "torrent-metadata" {
 		if err := torrenttransfer.MetadataCommand(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("torrent metadata unavailable")

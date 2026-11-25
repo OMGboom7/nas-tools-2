@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 )
 
 func finishBusinessSignal(ctx context.Context, tx *sql.Tx, kind, key, reference, title, body string, data json.RawMessage) error {
@@ -20,6 +21,10 @@ func finishBusinessSignal(ctx context.Context, tx *sql.Tx, kind, key, reference,
 		if raw != string(data) {
 			return ErrState
 		}
+	}
+	// The classic caller already delivered its original pre-add hook to legacy plugins.
+	if kind == "download_start" && strings.HasPrefix(reference, "classic-download:") {
+		return nil
 	}
 	legacy := map[string]string{"download_start": "download.add", "download_fail": "download.fail", "rss_added": "subscribe.add", "rss_finished": "subscribe.finished", "source_file_deleted": "sourcefile.deleted", "library_file_deleted": "libraryfile.deleted"}[kind]
 	if legacy == "" {

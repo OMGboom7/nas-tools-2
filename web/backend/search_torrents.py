@@ -275,10 +275,14 @@ def search_media_by_message(started, in_from: SearchType, user_id, user_name=Non
             return
         # 开始下载
         meta_info.set_torrent_info(enclosure=input_str)
-        Downloader().download(media_info=meta_info,
+        _, task, _, error = Downloader().download(media_info=meta_info,
                               torrent_file=filepath,
+                              receipt_sender=json.dumps([str(scope), str(user_id)]),
                               in_from=in_from,
                               user_name=user_name)
+        if not task or error:
+            Message().send_channel_msg(expected_scope=scope, channel=in_from, user_id=user_id,
+                                       title=error or "下载器未返回任务编号")
     # 聊天
     elif action == "ask":
         # 调用ChatGPT Api

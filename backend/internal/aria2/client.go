@@ -31,8 +31,16 @@ type Client struct {
 }
 
 func New(host, port, secret string, transport http.RoundTripper) (*Client, error) {
+	if secret == "" {
+		return nil, ErrConfiguration
+	}
+	return NewClassic(host, port, secret, transport)
+}
+
+// NewClassic also accepts pre-existing RPC deployments with no configured token.
+func NewClassic(host, port, secret string, transport http.RoundTripper) (*Client, error) {
 	host = strings.TrimSpace(host)
-	if host == "" || secret == "" {
+	if host == "" {
 		return nil, ErrConfiguration
 	}
 	if !strings.Contains(host, "://") {
@@ -59,7 +67,9 @@ func New(host, port, secret string, transport http.RoundTripper) (*Client, error
 
 func (client *Client) call(ctx context.Context, id, method string, params []any, result any) error {
 	parameters := make([]any, 0, len(params)+1)
-	parameters = append(parameters, "token:"+client.secret)
+	if client.secret != "" {
+		parameters = append(parameters, "token:"+client.secret)
+	}
 	parameters = append(parameters, params...)
 	payload, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": parameters})
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint.String(), bytes.NewReader(payload))

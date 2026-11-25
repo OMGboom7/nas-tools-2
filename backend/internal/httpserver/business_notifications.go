@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
@@ -109,6 +110,16 @@ func (api *businessNotifications) dispatch(ctx context.Context, pending []bus.De
 		record, err := nativeNotificationRecord(c)
 		state, reason := "blocked", "channel format or template is not supported; no delivery attempted"
 		image, link := "", ""
+		if e.Kind == "download_start" && strings.HasPrefix(e.Reference, "classic-download:") {
+			var event struct {
+				Notice struct{ Image, Link string } `json:"classic_notice"`
+			}
+			if json.Unmarshal(e.Data, &event) != nil {
+				err = bus.ErrState
+			} else {
+				image, link = event.Notice.Image, event.Notice.Link
+			}
+		}
 		if e.Kind == "mediaserver_message" {
 			var media mediaserver.WebhookEvent
 			if json.Unmarshal(e.Data, &media) != nil || media.Validate() != nil {
