@@ -26,7 +26,7 @@ from app.brushtask import BrushTask
 from app.conf import SystemConfig, ModuleConf
 from app.downloader import Downloader
 from app.filetransfer import FileTransfer
-from app.filter import Filter
+from app.filter import Filter, ResourceFilterUnavailable
 from app.helper import DbHelper, ProgressHelper, ThreadHelper, \
     MetaHelper, DisplayHelper, WordsHelper
 from app.helper import RssHelper
@@ -583,9 +583,8 @@ class WebAction:
                                    size=res.SIZE,
                                    site=res.SITE,
                                    page_url=res.PAGEURL,
-                                   upload_volume_factor=float(
-                                       res.UPLOAD_VOLUME_FACTOR),
-                                   download_volume_factor=float(res.DOWNLOAD_VOLUME_FACTOR))
+                                   upload_volume_factor=float(res.UPLOAD_VOLUME_FACTOR) if res.UPLOAD_VOLUME_FACTOR is not None else None,
+                                   download_volume_factor=float(res.DOWNLOAD_VOLUME_FACTOR) if res.DOWNLOAD_VOLUME_FACTOR is not None else None)
             # 添加下载
             _, ret, dir, ret_msg = Downloader().download(media_info=media,
                                                     download_dir=dl_dir,
@@ -2135,9 +2134,10 @@ class WebAction:
             return {"code": -1}
         meta_info = MetaInfo(title=title, subtitle=subtitle)
         meta_info.size = float(size) * 1024 ** 3 if size else 0
-        match_flag, res_order, match_msg = \
-            Filter().check_torrent_filter(meta_info=meta_info,
-                                          filter_args={"rule": rulegroup})
+        try:
+            match_flag, res_order, _ = Filter().check_rules(meta_info, rulegroup)
+        except ResourceFilterUnavailable as err:
+            return {"code": -1, "msg": str(err)}
         return {
             "code": 0,
             "flag": match_flag,

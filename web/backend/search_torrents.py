@@ -3,6 +3,7 @@ import os.path
 import subprocess
 
 import log
+from app.filter import ResourceFilterUnavailable
 from app.downloader import Downloader
 from app.helper import ProgressHelper
 from app.helper.openai_helper import OpenAiHelper
@@ -191,24 +192,28 @@ def search_medias_for_web(content, ident_flag=True, filters=None, tmdbid=None, m
         filter_args.update(filters)
     # 开始搜索
     log.info("【Web】开始搜索 %s ..." % content)
-    media_list = _searcher.search_medias(key_word=first_search_name,
-                                         filter_args=filter_args,
-                                         match_media=media_info,
-                                         in_from=SearchType.WEB)
-    # 使用第二名称重新搜索
-    if ident_flag \
-            and len(media_list) == 0 \
-            and second_search_name \
-            and second_search_name != first_search_name:
-        _process.start(ProgressKey.Search)
-        _process.update(ptype=ProgressKey.Search,
-                        text="%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (
-                            first_search_name, second_search_name))
-        log.info("【Searcher】%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (first_search_name, second_search_name))
-        media_list = _searcher.search_medias(key_word=second_search_name,
+    try:
+        media_list = _searcher.search_medias(key_word=first_search_name,
                                              filter_args=filter_args,
                                              match_media=media_info,
                                              in_from=SearchType.WEB)
+        # 使用第二名称重新搜索
+        if ident_flag \
+                and len(media_list) == 0 \
+                and second_search_name \
+                and second_search_name != first_search_name:
+            _process.start(ProgressKey.Search)
+            _process.update(ptype=ProgressKey.Search,
+                            text="%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (
+                                first_search_name, second_search_name))
+            log.info("【Searcher】%s 未搜索到资源,尝试通过 %s 重新搜索 ..." % (first_search_name, second_search_name))
+            media_list = _searcher.search_medias(key_word=second_search_name,
+                                                 filter_args=filter_args,
+                                                 match_media=media_info,
+                                                 in_from=SearchType.WEB)
+    except ResourceFilterUnavailable as err:
+        _process.end(ProgressKey.Search)
+        return -1, str(err)
     # 清空缓存结果
     _searcher.delete_all_search_torrents()
     # 结束进度
@@ -393,11 +398,14 @@ def __search_media(in_from, media_info, user_id, user_name, scope, choice):
     Message().send_channel_msg(expected_scope=scope, channel=in_from,
                                title="开始搜索 %s ..." % media_info.title,
                                user_id=user_id)
-    search_result, no_exists, search_count, download_count = Searcher().search_one_media(media_info=media_info,
-                                                                                         in_from=in_from,
-                                                                                         no_exists=no_exists,
-                                                                                         sites=media_info.search_sites,
-                                                                                         user_name=user_name)
+    try:
+        search_result, no_exists, search_count, download_count = Searcher().search_one_media(
+            media_info=media_info, in_from=in_from, no_exists=no_exists,
+            sites=media_info.search_sites, user_name=user_name)
+    except ResourceFilterUnavailable as err:
+        ProgressHelper().end(ProgressKey.Search)
+        Message().send_channel_msg(expected_scope=scope, channel=in_from, title=str(err), user_id=user_id)
+        return
     # 没有搜索到数据
     if not search_count:
         Message().send_channel_msg(expected_scope=scope, channel=in_from,

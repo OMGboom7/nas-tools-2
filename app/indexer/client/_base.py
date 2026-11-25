@@ -2,10 +2,11 @@ import datetime
 from abc import ABCMeta, abstractmethod
 
 import log
-from app.filter import Filter
+from app.filter import Filter, ResourceFilterUnavailable
 from app.helper import ProgressHelper
 from app.media import Media
 from app.media.meta import MetaInfo
+from app.utils import StringUtils
 from app.utils.types import MediaType, SearchType, ProgressKey
 from config import Config
 import jellyfish
@@ -174,14 +175,12 @@ class _IIndexClient(metaclass=ABCMeta):
                     index_error += 1
                     continue
                 enclosure = item.get('enclosure')
-                size = item.get('size')
+                size = StringUtils.num_filesize(item.get('size'))
                 seeders = item.get('seeders')
                 peers = item.get('peers')
                 page_url = item.get('page_url')
-                uploadvolumefactor = round(float(item.get('uploadvolumefactor')), 1) if item.get(
-                    'uploadvolumefactor') is not None else 1.0
-                downloadvolumefactor = round(float(item.get('downloadvolumefactor')), 1) if item.get(
-                    'downloadvolumefactor') is not None else 1.0
+                uploadvolumefactor = float(item["uploadvolumefactor"]) if item.get("uploadvolumefactor") is not None else None
+                downloadvolumefactor = float(item["downloadvolumefactor"]) if item.get("downloadvolumefactor") is not None else None
                 imdbid = item.get("imdbid")
                 labels = item.get("labels")
                 # 全匹配模式下，非公开站点，过滤掉做种数为0的
@@ -385,6 +384,8 @@ class _IIndexClient(metaclass=ABCMeta):
                     ret_array.append(media_info)
                 else:
                     index_rule_fail += 1
+            except ResourceFilterUnavailable:
+                raise
             except Exception as err:
                 print(str(err))
         # 循环结束
@@ -447,14 +448,12 @@ class _IIndexClient(metaclass=ABCMeta):
                     index_error += 1
                     continue
                 enclosure = item.get('enclosure')
-                size = item.get('size')
+                size = StringUtils.num_filesize(item.get('size'))
                 seeders = item.get('seeders')
                 peers = item.get('peers')
                 page_url = item.get('page_url')
-                uploadvolumefactor = round(float(item.get('uploadvolumefactor')), 1) if item.get(
-                    'uploadvolumefactor') is not None else 1.0
-                downloadvolumefactor = round(float(item.get('downloadvolumefactor')), 1) if item.get(
-                    'downloadvolumefactor') is not None else 1.0
+                uploadvolumefactor = float(item["uploadvolumefactor"]) if item.get("uploadvolumefactor") is not None else None
+                downloadvolumefactor = float(item["downloadvolumefactor"]) if item.get("downloadvolumefactor") is not None else None
                 imdbid = item.get("imdbid")
                 labels = item.get("labels")
                 # 全匹配模式下，非公开站点，过滤掉做种数为0的
@@ -643,6 +642,8 @@ class _IIndexClient(metaclass=ABCMeta):
                     ret_array.append(media_info)
                 else:
                     index_rule_fail += 1
+            except ResourceFilterUnavailable:
+                raise
             except Exception as err:
                 print(str(err))
         # 循环结束
@@ -707,14 +708,12 @@ class _IIndexClient(metaclass=ABCMeta):
                     index_error += 1
                     continue
                 enclosure = item.get('enclosure')
-                size = item.get('size')
+                size = StringUtils.num_filesize(item.get('size'))
                 seeders = item.get('seeders')
                 peers = item.get('peers')
                 page_url = item.get('page_url')
-                uploadvolumefactor = round(float(item.get('uploadvolumefactor')), 1) if item.get(
-                    'uploadvolumefactor') is not None else 1.0
-                downloadvolumefactor = round(float(item.get('downloadvolumefactor')), 1) if item.get(
-                    'downloadvolumefactor') is not None else 1.0
+                uploadvolumefactor = float(item["uploadvolumefactor"]) if item.get("uploadvolumefactor") is not None else None
+                downloadvolumefactor = float(item["downloadvolumefactor"]) if item.get("downloadvolumefactor") is not None else None
                 imdbid = item.get("imdbid")
                 labels = item.get("labels")
                 # 全匹配模式下，非公开站点，过滤掉做种数为0的
@@ -881,6 +880,8 @@ class _IIndexClient(metaclass=ABCMeta):
 
                 else:
                     index_rule_fail += 1
+            except ResourceFilterUnavailable:
+                raise
             except Exception as err:
                 print(str(err))
         # 循环结束

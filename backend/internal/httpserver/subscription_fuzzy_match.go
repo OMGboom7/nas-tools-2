@@ -101,11 +101,9 @@ func newFuzzyMatcher(raw map[string]any, kind, order string, groups []filterconf
 	if err != nil {
 		return nil, err // Invalid regex must not silently become a literal rule.
 	}
-	quality := map[string]string{"BLURAY": `Blu-?Ray|BD|BDRIP`, "REMUX": "REMUX", "DOLBY": `DOLBY|DOVI|\s+DV$|\s+DV\s+`, "WEB": `WEB-?DL|WEBRIP`, "HDTV": "U?HDTV", "UHD": "UHD", "HDR": "HDR", "3D": "3D"}
-	resolution := map[string]string{"8k": "8K", "4k": "4K|2160P|X2160", "1080p": "1080[PIX]|X1080", "720p": "720P"}
-	q, p := text(v["filter_restype"]), text(v["filter_pix"])
-	if q != "" && quality[q] == "" || p != "" && resolution[p] == "" {
-		return nil, errors.New("unsupported fuzzy subscription labels")
+	q, p, err := filterconfig.ResourcePatterns(text(v["filter_restype"]), text(v["filter_pix"]))
+	if err != nil {
+		return nil, err
 	}
 	if value := text(v["filter_rule"]); value != "" {
 		m.group, err = strconv.ParseInt(value, 10, 64)
@@ -116,7 +114,7 @@ func newFuzzyMatcher(raw map[string]any, kind, order string, groups []filterconf
 	if _, err := filterconfig.MatchGroups(groups, m.group, filterconfig.TorrentMetadata{RequireKnown: true}); err != nil {
 		return nil, err
 	}
-	for _, value := range []string{quality[q], resolution[p], text(v["filter_team"]), text(v["filter_include"]), text(v["filter_exclude"])} {
+	for _, value := range []string{q, p, text(v["filter_team"]), text(v["filter_include"]), text(v["filter_exclude"])} {
 		var pattern *regexp2.Regexp
 		if value != "" {
 			if len(value) > 16<<10 {

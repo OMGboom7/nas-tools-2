@@ -3,7 +3,7 @@ from threading import Lock
 
 import log
 from app.downloader import Downloader
-from app.filter import Filter
+from app.filter import Filter, resource_filter_batch
 from app.helper import DbHelper, RssHelper
 from app.media import Media
 from app.media.meta import MetaInfo
@@ -44,6 +44,7 @@ class Rss:
         self.subscribe = Subscribe()
         self.message = Message()
 
+    @resource_filter_batch()
     def rssdownload(self):
         """
         RSS订阅搜索下载入口，由定时服务调用

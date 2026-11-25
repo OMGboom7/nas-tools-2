@@ -10,7 +10,7 @@ from lxml import etree
 
 import log
 from app.downloader import Downloader
-from app.filter import Filter
+from app.filter import Filter, resource_filter_batch
 from app.helper import DbHelper, RssHelper
 from app.media import Media
 from app.media.meta import MetaInfo
@@ -176,6 +176,7 @@ class RssChecker(object):
                 return {}
         return self._rss_tasks
 
+    @resource_filter_batch()
     def check_task_rss(self, taskid):
         """
         处理自定义RSS任务，由定时服务调用

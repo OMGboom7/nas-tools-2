@@ -58,11 +58,9 @@ var candidateEpisodeNumber = regexp.MustCompile(`(?i)e([0-9]{1,4})`)
 // fields; planning never claims a resource or changes download progress.
 func planSubscriptionCandidates(ctx context.Context, input subscriptionCandidateInput, groups []filterconfig.GroupInfo, resources []identifiedSubscriptionResource) ([]subscriptionCandidate, []int, error) {
 	patterns := []*regexp2.Regexp{}
-	quality := map[string]string{"BLURAY": `Blu-?Ray|BD|BDRIP`, "REMUX": `REMUX`, "DOLBY": `DOLBY|DOVI|\s+DV$|\s+DV\s+`, "WEB": `WEB-?DL|WEBRIP`, "HDTV": `U?HDTV`, "UHD": `UHD`, "HDR": `HDR`, "3D": `3D`}
-	resolution := map[string]string{"8k": `8K`, "4k": `4K|2160P|X2160`, "1080p": `1080[PIX]|X1080`, "720p": `720P`}
-	q, p := quality[input.Quality], resolution[input.Resolution]
-	if input.Quality != "" && q == "" || input.Resolution != "" && p == "" {
-		return nil, nil, errors.New("unsupported subscription quality or resolution")
+	q, p, err := filterconfig.ResourcePatterns(input.Quality, input.Resolution)
+	if err != nil {
+		return nil, nil, err
 	}
 	for _, raw := range []string{q, p, input.Team, input.Include, input.Exclude} {
 		var pattern *regexp2.Regexp

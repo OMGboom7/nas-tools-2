@@ -28,10 +28,11 @@ type TorrentMetadata struct {
 }
 
 type MatchResult struct {
-	Matched   bool
-	Order     int
-	GroupName string
-	RuleID    int64
+	Matched     bool
+	Order       int
+	GroupName   string
+	RuleID      int64
+	SizeChecked bool
 }
 
 // Match reloads groups and rules in one snapshot, so edits take effect without
@@ -44,30 +45,40 @@ func (store *Store) Match(ctx context.Context, groupID int64, metadata TorrentMe
 	if err != nil {
 		return MatchResult{}, err
 	}
-	return MatchGroups(groups, groupID, metadata)
+	return matchGroupsContext(ctx, groups, groupID, metadata)
 }
 
 // MatchGroups uses zero for the default group and -1 to bypass filtering.
 // Rules must be in priority/ID order, as returned by Store.List and Builtins.
 func MatchGroups(groups []GroupInfo, groupID int64, metadata TorrentMetadata) (MatchResult, error) {
+	return matchGroupsContext(context.Background(), groups, groupID, metadata)
+}
+
+func selectResourceGroup(groups []GroupInfo, id int64) (*GroupInfo, error) {
+	for i := range groups {
+		if groups[i].Group.ID == id || id == 0 && groups[i].Group.Default {
+			return &groups[i], nil
+		}
+	}
+	if id == 0 || id == -1 {
+		return nil, nil
+	}
+	return nil, ErrNotFound
+}
+
+func matchGroupsContext(ctx context.Context, groups []GroupInfo, groupID int64, metadata TorrentMetadata) (MatchResult, error) {
 	if groupID == -1 {
 		return MatchResult{Matched: true, GroupName: "不过滤"}, nil
 	}
 	if metadata.SizeBytes < 0 || math.IsNaN(metadata.SizeBytes) || math.IsInf(metadata.SizeBytes, 0) || metadata.Episodes < 0 {
 		return MatchResult{}, fmt.Errorf("%w: invalid torrent metadata", ErrInvalidRule)
 	}
-	var selected *GroupInfo
-	for index := range groups {
-		if groupID == groups[index].Group.ID || groupID == 0 && groups[index].Group.Default {
-			selected = &groups[index]
-			break
-		}
+	selected, err := selectResourceGroup(groups, groupID)
+	if err != nil {
+		return MatchResult{}, err
 	}
 	if selected == nil {
-		if groupID == 0 {
-			return MatchResult{Matched: true, GroupName: "未配置过滤规则"}, nil
-		}
-		return MatchResult{}, ErrNotFound
+		return MatchResult{Matched: true, GroupName: "未配置过滤规则"}, nil
 	}
 	result := MatchResult{Matched: len(selected.Rules) == 0, GroupName: selected.Group.Name}
 	text := metadata.Title
@@ -75,6 +86,9 @@ func MatchGroups(groups []GroupInfo, groupID int64, metadata TorrentMetadata) (M
 		text += " " + metadata.Subtitle
 	}
 	for _, rule := range selected.Rules {
+		if err := ctx.Err(); err != nil {
+			return MatchResult{}, err
+		}
 		priority, err := strconv.Atoi(strings.TrimSpace(rule.Priority))
 		if rule.Priority == "" {
 			priority, err = 0, nil
@@ -82,21 +96,25 @@ func MatchGroups(groups []GroupInfo, groupID int64, metadata TorrentMetadata) (M
 		if err != nil {
 			return MatchResult{}, fmt.Errorf("%w: rule %d priority", ErrInvalidRule, rule.ID)
 		}
-		matched, err := matchRule(rule, text, metadata)
+		matched, err := matchRule(ctx, rule, text, metadata, &result.SizeChecked)
 		if err != nil {
 			return MatchResult{}, fmt.Errorf("%w: rule %d", err, rule.ID)
 		}
 		if matched {
-			return MatchResult{Matched: true, Order: 100 - priority, GroupName: selected.Group.Name, RuleID: rule.ID}, nil
+			result.Matched, result.Order, result.RuleID = true, 100-priority, rule.ID
+			return result, nil
 		}
 	}
 	return result, nil
 }
 
-func matchRule(rule Rule, text string, metadata TorrentMetadata) (bool, error) {
+func matchRule(ctx context.Context, rule Rule, text string, metadata TorrentMetadata, sizeChecked *bool) (bool, error) {
 	for _, include := range strings.Split(rule.Include, "\n") {
 		if include == "" {
 			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
 		}
 		matched, err := rulePatternMatches(include, text)
 		if err != nil || !matched {
@@ -111,6 +129,9 @@ func matchRule(rule Rule, text string, metadata TorrentMetadata) (bool, error) {
 			continue
 		}
 		hasExclusion = true
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		matched, err := rulePatternMatches(exclude, text)
 		if err != nil {
 			return false, err
@@ -119,6 +140,9 @@ func matchRule(rule Rule, text string, metadata TorrentMetadata) (bool, error) {
 	}
 	if hasExclusion && allExcluded {
 		return false, nil
+	}
+	if rule.Size != "" && metadata.SizeBytes != 0 {
+		*sizeChecked = true
 	}
 	if rule.Size != "" && metadata.RequireKnown && (metadata.SizeBytes == 0 || (!metadata.Movie && metadata.Episodes == 0)) {
 		if _, _, err := ruleSizeBounds(rule.Size); err != nil {

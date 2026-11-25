@@ -81,33 +81,10 @@ func MatchLabels(ctx context.Context, title string, options LabelOptions) (strin
 		custom = strings.ReplaceAll(custom, "\n", "|")
 		groups += "|" + custom
 	}
-	release, err := regexcompat.Compile(`(?<=[-@\[￡【&])(?:`+groups+`)(?=[@.\s\]\[】&])`, regexp2.IgnoreCase)
+	team, err := matchReleaseGroups(ctx, title, groups, options.ReleaseSeparator, false)
 	if err != nil {
 		return "", "", err
 	}
-	var teams []string
-	seen := map[string]bool{}
-	outputBytes := 0
-	err = eachLabelMatch(ctx, release, title+" ", func(match *regexp2.Match) error {
-		value := match.String()
-		if value != "" && !seen[value] {
-			seen[value] = true
-			teams = append(teams, value)
-			outputBytes += len(value) + len(options.ReleaseSeparator) + 1
-		}
-		if outputBytes > 64<<10 {
-			return errors.New("release labels too large")
-		}
-		return nil
-	})
-	if err != nil {
-		return "", "", err
-	}
-	separator := options.ReleaseSeparator
-	if separator == "" {
-		separator = "@"
-	}
-	team := strings.Join(teams, separator)
 	if options.Customization == "" {
 		return team, "", nil
 	}
@@ -124,8 +101,8 @@ func MatchLabels(ctx context.Context, title string, options LabelOptions) (strin
 		slot  int
 	}
 	var labels []foundLabel
-	seen = map[string]bool{}
-	outputBytes = 0
+	seen := map[string]bool{}
+	outputBytes := 0
 	err = eachLabelMatch(ctx, custom, title, func(match *regexp2.Match) error {
 		for slot, group := range match.Groups()[1:] {
 			value := group.String()
@@ -148,11 +125,57 @@ func MatchLabels(ctx context.Context, title string, options LabelOptions) (strin
 	for _, label := range labels {
 		values = append(values, label.value)
 	}
-	separator = options.CustomSeparator
+	separator := options.CustomSeparator
 	if separator == "" {
 		separator = "@"
 	}
 	return team, strings.Join(values, separator), nil
+}
+
+// MatchReleaseGroup uses only the requested pattern when filtering for a named team.
+func MatchReleaseGroup(ctx context.Context, title, groups, separator string) (string, error) {
+	return matchReleaseGroups(ctx, title, groups, separator, true)
+}
+
+func matchReleaseGroups(ctx context.Context, title, groups, separator string, useCaptures bool) (string, error) {
+	if len(title) > 64<<10 || len(groups) > 32<<10 || len(separator) > 128 {
+		return "", errors.New("release group input too large")
+	}
+	release, err := regexcompat.Compile(`(?<=[-@\[￡【&])(?:`+groups+`)(?=[@.\s\]\[】&])`, regexp2.IgnoreCase)
+	if err != nil {
+		return "", err
+	}
+	var teams []string
+	seen := map[string]bool{}
+	outputBytes := 0
+	err = eachLabelMatch(ctx, release, title+" ", func(match *regexp2.Match) error {
+		value := match.String()
+		if useCaptures {
+			switch match.GroupCount() {
+			case 1:
+			case 2:
+				value = match.GroupByNumber(1).String()
+			default:
+				return errors.New("multiple captures in release group filter")
+			}
+		}
+		if value != "" && !seen[value] {
+			seen[value] = true
+			teams = append(teams, value)
+			outputBytes += len(value) + len(separator) + 1
+		}
+		if outputBytes > 64<<10 {
+			return errors.New("release labels too large")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if separator == "" {
+		separator = "@"
+	}
+	return strings.Join(teams, separator), nil
 }
 
 func eachLabelMatch(ctx context.Context, pattern *regexp2.Regexp, title string, visit func(*regexp2.Match) error) error {

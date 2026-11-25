@@ -4,6 +4,7 @@ import json
 import subprocess
 
 import log
+from app.filter import resource_filter_batch
 from app.conf import SystemConfig
 from app.helper import ProgressHelper, DbHelper
 from app.indexer.client._base import _IIndexClient
@@ -195,49 +196,14 @@ class BuiltinIndexer(_IIndexClient):
             # 更新进度
             self.progress.update(ptype=ProgressKey.Search, text=f"{indexer.name} 未搜索到数据")
             return []
-        else:
-            log.warn(f"【{self.client_name}】{indexer.name} 返回数据：{len(result_array)}")
-            # 更新进度
-            self.progress.update(ptype=ProgressKey.Search, text=f"{indexer.name} 返回 {len(result_array)} 条数据")
-            # 过滤
-            if self.quick_search and in_from == SearchType.WEB:
-                log.debug(f"quick search start")
-                if match_media:
-                    if match_media.type == MediaType.MOVIE:
-                        result = self.filter_search_results_local(
-                        result_array=result_array,
-                        order_seq=order_seq,
-                        indexer=indexer,
-                        filter_args=_filter_args,
-                        match_media=match_media,
-                        start_time=start_time
-                    )
-                    else:
-                        result = self.filter_search_results_local_for_tv(
-                            result_array=result_array,
-                            order_seq=order_seq,
-                            indexer=indexer,
-                            filter_args=_filter_args,
-                            match_media=match_media,
-                            start_time=start_time
-                        )
-                    # debug mode, compare with online search
-                    # if self.is_indebug():
-                    #     self.filter_search_results(result_array=result_array,
-                    #                                order_seq=order_seq,
-                    #                                indexer=indexer,
-                    #                                filter_args=_filter_args,
-                    #                                match_media=match_media,
-                    #                                start_time=start_time)
-
-                    return result
-
-            return self.filter_search_results(result_array=result_array,
-                                       order_seq=order_seq,
-                                       indexer=indexer,
-                                       filter_args=_filter_args,
-                                       match_media=match_media,
-                                       start_time=start_time)
+        self.progress.update(ptype=ProgressKey.Search, text=f"{indexer.name} 返回 {len(result_array)} 条数据")
+        filter_results = self.filter_search_results
+        if self.quick_search and in_from == SearchType.WEB and match_media:
+            filter_results = (self.filter_search_results_local if match_media.type == MediaType.MOVIE
+                              else self.filter_search_results_local_for_tv)
+        with resource_filter_batch():
+            return filter_results(result_array=result_array, order_seq=order_seq, indexer=indexer,
+                                  filter_args=_filter_args, match_media=match_media, start_time=start_time)
 
     def list(self, url, page=0, keyword=None):
         """
