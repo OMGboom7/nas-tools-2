@@ -136,6 +136,10 @@ func emitBusiness(ctx context.Context, tx *sql.Tx, kind, key, reference, title, 
 		}
 		return nil
 	}
+	// The original client sends subscription completion notices only for TV.
+	if kind == "rss_finished" && strings.HasPrefix(reference, "classic-subscription:MOV:") {
+		return finishBusinessSignal(ctx, tx, kind, key, reference, title, body, data)
+	}
 	// Interactive replies use their own recipient-scoped path. These events
 	// correspond to the shared system notices shown by the original client.
 	switch kind {
@@ -236,8 +240,8 @@ func (s *Store) PendingLegacyStatistics(ctx context.Context) ([]Delivery, error)
 	return s.pending(ctx, " AND EVENT_ID IN (SELECT ID FROM GO_BUSINESS_EVENTS WHERE REFERENCE GLOB 'legacy-stats:*' AND KIND IN ('ptrefresh_date_message','site_message'))")
 }
 
-func (s *Store) PendingClassicDownloads(ctx context.Context) ([]Delivery, error) {
-	return s.pending(ctx, " AND EVENT_ID IN (SELECT ID FROM GO_BUSINESS_EVENTS WHERE REFERENCE GLOB 'classic-download:*' AND KIND='download_start')")
+func (s *Store) PendingClassicNotices(ctx context.Context) ([]Delivery, error) {
+	return s.pending(ctx, " AND EVENT_ID IN (SELECT ID FROM GO_BUSINESS_EVENTS WHERE (REFERENCE GLOB 'classic-download:*' AND KIND='download_start') OR (REFERENCE GLOB 'classic-subscription:TV:*' AND KIND='rss_finished'))")
 }
 
 func (s *Store) pending(ctx context.Context, scope string) ([]Delivery, error) {

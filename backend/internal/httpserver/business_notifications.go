@@ -110,7 +110,7 @@ func (api *businessNotifications) dispatch(ctx context.Context, pending []bus.De
 		record, err := nativeNotificationRecord(c)
 		state, reason := "blocked", "channel format or template is not supported; no delivery attempted"
 		image, link := "", ""
-		if e.Kind == "download_start" && strings.HasPrefix(e.Reference, "classic-download:") {
+		if e.Kind == "download_start" && strings.HasPrefix(e.Reference, "classic-download:") || e.Kind == "rss_finished" && strings.HasPrefix(e.Reference, "classic-subscription:") {
 			var event struct {
 				Notice struct{ Image, Link string } `json:"classic_notice"`
 			}

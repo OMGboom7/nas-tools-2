@@ -646,33 +646,6 @@ class DbHelper:
             "DESC": desc
         })
 
-    @DbPersist(_db)
-    def update_rss_filter_order(self, rtype, rssid, res_order):
-        """
-        更新订阅命中的过滤规则优先级
-        """
-        if rtype == MediaType.MOVIE:
-            self._db.query(RSSMOVIES).filter(RSSMOVIES.ID == int(rssid)).update({
-                "FILTER_ORDER": res_order
-            })
-        else:
-            self._db.query(RSSTVS).filter(RSSTVS.ID == int(rssid)).update({
-                "FILTER_ORDER": res_order
-            })
-
-    def get_rss_overedition_order(self, rtype, rssid):
-        """
-        查询当前订阅的过滤优先级
-        """
-        if rtype == MediaType.MOVIE:
-            res = self._db.query(RSSMOVIES.FILTER_ORDER).filter(RSSMOVIES.ID == int(rssid)).first()
-        else:
-            res = self._db.query(RSSTVS.FILTER_ORDER).filter(RSSTVS.ID == int(rssid)).first()
-        if res and res[0]:
-            return int(res[0])
-        else:
-            return 0
-
     def is_exists_rss_movie(self, title, year):
         """
         判断RSS电影是否存在
@@ -913,33 +886,6 @@ class DbHelper:
             download_setting=download_setting, fuzzy_match=fuzzy_match, desc=desc, note=note, keyword=keyword,
             total=total, lack=lack, total_ep=total_ep, current_ep=current_ep)
         return result["code"]
-
-    @DbPersist(_db)
-    def update_rss_tv_lack(self, title=None, year=None, season=None, rssid=None, lack_episodes: list = None):
-        """
-        更新电视剧缺失的集数
-        """
-        if not title and not rssid:
-            return
-        if not lack_episodes:
-            lack = 0
-        else:
-            lack = len(lack_episodes)
-        if rssid:
-            self.update_rss_tv_episodes(rssid, lack_episodes)
-            self._db.query(RSSTVS).filter(RSSTVS.ID == int(rssid)).update(
-                {
-                    "LACK": lack
-                }
-            )
-        else:
-            self._db.query(RSSTVS).filter(RSSTVS.NAME == title,
-                                          RSSTVS.YEAR == str(year),
-                                          RSSTVS.SEASON == season).update(
-                {
-                    "LACK": lack
-                }
-            )
 
     @DbPersist(_db)
     def delete_rss_tv(self, title=None, season=None, rssid=None, tmdbid=None):
@@ -1662,18 +1608,6 @@ class DbHelper:
                 .order_by(RSSHISTORY.FINISH_TIME.desc()).all()
         return self._db.query(RSSHISTORY).order_by(RSSHISTORY.FINISH_TIME.desc()).all()
 
-    def is_exists_rss_history(self, rssid):
-        """
-        判断RSS历史是否存在
-        """
-        if not rssid:
-            return False
-        count = self._db.query(RSSHISTORY).filter(RSSHISTORY.RSSID == rssid).count()
-        if count > 0:
-            return True
-        else:
-            return False
-
     def check_rss_history(self, type_str, name, year, season):
         """
         检查RSS历史是否存在
@@ -1688,27 +1622,6 @@ class DbHelper:
             return True
         else:
             return False
-
-    @DbPersist(_db)
-    def insert_rss_history(self, rssid, rtype, name, year, tmdbid, image, desc, season=None, total=None, start=None):
-        """
-        登记RSS历史
-        """
-        if not self.is_exists_rss_history(rssid):
-            self._db.insert(RSSHISTORY(
-                TYPE=rtype,
-                RSSID=rssid,
-                NAME=name,
-                YEAR=year,
-                TMDBID=tmdbid,
-                SEASON=season,
-                IMAGE=image,
-                DESC=desc,
-                TOTAL=total,
-                START=start,
-                FINISH_TIME=time.strftime('%Y-%m-%d %H:%M:%S',
-                                          time.localtime(time.time()))
-            ))
 
     @DbPersist(_db)
     def delete_rss_history(self, rssid):

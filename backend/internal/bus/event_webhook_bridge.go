@@ -22,8 +22,8 @@ func finishBusinessSignal(ctx context.Context, tx *sql.Tx, kind, key, reference,
 			return ErrState
 		}
 	}
-	// The classic caller already delivered its original pre-add hook to legacy plugins.
-	if kind == "download_start" && strings.HasPrefix(reference, "classic-download:") {
+	// The classic caller delivers these hooks to its loaded plugins.
+	if kind == "download_start" && strings.HasPrefix(reference, "classic-download:") || kind == "rss_finished" && strings.HasPrefix(reference, "classic-subscription:") {
 		return nil
 	}
 	legacy := map[string]string{"download_start": "download.add", "download_fail": "download.fail", "rss_added": "subscribe.add", "rss_finished": "subscribe.finished", "source_file_deleted": "sourcefile.deleted", "library_file_deleted": "libraryfile.deleted"}[kind]

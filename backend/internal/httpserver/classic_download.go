@@ -263,7 +263,7 @@ func deliverClassicNotices(ctx context.Context, path, dbPath string) error {
 		defer g.Close()
 	}
 	api := businessNotifications{queue: bus.New(db), service: notificationService{client: http.DefaultClient, config: config.NewStore(path)}}
-	pending, err := api.queue.PendingClassicDownloads(call)
+	pending, err := api.queue.PendingClassicNotices(call)
 	if err != nil {
 		return err
 	}

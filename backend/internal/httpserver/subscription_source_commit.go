@@ -45,36 +45,11 @@ func (service subscriptionService) applySubscriptionSourceTx(ctx context.Context
 		}
 	}
 	if complete {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS RSS_HISTORY (ID INTEGER PRIMARY KEY,TYPE TEXT,RSSID TEXT,NAME TEXT,YEAR TEXT,TMDBID TEXT,SEASON TEXT,IMAGE TEXT,DESC TEXT,TOTAL INTEGER,START INTEGER,FINISH_TIME TEXT)`); err != nil {
-			return subscriptionSourceOutcome{}, err
-		}
 		values := []any{kind, strconv.FormatInt(id, 10), plan.raw["NAME"], plan.raw["YEAR"], plan.mediaID, plan.raw["SEASON"], plan.raw["IMAGE"], plan.raw["DESC"], plan.raw["TOTAL_EP"], plan.raw["CURRENT_EP"], time.Now().Format("2006-01-02 15:04:05")}
-		if plan.edition != nil || plan.typedSource {
-			for i, v := range values {
-				value, err := fuzzySQLValue(v)
-				if err != nil {
-					return subscriptionSourceOutcome{}, err
-				}
-				values[i] = value
-			}
-		}
-		insert, err := tx.ExecContext(ctx, `INSERT INTO RSS_HISTORY(TYPE,RSSID,NAME,YEAR,TMDBID,SEASON,IMAGE,DESC,TOTAL,START,FINISH_TIME) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, values...)
-		if err := fuzzyOne(insert, err); err != nil {
+		var err error
+		historyID, err = appendSubscriptionHistory(ctx, tx, values)
+		if err != nil {
 			return subscriptionSourceOutcome{}, err
-		}
-		historyID, err = insert.LastInsertId()
-		if err != nil || historyID < 1 {
-			return subscriptionSourceOutcome{}, errSubscriptionSubmissionConflict
-		}
-		where := "ID=?"
-		expected := []any{historyID}
-		for i, column := range []string{"TYPE", "RSSID", "NAME", "YEAR", "TMDBID", "SEASON", "IMAGE", "DESC", "TOTAL", "START", "FINISH_TIME"} {
-			where += " AND " + column + " IS ?"
-			expected = append(expected, values[i])
-		}
-		var matches bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM RSS_HISTORY WHERE "+where+")", expected...).Scan(&matches); err != nil || !matches {
-			return subscriptionSourceOutcome{}, errSubscriptionSubmissionConflict
 		}
 		if archive {
 			selectionID := plan.fileSelectionID
@@ -123,4 +98,37 @@ func (service subscriptionService) applySubscriptionSourceTx(ctx context.Context
 	}
 
 	return subscriptionSourceOutcome{complete, edition, historyID}, nil
+}
+
+func appendSubscriptionHistory(ctx context.Context, tx *sql.Tx, values []any) (int64, error) {
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS RSS_HISTORY (ID INTEGER PRIMARY KEY,TYPE TEXT,RSSID TEXT,NAME TEXT,YEAR TEXT,TMDBID TEXT,SEASON TEXT,IMAGE TEXT,DESC TEXT,TOTAL INTEGER,START INTEGER,FINISH_TIME TEXT)`); err != nil {
+		return 0, err
+	}
+
+	for i, v := range values {
+		value, err := fuzzySQLValue(v)
+		if err != nil {
+			return 0, err
+		}
+		values[i] = value
+	}
+	insert, err := tx.ExecContext(ctx, `INSERT INTO RSS_HISTORY(TYPE,RSSID,NAME,YEAR,TMDBID,SEASON,IMAGE,DESC,TOTAL,START,FINISH_TIME) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, values...)
+	if err := fuzzyOne(insert, err); err != nil {
+		return 0, err
+	}
+	historyID, err := insert.LastInsertId()
+	if err != nil || historyID < 1 {
+		return 0, errSubscriptionSubmissionConflict
+	}
+	where := "ID=?"
+	expected := []any{historyID}
+	for i, column := range []string{"TYPE", "RSSID", "NAME", "YEAR", "TMDBID", "SEASON", "IMAGE", "DESC", "TOTAL", "START", "FINISH_TIME"} {
+		where += " AND " + column + " IS ?"
+		expected = append(expected, values[i])
+	}
+	var matches bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM RSS_HISTORY WHERE "+where+")", expected...).Scan(&matches); err != nil || !matches {
+		return 0, errSubscriptionSubmissionConflict
+	}
+	return historyID, nil
 }
