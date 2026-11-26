@@ -158,7 +158,9 @@ class Rss:
         media.subscription_progress = None
         if not source["fuzzy_match"]:
             if not media.tmdb_info and media.tmdb_id:
-                media.set_tmdb_info(self.media.get_tmdb_info(mtype=media.type, tmdbid=media.tmdb_id))
+                cached = {"id": media.tmdb_id, "title": media.title, "year": media.year}
+                details = self.media.get_tmdb_info(mtype=media.type, tmdbid=media.tmdb_id)
+                self.media.apply_cached_details(media, details, cached, None)
             if not media.tmdb_info:
                 return None
             season = int(str(source["season"]).lstrip("S")) if source["season"] not in (None, "") else 1

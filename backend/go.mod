@@ -14,6 +14,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.98
 	github.com/nikolalohinski/gonja/v2 v2.9.1
 	github.com/oliveagle/jsonpath v0.1.0
+	github.com/pmezard/go-difflib v1.0.0
 	golang.org/x/crypto v0.46.0
 	golang.org/x/net v0.48.0
 	golang.org/x/sys v0.39.0

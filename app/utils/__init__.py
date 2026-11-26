@@ -8,7 +8,7 @@ from .string_utils import StringUtils
 from .system_utils import SystemUtils
 from .tokens import Tokens
 from .torrent import Torrent
-from .cache_manager import cacheman, TokenCache, ConfigLoadCache, CategoryLoadCache, OpenAISessionCache
+from .cache_manager import TokenCache, ConfigLoadCache, CategoryLoadCache, OpenAISessionCache
 from .exception_utils import ExceptionUtils
 from .nfo_reader import NfoReader
 from .ip_utils import IpUtils

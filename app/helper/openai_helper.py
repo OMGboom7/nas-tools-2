@@ -1,5 +1,3 @@
-import json
-
 import openai
 
 from app.utils import OpenAISessionCache
@@ -115,26 +113,6 @@ class OpenAiHelper:
         """
         if OpenAISessionCache.get(session_id):
             OpenAISessionCache.delete(session_id)
-
-    def get_media_name(self, filename):
-        """
-        从文件名中提取媒体名称等要素
-        :param filename: 文件名
-        :return: Json
-        """
-        if not self.get_state():
-            return None
-        result = ""
-        try:
-            _filename_prompt = "I will give you a movie/tvshow file name.You need to return a Json." \
-                               "\nPay attention to the correct identification of the film name." \
-                               "\n{\"title\":string,\"version\":string,\"part\":string,\"year\":string,\"resolution\":string,\"season\":number|null,\"episode\":number|null}"
-            completion = self.__get_model(prompt=_filename_prompt, message=filename)
-            result = completion.choices[0].message.content
-            return json.loads(result)
-        except Exception as e:
-            print(f"{str(e)}：{result}")
-            return {}
 
     def get_answer(self, text, userid):
         """

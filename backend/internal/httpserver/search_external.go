@@ -129,7 +129,7 @@ func (service *nativeExternalResourceSearch) group(ctx context.Context, items []
 			if service.recognition == nil {
 				return nil, errors.New("native recognition is unavailable")
 			}
-			result, failure := service.recognition.recognize(ctx, resources[index].Title, resources[index].Description)
+			result, failure := service.recognition.recognizeKind(ctx, resources[index].Title, resources[index].Description, "")
 			if failure != nil {
 				return nil, errors.New("resource identity lookup failed")
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -74,7 +75,7 @@ func (api mediaNameAPI) serveHTTP(response http.ResponseWriter, request *http.Re
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
 	defer cancel()
-	result, failure := api.recognize(ctx, title, subtitle)
+	result, failure := api.recognizeKind(ctx, title, subtitle, "")
 	if failure != nil {
 		writeAPIError(response, failure.status, failure.status, failure.message)
 		return
@@ -103,11 +104,11 @@ type recognitionFailure struct {
 }
 
 func (api mediaNameAPI) recognize(ctx context.Context, title, subtitle string) (*nativeRecognition, *recognitionFailure) {
-	return api.recognizeKind(ctx, title, subtitle, "")
+	return api.recognizeSelected(ctx, title, subtitle, "", "", nil, nil)
 }
 
 func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forcedKind string) (*nativeRecognition, *recognitionFailure) {
-	return api.recognizeSelected(ctx, title, subtitle, forcedKind, "", nil, nil)
+	return api.recognizeMedia(ctx, title, subtitle, forcedKind, "", nil, nil, true)
 }
 
 func recognitionKey(meta mediameta.Metadata, kind string) string {
@@ -129,6 +130,10 @@ func recognitionKey(meta mediameta.Metadata, kind string) string {
 }
 
 func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo, selectedPart *string) (*nativeRecognition, *recognitionFailure) {
+	return api.recognizeMedia(ctx, title, subtitle, forcedKind, selectedID, selectedEpisodes, selectedPart, false)
+}
+
+func (api mediaNameAPI) recognizeMedia(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo, selectedPart *string, resource bool) (*nativeRecognition, *recognitionFailure) {
 	cacheKind := forcedKind
 	if forcedKind == "anime" {
 		forcedKind = "tv"
@@ -216,6 +221,20 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 		input.Type, kind = "TV", "tv"
 		id, err = api.service.resolveNativeMediaID(ctx, input, true)
 	}
+	var assisted recognitionMatch
+	if resource && id == "" && err == nil && ctx.Err() == nil {
+		snapshot, e := api.service.configStore.Snapshot()
+		if e != nil {
+			return nil, &recognitionFailure{500, "media configuration is unavailable"}
+		}
+		assisted, e = resourceTitleAssistance(ctx, snapshot, api.service.client.Transport, meta.Title, title, cacheKind, forcedKind)
+		if e != nil {
+			return nil, &recognitionFailure{502, "media title assistance unavailable"}
+		}
+		if row := assisted.Row; row != nil {
+			kind, id = text(row["media_type"]), text(row["id"])
+		}
+	}
 	if err != nil {
 		return nil, &recognitionFailure{502, "media identity lookup failed"}
 	}
@@ -223,7 +242,16 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 		return nil, nil
 	}
 	meta.Episodes.TV = kind == "tv"
-	detail, err := fetchNativeTMDBDetails(ctx, api.service.configStore, api.service.client.Transport, kind, id)
+	var detail tmdbMediaDetails
+	if assisted.fullDetail {
+		raw, marshalErr := json.Marshal(assisted.Row)
+		if marshalErr != nil {
+			return nil, &recognitionFailure{502, "invalid assisted media details"}
+		}
+		detail, err = decodeTMDBDetails(raw, id)
+	} else {
+		detail, err = fetchNativeTMDBDetails(ctx, api.service.configStore, api.service.client.Transport, kind, id)
+	}
 	if err != nil {
 		return nil, &recognitionFailure{502, "media details are unavailable"}
 	}

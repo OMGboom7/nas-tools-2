@@ -48,7 +48,7 @@ func (api rssNameAPI) serveHTTP(response http.ResponseWriter, request *http.Requ
 		writeAPIError(response, status, status, "RSS task is unavailable")
 		return
 	}
-	result, failure := api.recognition.recognize(ctx, title, "")
+	result, failure := api.recognition.recognizeKind(ctx, title, "", "")
 	if failure != nil {
 		writeAPIError(response, failure.status, failure.status, failure.message)
 		return

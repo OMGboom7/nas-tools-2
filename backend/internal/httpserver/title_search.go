@@ -34,6 +34,9 @@ type tmdbTitleChoice struct {
 }
 
 func SearchTitlesCommand(ctx context.Context, configPath, provider string, in io.Reader, out io.Writer) error {
+	if provider == "recognize" {
+		return recognitionLookupCommand(ctx, configPath, in, out)
+	}
 	if provider == "subject" {
 		return sourceSubjectCommand(ctx, in, out)
 	}

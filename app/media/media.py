@@ -1,43 +1,41 @@
-import difflib
 import hashlib
 import json
 import subprocess
 import os
 import random
-import re
 import traceback
-from functools import lru_cache
 from threading import RLock
 
 from cachetools import TTLCache, cached
 
 import zhconv
-from lxml import etree
 
 import log
 from app.helper import MetaHelper
-from app.helper.openai_helper import OpenAiHelper
 from app.media.meta.metainfo import MetaInfo
 from app.media.tmdbv3api import TMDb, Search, Movie, TV, Person, Find, TMDbException, Discover, Trending, Episode, Genre
 from app.media.tmdbv3api.as_obj import AsObj
-from app.utils import PathUtils, EpisodeFormat, RequestUtils, NumberUtils, StringUtils, cacheman
-from app.utils.types import MediaType, MatchMode
-from config import Config, run_go_helper, KEYWORD_BLACKLIST, KEYWORD_SEARCH_WEIGHT_3, KEYWORD_SEARCH_WEIGHT_2, KEYWORD_SEARCH_WEIGHT_1, \
-    KEYWORD_STR_SIMILARITY_THRESHOLD, KEYWORD_DIFF_SCORE_THRESHOLD
+from app.utils import PathUtils, EpisodeFormat, NumberUtils, StringUtils
+from app.utils.types import MediaType
+from config import Config, run_go_helper
 
 
 @cached(cache=TTLCache(maxsize=512, ttl=6 * 60 * 60), lock=RLock())
-def _tmdb_detail_bytes(payload, config_revision, match=False):
+def _tmdb_detail_bytes(payload, config_revision, recognize=False):
     # A config change (including provider, language, key or proxy) invalidates the entry.
-    if match:
-        return run_go_helper("search-titles", "match", payload=payload, timeout=95)
+    if recognize:
+        return run_go_helper("search-titles", "recognize", payload=payload, timeout=155)
     return run_go_helper("tmdb-detail", payload=payload, timeout=25)
 
 
-def _tmdb_detail(query, match=False):
+def _tmdb_query(query, recognize=False):
     with open(os.environ["NASTOOL_CONFIG"], "rb") as config_file:
         revision = hashlib.sha256(config_file.read()).digest()
-    result = json.loads(_tmdb_detail_bytes(json.dumps(query).encode(), revision, match))
+    return json.loads(_tmdb_detail_bytes(json.dumps(query).encode(), revision, recognize))
+
+
+def _tmdb_detail(query):
+    result = _tmdb_query(query)
     return AsObj(**result) if result is not None else None
 
 
@@ -54,11 +52,6 @@ class Media:
     discover = None
     genre = None
     meta = None
-    openai = None
-    _rmt_match_mode = None
-    _search_keyword = None
-    _search_tmdbweb = None
-    _chatgpt_enable = None
     _default_language = None
     _tmdb_include_adult = None
 
@@ -68,13 +61,6 @@ class Media:
     def init_config(self):
         app = Config().get_config('app')
         media = Config().get_config('media')
-        laboratory = Config().get_config('laboratory')
-        # 辅助查询
-        self._search_keyword = laboratory.get("search_keyword")
-        # WEB辅助
-        self._search_tmdbweb = laboratory.get("search_tmdbweb")
-        # ChatGPT辅助
-        self._chatgpt_enable = laboratory.get("chatgpt_enable")
         # 默认语言
         self._default_language = media.get("tmdb_language", "zh") or "zh"
         # TMDB是否包含成人内容
@@ -109,18 +95,6 @@ class Media:
             self.genre = Genre()
         # 元数据缓存
         self.meta = MetaHelper()
-        # ChatGPT
-        self.openai = OpenAiHelper()
-        # 匹配模式
-        rmt_match_mode = app.get('rmt_match_mode', 'normal')
-        if rmt_match_mode:
-            rmt_match_mode = rmt_match_mode.upper()
-        else:
-            rmt_match_mode = "NORMAL"
-        if rmt_match_mode == "STRICT":
-            self._rmt_match_mode = MatchMode.STRICT
-        else:
-            self._rmt_match_mode = MatchMode.NORMAL
 
     def __set_language(self, language):
         """
@@ -135,137 +109,28 @@ class Media:
             self.tmdb.language = self._default_language
 
     @staticmethod
-    def __match_title(name, kind, first_year=None, season_year=None, season=None, mode="", relax=False):
-        if not name:
-            return None
+    def __lookup_parsed(media, raw, mode, language, chinese, append, strict=False):
+        query = {"title": media.get_name(), "raw": str(raw), "kind": media.type.name.lower(),
+                 "year": str(media.year or ""), "season": int(media.begin_season or 0),
+                 "mode": mode, "strict": bool(strict), "language": language or "",
+                 "localize": bool(chinese), "append": append}
         try:
-            row = _tmdb_detail({"title": name, "kind": kind, "firstYear": str(first_year or ""),
-                                "seasonYear": str(season_year or ""), "season": int(season or 0),
-                                "mode": mode, "relax": relax}, match=True)
+            result = _tmdb_query(query, recognize=True)
+            if result.get("tv"):
+                media.type = MediaType.TV
+                if media.begin_season is None:
+                    media.set_season(result.get("season"))
+                if media.begin_episode is None:
+                    media.set_episode(result.get("episode"))
+            row = result.get("row")
             if row is None:
                 return {}
-            row["media_type"] = MediaType.MOVIE if row["media_type"] == "movie" else MediaType.TV
-            return row
+            info = AsObj(**row)
+            info["media_type"] = MediaType.MOVIE if row["media_type"] == "movie" else MediaType.TV
+            return info
         except (KeyError, OSError, ValueError, TypeError, subprocess.SubprocessError):
-            log.warn("【Meta】TMDB 名称匹配暂不可用")
+            log.warn("【Meta】媒体名称识别服务暂不可用")
             return None
-
-    def __recognize_title(self, media, mode, strict=False):
-        kind = "tv" if media.type == MediaType.TV or (mode == "file" and media.type != MediaType.MOVIE) else "movie"
-        return self.__match_title(media.get_name(), kind, media.year, media.year, media.begin_season,
-                                  mode=mode, relax=self._rmt_match_mode == MatchMode.NORMAL and not strict)
-
-    def __search_tmdb(self, file_media_name, search_type, first_media_year=None, media_year=None, season_number=None):
-        kind = "movie" if search_type == MediaType.MOVIE else "tv"
-        return self.__match_title(file_media_name, kind, first_media_year, media_year, season_number)
-
-    def __search_multi_tmdb(self, file_media_name):
-        return self.__match_title(file_media_name, "multi")
-
-    @lru_cache(maxsize=512)
-    def __search_chatgpt(self, file_name, mtype: MediaType):
-        """
-        通过ChatGPT对话识别文件名和集数等信息，重新查询TMDB数据
-        :param file_name: 名称
-        :param mtype: 媒体类型
-        :return: 类型、季、集、TMDBINFO
-        """
-
-        def __failed():
-            return mtype, None, None, {}
-
-        def __failed_none():
-            return mtype, None, None, None
-
-        if not file_name:
-            return __failed_none()
-        log.info("【Meta】正在通过ChatGPT识别文件名：%s" % file_name)
-        file_info = self.openai.get_media_name(file_name)
-        if file_info is None:
-            log.info("【Meta】ChatGPT识别出错，请检查是否设置OpenAI ApiKey！")
-            return __failed_none()
-        if not file_info:
-            log.info("【Meta】ChatGPT识别失败！")
-            return __failed()
-        else:
-            log.info("【Meta】ChatGPT识别结果：%s" % file_info)
-            if file_info.get("season") or file_info.get("episode"):
-                mtype = MediaType.TV
-            # 处理标题和年份
-            file_title, file_year, season_number = None, None, None
-            if file_info.get("title"):
-                file_title = str(file_info.get("title")).split("/")[0].strip().replace(".", " ")
-            if file_info.get("year"):
-                file_year = str(file_info.get("year")).split("/")[0].strip()
-            if not file_title:
-                return __failed()
-            if not str(file_year).isdigit():
-                file_year = None
-            if mtype != MediaType.MOVIE or file_info.get("year"):
-                tmdb_info = self.__search_tmdb(file_media_name=file_title,
-                                               search_type=mtype,
-                                               first_media_year=file_year)
-            else:
-                tmdb_info = self.__search_multi_tmdb(file_media_name=file_title)
-            return mtype, file_info.get("season"), file_info.get("episode"), tmdb_info
-
-    @lru_cache(maxsize=512)
-    def __search_tmdb_web(self, file_media_name, mtype: MediaType):
-        """
-        搜索TMDB网站，直接抓取结果，结果只有一条时才返回
-        :param file_media_name: 名称
-        """
-        if not file_media_name:
-            return None
-        if StringUtils.is_chinese(file_media_name):
-            return {}
-        log.info("【Meta】正在从TheDbMovie网站查询：%s ..." % file_media_name)
-        tmdb_url = "https://www.themoviedb.org/search?query=%s" % file_media_name
-        res = RequestUtils(timeout=5).get_res(url=tmdb_url)
-        if res and res.status_code == 200:
-            html_text = res.text
-            if not html_text:
-                return None
-            try:
-                tmdb_links = []
-                html = etree.HTML(html_text)
-                if mtype == MediaType.TV:
-                    links = html.xpath("//a[@data-id and @data-media-type='tv']/@href")
-                else:
-                    links = html.xpath("//a[@data-id]/@href")
-                for link in links:
-                    if not link or (not link.startswith("/tv") and not link.startswith("/movie")):
-                        continue
-                    if link not in tmdb_links:
-                        tmdb_links.append(link)
-                if len(tmdb_links) == 1:
-                    tmdbinfo = self.get_tmdb_info(
-                        mtype=MediaType.TV if tmdb_links[0].startswith("/tv") else MediaType.MOVIE,
-                        tmdbid=tmdb_links[0].split("/")[-1])
-                    if tmdbinfo:
-                        if mtype == MediaType.TV and tmdbinfo.get('media_type') != MediaType.TV:
-                            return {}
-                        if tmdbinfo.get('media_type') == MediaType.MOVIE:
-                            log.info("【Meta】%s 从WEB识别到 电影：TMDBID=%s, 名称=%s, 上映日期=%s" % (
-                                file_media_name,
-                                tmdbinfo.get('id'),
-                                tmdbinfo.get('title'),
-                                tmdbinfo.get('release_date')))
-                        else:
-                            log.info("【Meta】%s 从WEB识别到 电视剧：TMDBID=%s, 名称=%s, 首播日期=%s" % (
-                                file_media_name,
-                                tmdbinfo.get('id'),
-                                tmdbinfo.get('name'),
-                                tmdbinfo.get('first_air_date')))
-                    return tmdbinfo
-                elif len(tmdb_links) > 1:
-                    log.info("【Meta】%s TMDB网站返回数据过多：%s" % (file_media_name, len(tmdb_links)))
-                else:
-                    log.info("【Meta】%s TMDB网站未查询到媒体信息！" % file_media_name)
-            except Exception as err:
-                print(str(err))
-                return None
-        return None
 
     def search_tmdb_person(self, name):
         """
@@ -342,7 +207,7 @@ class Media:
         return self.meta.get_meta_data_by_key(self.__make_cache_key(meta_info))
 
     @staticmethod
-    def _apply_cached_details(media, details, entry, language):
+    def apply_cached_details(media, details, entry, language):
         media.set_tmdb_info(details)
         if details and entry and not language and str(details.get("id")) == str(entry.get("id")):
             if entry.get("title"):
@@ -388,41 +253,7 @@ class Media:
         if cache and cache_info is None:
             cache_info = self.meta.get_meta_data_by_key(media_key)
         if not cache or not cache_info:
-            # 缓存没有或者强制不使用缓存
-            file_media_info = self.__recognize_title(meta_info, "title", strict=strict)
-            if not file_media_info and self._search_tmdbweb:
-                # 从网站查询
-                file_media_info = self.__search_tmdb_web(file_media_name=meta_info.get_name(),
-                                                         mtype=meta_info.type)
-            if not file_media_info and self._chatgpt_enable:
-                # 通过ChatGPT查询
-                mtype, seaons, episodes, file_media_info = self.__search_chatgpt(file_name=title,
-                                                                                 mtype=meta_info.type)
-                # 修正类型和集数
-                meta_info.type = mtype
-                if not meta_info.get_season_string():
-                    meta_info.set_season(seaons)
-                if not meta_info.get_episode_string():
-                    meta_info.set_episode(episodes)
-            if not file_media_info and self._search_keyword:
-                # 关键字猜测
-                cache_name = cacheman["tmdb_supply"].get(meta_info.get_name())
-                is_movie = False
-                if not cache_name:
-                    cache_name, is_movie = self.__search_engine(meta_info.get_name())
-                    cacheman["tmdb_supply"].set(meta_info.get_name(), cache_name)
-                if cache_name:
-                    log.info("【Meta】开始辅助查询：%s ..." % cache_name)
-                    if is_movie:
-                        file_media_info = self.__search_tmdb(file_media_name=cache_name, search_type=MediaType.MOVIE)
-                    else:
-                        file_media_info = self.__search_multi_tmdb(file_media_name=cache_name)
-            # 补充全量信息
-            if file_media_info and not file_media_info.get("genres"):
-                file_media_info = self.get_tmdb_info(mtype=file_media_info.get("media_type"),
-                                                     tmdbid=file_media_info.get("id"),
-                                                     chinese=chinese,
-                                                     append_to_response=append_to_response)
+            file_media_info = self.__lookup_parsed(meta_info, title, "title", language, chinese, append_to_response, strict)
             # 保存到缓存
             if file_media_info is not None:
                 self.__insert_media_cache(media_key=media_key,
@@ -431,13 +262,13 @@ class Media:
             # 使用缓存信息
             if cache_info.get("id"):
                 file_media_info = self.get_tmdb_info(mtype=cache_info.get("type"),
-                                                     tmdbid=cache_info.get("id"),
+                                                     tmdbid=cache_info.get("id"), language=language,
                                                      chinese=chinese,
                                                      append_to_response=append_to_response)
             else:
                 file_media_info = None
         # 赋值TMDB信息并返回
-        self._apply_cached_details(meta_info, file_media_info, cache_info if cache else None, language)
+        self.apply_cached_details(meta_info, file_media_info, cache_info if cache else None, language)
         return meta_info
 
     def __insert_media_cache(self, media_key, file_media_info):
@@ -548,37 +379,7 @@ class Media:
                     media_key = self.__make_cache_key(meta_info)
                     cache_info = self.meta.get_meta_data_by_key(media_key)
                     if not cache_info:
-                        # 没有缓存数据
-                        file_media_info = self.__recognize_title(meta_info, "file")
-                        if not file_media_info and self._chatgpt_enable:
-                            # 从ChatGPT查询
-                            mtype, seaons, episodes, file_media_info = self.__search_chatgpt(file_name=file_path,
-                                                                                             mtype=meta_info.type)
-                            # 修正类型和集数
-                            meta_info.type = mtype
-                            if not meta_info.get_season_string():
-                                meta_info.set_season(seaons)
-                            if not meta_info.get_episode_string():
-                                meta_info.set_episode(episodes)
-                        if not file_media_info and self._search_keyword:
-                            cache_name = cacheman["tmdb_supply"].get(meta_info.get_name())
-                            is_movie = False
-                            if not cache_name:
-                                cache_name, is_movie = self.__search_engine(meta_info.get_name())
-                                cacheman["tmdb_supply"].set(meta_info.get_name(), cache_name)
-                            if cache_name:
-                                log.info("【Meta】开始辅助查询：%s ..." % cache_name)
-                                if is_movie:
-                                    file_media_info = self.__search_tmdb(file_media_name=cache_name,
-                                                                         search_type=MediaType.MOVIE)
-                                else:
-                                    file_media_info = self.__search_multi_tmdb(file_media_name=cache_name)
-                        # 补全TMDB信息
-                        if file_media_info and not file_media_info.get("genres"):
-                            file_media_info = self.get_tmdb_info(mtype=file_media_info.get("media_type"),
-                                                                 tmdbid=file_media_info.get("id"),
-                                                                 chinese=chinese,
-                                                                 append_to_response=append_to_response)
+                        file_media_info = self.__lookup_parsed(meta_info, file_path, "file", language, chinese, append_to_response)
                         # 保存到缓存
                         if file_media_info is not None:
                             self.__insert_media_cache(media_key=media_key,
@@ -587,14 +388,14 @@ class Media:
                         # 使用缓存信息
                         if cache_info.get("id"):
                             file_media_info = self.get_tmdb_info(mtype=cache_info.get("type"),
-                                                                 tmdbid=cache_info.get("id"),
+                                                                 tmdbid=cache_info.get("id"), language=language,
                                                                  chinese=chinese,
                                                                  append_to_response=append_to_response)
                         else:
                             # 缓存为未识别
                             file_media_info = None
                     # 赋值TMDB信息
-                    self._apply_cached_details(meta_info, file_media_info, cache_info, language)
+                    self.apply_cached_details(meta_info, file_media_info, cache_info, language)
                 # 自带TMDB信息
                 else:
                     meta_info = MetaInfo(title=file_name, mtype=media_type, filePath=file_path)
@@ -1305,112 +1106,6 @@ class Media:
         except Exception as e:
             print(str(e))
         return []
-
-    @staticmethod
-    def __search_engine(feature_name):
-        """
-        辅助识别关键字
-        """
-        is_movie = False
-        if not feature_name:
-            return None, is_movie
-        # 剔除不必要字符
-        feature_name = re.compile(r"^\w+字幕[组社]?", re.IGNORECASE).sub("", feature_name)
-        backlist = sorted(KEYWORD_BLACKLIST, key=lambda x: len(x), reverse=True)
-        for single in backlist:
-            feature_name = feature_name.replace(single, " ")
-        if not feature_name:
-            return None, is_movie
-
-        def cal_score(strongs, r_dict):
-            for i, s in enumerate(strongs):
-                if len(strongs) < 5:
-                    if i < 2:
-                        score = KEYWORD_SEARCH_WEIGHT_3[0]
-                    else:
-                        score = KEYWORD_SEARCH_WEIGHT_3[1]
-                elif len(strongs) < 10:
-                    if i < 2:
-                        score = KEYWORD_SEARCH_WEIGHT_2[0]
-                    else:
-                        score = KEYWORD_SEARCH_WEIGHT_2[1] if i < (len(strongs) >> 1) else KEYWORD_SEARCH_WEIGHT_2[2]
-                else:
-                    if i < 2:
-                        score = KEYWORD_SEARCH_WEIGHT_1[0]
-                    else:
-                        score = KEYWORD_SEARCH_WEIGHT_1[1] if i < (len(strongs) >> 2) else KEYWORD_SEARCH_WEIGHT_1[
-                            2] if i < (
-                                len(strongs) >> 1) \
-                            else KEYWORD_SEARCH_WEIGHT_1[3] if i < (len(strongs) >> 2 + len(strongs) >> 1) else \
-                            KEYWORD_SEARCH_WEIGHT_1[
-                                4]
-                if r_dict.__contains__(s.lower()):
-                    r_dict[s.lower()] += score
-                    continue
-                r_dict[s.lower()] = score
-
-        bing_url = "https://www.cn.bing.com/search?q=%s&qs=n&form=QBRE&sp=-1" % feature_name
-        baidu_url = "https://www.baidu.com/s?ie=utf-8&tn=baiduhome_pg&wd=%s" % feature_name
-        res_bing = RequestUtils(timeout=5).get_res(url=bing_url)
-        res_baidu = RequestUtils(timeout=5).get_res(url=baidu_url)
-        ret_dict = {}
-        if res_bing and res_bing.status_code == 200:
-            html_text = res_bing.text
-            if html_text:
-                html = etree.HTML(html_text)
-                strongs_bing = list(
-                    filter(lambda x: (0 if not x else difflib.SequenceMatcher(None, feature_name,
-                                                                              x).ratio()) > KEYWORD_STR_SIMILARITY_THRESHOLD,
-                           map(lambda x: x.text, html.cssselect(
-                               "#sp_requery strong, #sp_recourse strong, #tile_link_cn strong, .b_ad .ad_esltitle~div strong, h2 strong, .b_caption p strong, .b_snippetBigText strong, .recommendationsTableTitle+.b_slideexp strong, .recommendationsTableTitle+table strong, .recommendationsTableTitle+ul strong, .pageRecoContainer .b_module_expansion_control strong, .pageRecoContainer .b_title>strong, .b_rs strong, .b_rrsr strong, #dict_ans strong, .b_listnav>.b_ans_stamp>strong, #b_content #ans_nws .na_cnt strong, .adltwrnmsg strong"))))
-                if strongs_bing:
-                    title = html.xpath("//aside//h2[@class = \" b_entityTitle\"]/text()")
-                    if len(title) > 0:
-                        if title:
-                            t = re.compile(r"\s*\(\d{4}\)$").sub("", title[0])
-                            ret_dict[t] = 200
-                            if html.xpath("//aside//div[@data-feedbk-ids = \"Movie\"]"):
-                                is_movie = True
-                    cal_score(strongs_bing, ret_dict)
-        if res_baidu and res_baidu.status_code == 200:
-            html_text = res_baidu.text
-            if html_text:
-                html = etree.HTML(html_text)
-                ems = list(
-                    filter(lambda x: (0 if not x else difflib.SequenceMatcher(None, feature_name,
-                                                                              x).ratio()) > KEYWORD_STR_SIMILARITY_THRESHOLD,
-                           map(lambda x: x.text, html.cssselect("em"))))
-                if len(ems) > 0:
-                    cal_score(ems, ret_dict)
-        if not ret_dict:
-            return None, False
-        ret = sorted(ret_dict.items(), key=lambda d: d[1], reverse=True)
-        log.info("【Meta】推断关键字为：%s ..." % ([k[0] for i, k in enumerate(ret) if i < 4]))
-        if len(ret) == 1:
-            keyword = ret[0][0]
-        else:
-            pre = ret[0]
-            nextw = ret[1]
-            if nextw[0].find(pre[0]) > -1:
-                # 满分直接判定
-                if int(pre[1]) >= 100:
-                    keyword = pre[0]
-                # 得分相差30 以上， 选分高
-                elif int(pre[1]) - int(nextw[1]) > KEYWORD_DIFF_SCORE_THRESHOLD:
-                    keyword = pre[0]
-                # 重复的不选
-                elif nextw[0].replace(pre[0], "").strip() == pre[0]:
-                    keyword = pre[0]
-                # 纯数字不选
-                elif pre[0].isdigit():
-                    keyword = nextw[0]
-                else:
-                    keyword = nextw[0]
-
-            else:
-                keyword = pre[0]
-        log.info("【Meta】选择关键字为：%s " % keyword)
-        return keyword, is_movie
 
     def get_tmdb_us_title(self, tmdbinfo):
         """
