@@ -24,6 +24,17 @@ type siteBrowser struct {
 	transport http.RoundTripper
 }
 
+func (s downloadService) siteReader() siteBrowser {
+	return siteBrowser{renderer: s.browser, sites: s.sites, config: s.configStore, limits: s.siteLimits, transport: s.client.Transport}
+}
+
+func (b siteBrowser) waitForSite(ctx context.Context, id int64) error {
+	if b.limits == nil {
+		return nil
+	}
+	return b.limits.Wait(ctx, b.sites, id)
+}
+
 func (b siteBrowser) guard(site siteconfig.Site, configuration map[string]any, extra func(context.Context) error) func(context.Context) error {
 	siteHash, appHash := browserruntime.Hash(site), browserruntime.Hash(configuration)
 	return func(ctx context.Context) error {
@@ -136,15 +147,14 @@ func (s siteService) connectionRenderer(site siteconfig.Site, configuration map[
 	b := siteBrowser{renderer: s.browser, sites: s.store, config: s.configStore}
 	return guardedSiteRenderer{Renderer: s.browser, guard: b.guard(site, configuration, nil)}
 }
-func (api *subscriptionRSSAPI) fetchRenderedDetail(ctx context.Context, site siteconfig.Site, address string) ([]byte, *browserruntime.Session, error) {
+func (reader siteBrowser) fetchRenderedDetail(ctx context.Context, site siteconfig.Site, address string) ([]byte, *browserruntime.Session, error) {
 	if !subscriptionSiteOriginAllowed(site, address) {
 		return nil, nil, browserruntime.ErrScope
 	}
-	s := api.runner.planner.runner.download.service
-	cfg, err := s.configStore.Snapshot()
+	cfg, err := reader.config.Snapshot()
 	if err != nil {
 		return nil, nil, err
 	}
-	page, session, err := (siteBrowser{renderer: s.browser, sites: s.sites, config: s.configStore, limits: s.siteLimits, transport: s.client.Transport}).render(ctx, site, cfg, address, nil, "", "", nil)
+	page, session, err := reader.render(ctx, site, cfg, address, nil, "", "", nil)
 	return page.HTML, session, err
 }

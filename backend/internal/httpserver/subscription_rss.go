@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,10 +14,10 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
-	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/recognitioncache"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
+	"golang.org/x/net/html/charset"
 )
 
 type subscriptionRSSAPI struct {
@@ -191,13 +192,11 @@ type subscriptionFeedCache struct {
 	err       error
 }
 type subscriptionRSSBatch struct {
-	api         *subscriptionRSSAPI
-	sites       []siteconfig.Site
-	mu          sync.Mutex
-	feeds       map[int64]*subscriptionFeedCache
-	catalogOnce sync.Once
-	catalog     indexercatalog.Catalog
-	catalogErr  error
+	api     *subscriptionRSSAPI
+	sites   []siteconfig.Site
+	mu      sync.Mutex
+	feeds   map[int64]*subscriptionFeedCache
+	details rssDetailCatalog
 }
 
 func subscriptionRSSScope(raw map[string]any) ([]string, error) {
@@ -304,7 +303,7 @@ func (batch *subscriptionRSSBatch) feed(ctx context.Context, site siteconfig.Sit
 	}
 	batch.mu.Unlock()
 	entry.once.Do(func() {
-		body, err := batch.api.fetchDocument(ctx, site, site.RSSURL, note, false)
+		body, err := batch.api.runner.planner.runner.download.service.siteReader().fetchRSSDocument(ctx, site, site.RSSURL, note, false)
 		if err != nil {
 			entry.err = err
 			return
@@ -324,18 +323,13 @@ func (batch *subscriptionRSSBatch) feed(ctx context.Context, site siteconfig.Sit
 	return entry.resources, entry.err
 }
 
-func (api *subscriptionRSSAPI) fetchDocument(ctx context.Context, site siteconfig.Site, raw string, note map[string]any, credentials bool) ([]byte, error) {
-	if credentials && (text(note["chrome"]) == "Y" || truthy(note["chrome"])) {
-		body, _, err := api.fetchRenderedDetail(ctx, site, raw)
-		return body, err
-	}
+func (reader siteBrowser) fetchRSSDocument(ctx context.Context, site siteconfig.Site, raw string, note map[string]any, credentials bool) ([]byte, error) {
 	if len(raw) > 4096 || !subscriptionSiteOriginAllowed(site, raw) {
 		return nil, errors.New("RSS document is outside configured site")
 	}
-	service := api.runner.planner.runner.download.service
-	transport := service.client.Transport
+	transport := reader.transport
 	if text(note["proxy"]) == "Y" || truthy(note["proxy"]) {
-		configuration, err := service.configStore.Snapshot()
+		configuration, err := reader.config.Snapshot()
 		if err != nil {
 			return nil, err
 		}
@@ -351,6 +345,13 @@ func (api *subscriptionRSSAPI) fetchDocument(ctx context.Context, site siteconfi
 		return nil, err
 	}
 	ua := strings.TrimSpace(text(note["ua"]))
+	if ua == "" && credentials {
+		configuration, err := reader.config.Snapshot()
+		if err != nil {
+			return nil, err
+		}
+		ua = text(objectValue(configuration["app"])["user_agent"])
+	}
 	if ua == "" {
 		ua = defaultSiteUserAgent
 	}
@@ -358,7 +359,7 @@ func (api *subscriptionRSSAPI) fetchDocument(ctx context.Context, site siteconfi
 	if credentials {
 		request.Header.Set("Cookie", site.Cookie)
 	}
-	if err := service.siteLimits.Wait(ctx, service.sites, site.ID); err != nil {
+	if err := reader.waitForSite(ctx, site.ID); err != nil {
 		return nil, err
 	}
 	response, err := client.Do(request)
@@ -372,6 +373,13 @@ func (api *subscriptionRSSAPI) fetchDocument(ctx context.Context, site siteconfi
 	body, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil || len(body) > 4<<20 {
 		return nil, errors.New("RSS document exceeded size limit")
+	}
+	if credentials {
+		decoded, err := charset.NewReader(bytes.NewReader(body), response.Header.Get("Content-Type"))
+		if err != nil {
+			return nil, err
+		}
+		return readSiteFeedBody(decoded)
 	}
 	return body, nil
 }
@@ -468,7 +476,7 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 				}
 			}
 			if text(note["parse"]) == "Y" || truthy(note["parse"]) {
-				resource, err = batch.torrentDetail(ctx, site, note, resource)
+				resource, err = batch.details.read(ctx, batch.api.runner.planner.runner.download.service.siteReader(), service.catalogPath, site, note, resource, nativeRSSDetail)
 				if err != nil {
 					return fail(err)
 				}

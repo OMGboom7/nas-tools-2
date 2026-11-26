@@ -8,7 +8,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,7 +18,10 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
 	"github.com/0xforee/nas-tools/backend/internal/batchdownload"
+	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
+	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/regexcompat"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
@@ -203,13 +208,16 @@ type classicRSSReply struct {
 	Inventory *inventoryQuery
 }
 type classicRSSScan struct {
-	path      string
-	app       map[string]any
-	out       *json.Encoder
-	in        *bufio.Scanner
-	index     int
-	inventory subscriptionService
-	accepted  []classicRSSChoice
+	path        string
+	app         map[string]any
+	out         *json.Encoder
+	in          *bufio.Scanner
+	index       int
+	reader      siteBrowser
+	catalog     rssDetailCatalog
+	catalogPath string
+	inventory   subscriptionService
+	accepted    []classicRSSChoice
 }
 type classicRSSChoice struct {
 	index     int
@@ -294,6 +302,38 @@ func (s *classicRSSScan) eligible(ctx context.Context, r *classicRSSRule, id cla
 	return nil, false, nil
 }
 
+type classicRSSAttributes struct {
+	Upload   *float64 `json:"upload"`
+	Download *float64 `json:"download"`
+	HR       bool     `json:"hr"`
+}
+
+// Detail credentials stay with the site selected from the saved subscription.
+func (s *classicRSSScan) siteAttributes(ctx context.Context, site siteconfig.Site, note map[string]any, article siteFeedArticle) (*classicRSSAttributes, error) {
+	if article.Link == nil || !subscriptionSiteOriginAllowed(site, *article.Link) {
+		return nil, errFuzzyScope
+	}
+	current, err := s.reader.sites.Get(ctx, site.ID)
+	if err != nil || current != site {
+		return nil, errFuzzyScope
+	}
+	reader := s.reader
+	reader.limits = &siteBatchLimiter{}
+	lookup, cancel := context.WithTimeout(ctx, 80*time.Second)
+	defer cancel()
+	resource, err := s.catalog.read(lookup, reader, s.catalogPath, site, note, externalindexer.Resource{Title: defaultString(article.rawTitle, article.Title), PageURL: *article.Link, DownloadURL: article.Enclosure}, classicRSSDetail)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the original spacing between an HTML detail request and download admission.
+	if _, isMTeam := builtinindexer.MTeamFeedOrigin(defaultString(site.SignURL, site.RSSURL)); !isMTeam {
+		if err := waitSiteRequestDelay(ctx, time.Duration(10+rand.IntN(41))*100*time.Millisecond); err != nil {
+			return nil, err
+		}
+	}
+	return &classicRSSAttributes{Upload: resource.UploadFactor, Download: resource.DownloadFactor, HR: resource.HitAndRun != nil && *resource.HitAndRun}, nil
+}
+
 func (s *classicRSSScan) scanSite(ctx context.Context, site siteconfig.Site, rules []*classicRSSRule) error {
 	note, _, order, err := subscriptionRSSSiteNote(site)
 	if err != nil {
@@ -329,13 +369,17 @@ func (s *classicRSSScan) scanSite(ctx context.Context, site siteconfig.Site, rul
 			if !match {
 				continue
 			}
-			parse := note["parse"] == "Y"
-			details := map[string]any{"id": site.ID, "rule": note["rule"], "parse": parse}
-			if parse {
-				if article.Link == nil || !subscriptionSiteOriginAllowed(site, *article.Link) {
+			details := map[string]any{"rule": note["rule"]}
+			if note["parse"] == "Y" {
+				attrs, err := s.siteAttributes(ctx, site, note, article)
+				if err != nil {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					slog.Warn("RSS site detail unavailable", "siteID", site.ID)
 					break
 				}
-				details["ua"], details["cookie"], details["proxy"] = note["ua"], site.Cookie, proxy
+				details["attributes"] = attrs
 			}
 			decision, err := s.exchange(map[string]any{"op": "candidate", "source": rule.fields, "site": details}, s.index)
 			if err != nil {
@@ -352,13 +396,17 @@ func (s *classicRSSScan) scanSite(ctx context.Context, site siteconfig.Site, rul
 				if !eligible {
 					break
 				}
-				ready, err := s.exchange(map[string]any{"op": "ready", "siteID": site.ID, "scope": gap}, s.index)
-				if err != nil {
+				delay, err := s.reader.sites.AdmitRequest(ctx, site.ID, time.Now)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if err != nil || delay > 0 {
+					break
+				}
+				if err := s.out.Encode(map[string]any{"op": "ready", "index": s.index, "scope": gap}); err != nil {
 					return err
 				}
-				if ready.Accepted {
-					s.accepted = append(s.accepted, classicRSSChoice{s.index, site, rule, article.Enclosure, reply.Identity.TMDBID, gap})
-				}
+				s.accepted = append(s.accepted, classicRSSChoice{s.index, site, rule, article.Enclosure, reply.Identity.TMDBID, gap})
 			}
 			break
 		}
@@ -520,7 +568,13 @@ func ClassicRSSScanCommand(ctx context.Context, path string, in io.Reader, out i
 	}
 	defer system.Close()
 	service.systemConfig, service.configStore, service.client = system, config.NewStore(path), http.DefaultClient
-	s := classicRSSScan{inventory: service, path: path, app: objectValue(cfg["app"]), in: bufio.NewScanner(in), out: json.NewEncoder(out)}
+	sites, err := siteconfig.Open(service.databasePath)
+	if err != nil {
+		return err
+	}
+	defer sites.Close()
+	reader := siteBrowser{sites: sites, config: service.configStore, renderer: browserruntime.New(defaultString(os.Getenv("NASTOOL_BROWSER_BINARY"), "auto")), transport: service.client.Transport}
+	s := classicRSSScan{reader: reader, catalogPath: os.Getenv("NASTOOL_SITE_CATALOG"), inventory: service, path: path, app: objectValue(cfg["app"]), in: bufio.NewScanner(in), out: json.NewEncoder(out)}
 	s.in.Buffer(make([]byte, 4096), 256<<10)
 	for _, site := range p.sites {
 		if rules := p.bySite[site.ID]; len(rules) > 0 {

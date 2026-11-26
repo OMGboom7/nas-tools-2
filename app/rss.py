@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from threading import Lock
 
@@ -9,12 +10,11 @@ from app.helper import DbHelper
 from app.media import Media
 from app.media.meta import MetaInfo
 from app.message import Message
-from app.sites import Sites, SiteConf
 from app.subscribe import Subscribe
 from app.utils import ExceptionUtils, Torrent
 from app.utils.commons import singleton
 from app.utils.types import EventType, MediaType, SearchType
-from config import go_helper_path
+from config import Config, go_helper_path
 
 lock = Lock()
 
@@ -23,8 +23,6 @@ lock = Lock()
 class Rss:
     filter = None
     media = None
-    sites = None
-    siteconf = None
     downloader = None
     searcher = None
     dbhelper = None
@@ -37,8 +35,6 @@ class Rss:
     def init_config(self):
         self.media = Media()
         self.downloader = Downloader()
-        self.sites = Sites()
-        self.siteconf = SiteConf()
         self.filter = Filter()
         self.dbhelper = DbHelper()
         self.subscribe = Subscribe()
@@ -49,8 +45,10 @@ class Rss:
         """
         RSS订阅搜索下载入口，由定时服务调用
         """
+        catalog = os.environ.get("NASTOOL_SITE_CATALOG") or Config().get_user_sites_bin_path()
         with lock, subprocess.Popen([go_helper_path(), "rss-scan"], stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE, text=True, encoding="utf-8") as scan:
+                                    stdout=subprocess.PIPE, text=True, encoding="utf-8",
+                                    env={**os.environ, "NASTOOL_SITE_CATALOG": catalog}) as scan:
             accepted = {}
             media = None
             try:
@@ -100,13 +98,9 @@ class Rss:
                         except Exception as e:
                             ExceptionUtils.exception_traceback(e)
                     elif op == "ready":
-                        try:
-                            if not self.sites.check_ratelimit(frame["siteID"]):
-                                media.ordinary_scope = frame.get("scope")
-                                accepted[index] = media
-                                reply["accepted"] = True
-                        except Exception as e:
-                            ExceptionUtils.exception_traceback(e)
+                        media.ordinary_scope = frame.get("scope")
+                        accepted[index] = media
+                        continue
                     elif op == "submit":
                         items = [accepted[i] for i in frame["indices"]]
                         keys = {str(item.tmdb_id): item.tmdb_id for item in items}
@@ -142,15 +136,11 @@ class Rss:
 
     def _candidate(self, media, site, source):
         upload = download = None
-        if site["parse"]:
-            if self.sites.check_ratelimit(site["id"]):
-                return None
-            attrs = self.siteconf.check_torrent_attr(torrent_url=media.page_url, cookie=site["cookie"],
-                                                     ua=site["ua"], proxy=site["proxy"])
-            upload = 2.0 if attrs.get("2xfree") else 1.0
-            download = 0.0 if attrs.get("2xfree") or attrs.get("free") else 1.0
+        if "attributes" in site:
+            attrs = site["attributes"]
+            upload, download = attrs["upload"], attrs["download"]
             media.set_torrent_info(upload_volume_factor=upload, download_volume_factor=download,
-                                   hit_and_run=bool(attrs.get("hr")))
+                                   hit_and_run=attrs["hr"])
         rule = source["filter_rule"] or site["rule"]
         filters = {key: source["filter_" + key] for key in ("restype", "pix", "team", "include", "exclude")}
         filters["rule"] = rule

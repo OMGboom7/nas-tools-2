@@ -61,7 +61,7 @@ func (service downloadService) fetchMTeamSearchTorrent(ctx context.Context, raw 
 	if site.APIKey == "" {
 		return nil, errors.New("M-Team API key is unavailable")
 	}
-	ua, transport, err := service.mteamSiteRequest(ctx, site, configuration, false)
+	ua, transport, err := service.siteReader().mteamSiteRequest(ctx, site, configuration, false)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (service downloadService) fetchMTeamSearchTorrent(ctx context.Context, raw 
 }
 
 func (service downloadService) fetchMTeamSiteLink(ctx context.Context, raw string, site siteconfig.Site, configuration map[string]any, taskProxy bool) ([]byte, error) {
-	ua, transport, err := service.mteamSiteRequest(ctx, site, configuration, taskProxy)
+	ua, transport, err := service.siteReader().mteamSiteRequest(ctx, site, configuration, taskProxy)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (service downloadService) fetchMTeamSiteLink(ctx context.Context, raw strin
 	return contents, err
 }
 
-func (service downloadService) mteamSiteRequest(ctx context.Context, site siteconfig.Site, configuration map[string]any, taskProxy bool) (string, http.RoundTripper, error) {
+func (reader siteBrowser) mteamSiteRequest(ctx context.Context, site siteconfig.Site, configuration map[string]any, taskProxy bool) (string, http.RoundTripper, error) {
 	app := objectValue(configuration["app"])
 	var options map[string]any
 	if site.Note != "" && json.Unmarshal([]byte(site.Note), &options) != nil {
@@ -93,7 +93,7 @@ func (service downloadService) mteamSiteRequest(ctx context.Context, site siteco
 	if ua == "" {
 		ua = defaultSiteUserAgent
 	}
-	transport := service.client.Transport
+	transport := reader.transport
 	if taskProxy || truthy(options["proxy"]) || options["proxy"] == "Y" {
 		var err error
 		transport, err = siteProxyTransport(transport, objectValue(app["proxies"]), "https")
@@ -102,7 +102,7 @@ func (service downloadService) mteamSiteRequest(ctx context.Context, site siteco
 		}
 	}
 	if site.ID > 0 {
-		if err := service.siteLimits.Wait(ctx, service.sites, site.ID); err != nil {
+		if err := reader.waitForSite(ctx, site.ID); err != nil {
 			return "", nil, err
 		}
 	}

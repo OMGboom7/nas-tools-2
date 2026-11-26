@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
@@ -21,8 +22,20 @@ import (
 
 var errSubscriptionRSSUnsupported = errors.New("subscription RSS feature is not migrated")
 
-func (batch *subscriptionRSSBatch) torrentDetail(ctx context.Context, site siteconfig.Site, note map[string]any, resource externalindexer.Resource) (externalindexer.Resource, error) {
-	service := batch.api.runner.planner.runner.download.service
+type rssDetailMode int
+
+const (
+	nativeRSSDetail rssDetailMode = iota
+	classicRSSDetail
+)
+
+type rssDetailCatalog struct {
+	once    sync.Once
+	catalog indexercatalog.Catalog
+	err     error
+}
+
+func (c *rssDetailCatalog) read(ctx context.Context, reader siteBrowser, path string, site siteconfig.Site, note map[string]any, resource externalindexer.Resource, mode rssDetailMode) (externalindexer.Resource, error) {
 	origin := site.SignURL
 	if origin == "" {
 		origin = site.RSSURL
@@ -34,24 +47,24 @@ func (batch *subscriptionRSSBatch) torrentDetail(ctx context.Context, site sitec
 		if resource.HitAndRun != nil && *resource.HitAndRun {
 			return resource, errSubscriptionRSSUnsupported
 		}
-		cfg, err := service.configStore.Snapshot()
+		cfg, err := reader.config.Snapshot()
 		if err != nil {
 			return resource, err
 		}
-		ua, transport, err := service.mteamSiteRequest(ctx, site, cfg, false)
+		ua, transport, err := reader.mteamSiteRequest(ctx, site, cfg, false)
 		if err != nil {
 			return resource, err
 		}
 		resource, _, err = builtinindexer.MTeamTorrentDetail(ctx, resource, site.APIKey, ua, time.Now(), transport)
 		return resource, err
 	}
-	batch.catalogOnce.Do(func() {
-		batch.catalog, batch.catalogErr = indexercatalog.Load(batch.api.runner.planner.runner.recognition.service.catalogPath)
+	c.once.Do(func() {
+		c.catalog, c.err = indexercatalog.Load(path)
 	})
-	if batch.catalogErr != nil {
-		return resource, batch.catalogErr
+	if c.err != nil {
+		return resource, c.err
 	}
-	rules, err := subscriptionDetailRules(batch.catalog, resource.PageURL)
+	rules, err := subscriptionDetailRules(c.catalog, resource.PageURL)
 	if err != nil {
 		return resource, err
 	}
@@ -64,17 +77,22 @@ func (batch *subscriptionRSSBatch) torrentDetail(ctx context.Context, site sitec
 		}
 		render = truthy(v) || text(v) == "Y"
 	}
+	// The old scheduler reads static HTML when a catalog recommends rendering
+	// and Chrome is unavailable. An explicit browser choice still requires Chrome.
+	if render && mode == classicRSSDetail && (reader.renderer == nil || !reader.renderer.Available()) {
+		render = false
+	}
 	if render || note["chrome"] == "Y" || truthy(note["chrome"]) {
 		var session *browserruntime.Session
-		body, session, err = batch.api.fetchRenderedDetail(ctx, site, resource.PageURL)
+		body, session, err = reader.fetchRenderedDetail(ctx, site, resource.PageURL)
 		resource.Browser = session
 	} else {
-		body, err = batch.api.fetchDocument(ctx, site, resource.PageURL, note, true)
+		body, err = reader.fetchRSSDocument(ctx, site, resource.PageURL, note, true)
 	}
 	if err != nil {
 		return resource, err
 	}
-	return parseSubscriptionDetail(ctx, body, resource.Title, rules, resource)
+	return parseSubscriptionDetailPolicy(ctx, body, resource.Title, rules, resource, mode == nativeRSSDetail)
 }
 
 func subscriptionDetailRules(catalog indexercatalog.Catalog, page string) (map[string]json.RawMessage, error) {
