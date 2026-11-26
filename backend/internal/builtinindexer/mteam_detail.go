@@ -87,6 +87,11 @@ func MTeamTorrentDetail(ctx context.Context, resource externalindexer.Resource, 
 			return resource, nil, ErrResponse
 		}
 		if now.Before(until) {
+			// A personal offer supplies its own end date. A pin expiry cannot
+			// establish when a public free promotion stops.
+			if resource.Freeleech != nil && !*resource.Freeleech {
+				resource.PromotionEnd = until.Local().Format(time.DateTime)
+			}
 			free, down := true, 0.0
 			resource.Freeleech, resource.DownloadFactor, end = &free, &down, &sale
 		}

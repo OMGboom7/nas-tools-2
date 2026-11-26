@@ -23,6 +23,7 @@ import (
 // must not be included in client-facing errors or used as resource IDs.
 type Resource struct {
 	IndexerID, Indexer, Title, Description, PageURL, IMDbID string
+	PromotionEnd                                            string                  `json:"-"`
 	DownloadURL                                             string                  `json:"-"`
 	Public                                                  bool                    `json:"-"`
 	DownloadResolver                                        string                  `json:"-"`

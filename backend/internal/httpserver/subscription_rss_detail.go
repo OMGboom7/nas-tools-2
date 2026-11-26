@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"strconv"
 	"strings"
@@ -22,17 +24,44 @@ import (
 
 var errSubscriptionRSSUnsupported = errors.New("subscription RSS feature is not migrated")
 
+var errMissingDetailRules = fmt.Errorf("no site detail rules: %w", errSubscriptionRSSUnsupported)
+
 type rssDetailMode int
 
 const (
 	nativeRSSDetail rssDetailMode = iota
 	classicRSSDetail
+	brushRSSDetail
 )
 
 type rssDetailCatalog struct {
 	once    sync.Once
 	catalog indexercatalog.Catalog
 	err     error
+}
+
+func (c *rssDetailCatalog) readClassic(ctx context.Context, reader siteBrowser, path string, site siteconfig.Site, note map[string]any, article siteFeedArticle, mode rssDetailMode) (externalindexer.Resource, error) {
+	if article.Link == nil || !subscriptionSiteOriginAllowed(site, *article.Link) {
+		return externalindexer.Resource{}, errFuzzyScope
+	}
+	current, err := reader.sites.Get(ctx, site.ID)
+	if err != nil || current != site {
+		return externalindexer.Resource{}, errFuzzyScope
+	}
+	reader.limits = &siteBatchLimiter{}
+	lookup, cancel := context.WithTimeout(ctx, 80*time.Second)
+	defer cancel()
+	resource, err := c.read(lookup, reader, path, site, note, externalindexer.Resource{Title: defaultString(article.DetailTitle, article.Title), PageURL: *article.Link, DownloadURL: article.Enclosure}, mode)
+	if err != nil {
+		return externalindexer.Resource{}, err
+	}
+	// Keep the original spacing between an HTML detail request and download admission.
+	if _, isMTeam := builtinindexer.MTeamFeedOrigin(defaultString(site.SignURL, site.RSSURL)); !isMTeam && resource.Freeleech != nil {
+		if err := waitSiteRequestDelay(ctx, time.Duration(10+rand.IntN(41))*100*time.Millisecond); err != nil {
+			return externalindexer.Resource{}, err
+		}
+	}
+	return resource, nil
 }
 
 func (c *rssDetailCatalog) read(ctx context.Context, reader siteBrowser, path string, site siteconfig.Site, note map[string]any, resource externalindexer.Resource, mode rssDetailMode) (externalindexer.Resource, error) {
@@ -65,6 +94,9 @@ func (c *rssDetailCatalog) read(ctx context.Context, reader siteBrowser, path st
 		return resource, c.err
 	}
 	rules, err := subscriptionDetailRules(c.catalog, resource.PageURL)
+	if mode == brushRSSDetail && errors.Is(err, errMissingDetailRules) {
+		return resource, nil
+	}
 	if err != nil {
 		return resource, err
 	}
@@ -79,7 +111,7 @@ func (c *rssDetailCatalog) read(ctx context.Context, reader siteBrowser, path st
 	}
 	// The old scheduler reads static HTML when a catalog recommends rendering
 	// and Chrome is unavailable. An explicit browser choice still requires Chrome.
-	if render && mode == classicRSSDetail && (reader.renderer == nil || !reader.renderer.Available()) {
+	if render && mode != nativeRSSDetail && (reader.renderer == nil || !reader.renderer.Available()) {
 		render = false
 	}
 	if render || note["chrome"] == "Y" || truthy(note["chrome"]) {
@@ -92,7 +124,7 @@ func (c *rssDetailCatalog) read(ctx context.Context, reader siteBrowser, path st
 	if err != nil {
 		return resource, err
 	}
-	return parseSubscriptionDetailPolicy(ctx, body, resource.Title, rules, resource, mode == nativeRSSDetail)
+	return parseSubscriptionDetailPolicy(ctx, body, resource.Title, rules, resource, mode)
 }
 
 func subscriptionDetailRules(catalog indexercatalog.Catalog, page string) (map[string]json.RawMessage, error) {
@@ -110,7 +142,7 @@ func subscriptionDetailRules(catalog indexercatalog.Catalog, page string) (map[s
 		}
 	}
 	if rules == nil {
-		return nil, errSubscriptionRSSUnsupported
+		return nil, errMissingDetailRules
 	}
 	if raw := rules["RENDER"]; len(raw) > 0 {
 		var value any
@@ -160,9 +192,9 @@ func subscriptionDetailXML(ctx context.Context, source *html.Node) (*xmlquery.No
 }
 
 func parseSubscriptionDetail(ctx context.Context, body []byte, title string, rules map[string]json.RawMessage, resource externalindexer.Resource) (externalindexer.Resource, error) {
-	return parseSubscriptionDetailPolicy(ctx, body, title, rules, resource, true)
+	return parseSubscriptionDetailPolicy(ctx, body, title, rules, resource, nativeRSSDetail)
 }
-func parseSubscriptionDetailPolicy(ctx context.Context, body []byte, title string, rules map[string]json.RawMessage, resource externalindexer.Resource, rejectHR bool) (externalindexer.Resource, error) {
+func parseSubscriptionDetailPolicy(ctx context.Context, body []byte, title string, rules map[string]json.RawMessage, resource externalindexer.Resource, mode rssDetailMode) (externalindexer.Resource, error) {
 	doc, err := builtinindexer.ParseDocument(ctx, body)
 	if err != nil {
 		return resource, err
@@ -230,7 +262,7 @@ func parseSubscriptionDetailPolicy(ctx context.Context, body []byte, title strin
 		marked := len(hr) > 0
 		resource.HitAndRun = &marked
 	}
-	if len(hr) > 0 && rejectHR {
+	if len(hr) > 0 && mode == nativeRSSDetail {
 		return resource, errSubscriptionRSSUnsupported
 	}
 	free, err := match("FREE")
@@ -269,6 +301,12 @@ func parseSubscriptionDetailPolicy(ctx context.Context, body []byte, title strin
 			return resource, err
 		}
 		resource.Seeders = &n
+	}
+	if mode == brushRSSDetail && isFree {
+		resource.PromotionEnd, err = brushHTMLDeadline(root, match, time.Now())
+		if err != nil {
+			return resource, err
+		}
 	}
 	return resource, nil
 }

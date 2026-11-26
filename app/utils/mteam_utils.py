@@ -28,13 +28,6 @@ class MteamUtils:
             return {}
 
     @staticmethod
-    def torrent_attributes(url, ua=None, proxy=False):
-        result = MteamUtils._inspect("mteam-detail", url, MteamUtils.get_api_key(url), ua, proxy)
-        if "free" in result:
-            return result
-        return None
-
-    @staticmethod
     def test_connection(site_info):
         url = site_info.get("signurl") or site_info.get("rssurl")
         key = site_info.get("api_key")

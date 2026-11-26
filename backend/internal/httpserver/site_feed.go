@@ -47,7 +47,7 @@ func siteFeedTitle(host, title string) string {
 }
 
 type siteFeedArticle struct {
-	rawTitle    string
+	DetailTitle string  `json:"detail_title,omitempty"`
 	Title       string  `json:"title"`
 	Enclosure   string  `json:"enclosure"`
 	Description string  `json:"description"`
@@ -89,7 +89,12 @@ func parseClassicSiteFeed(body []byte, host string) ([]siteFeedArticle, error) {
 		if err != nil {
 			n = 0
 		}
-		out = append(out, siteFeedArticle{rawTitle: title, Title: siteFeedTitle(host, title), Enclosure: enclosure, Link: link, Description: item.Description, Size: int64(n), PubDate: item.PubDate})
+		display := siteFeedTitle(host, title)
+		detailTitle := ""
+		if display != title {
+			detailTitle = title
+		}
+		out = append(out, siteFeedArticle{DetailTitle: detailTitle, Title: display, Enclosure: enclosure, Link: link, Description: item.Description, Size: int64(n), PubDate: item.PubDate})
 	}
 	return out, nil
 }

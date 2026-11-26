@@ -14,14 +14,15 @@ import (
 func TestMTeamTorrentDetail(t *testing.T) {
 	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		title, status         string
-		free, double, invalid bool
+		title, status                string
+		free, double, invalid, timed bool
 	}{
-		{"Film", `{"discount":"_2X_FREE","seeders":"5","mallSingleFree":false,"toppingEndTime":"2026-05-02 08:00:00"}`, true, true, false},
-		{"Film", `{"discount":"NORMAL","seeders":5,"mallSingleFree":{"endDate":"2026-05-01 08:01:00"}}`, true, false, false},
-		{"Film", `{"discount":"NORMAL","seeders":5,"mallSingleFree":{"endDate":"2026-05-01 07:59:59"}}`, false, false, false},
-		{"Other", `{"discount":"FREE","seeders":5}`, false, false, true},
-		{"Film", `{"discount":"FREE","seeders":-1}`, false, false, true},
+		{"Film", `{"discount":"_2X_FREE","seeders":"5","mallSingleFree":false,"toppingEndTime":"2026-05-02 08:00:00"}`, true, true, false, false},
+		{"Film", `{"discount":"NORMAL","seeders":5,"mallSingleFree":{"endDate":"2026-05-01 08:01:00"}}`, true, false, false, true},
+		{"Film", `{"discount":"NORMAL","seeders":5,"mallSingleFree":{"endDate":"2026-05-01 07:59:59"}}`, false, false, false, false},
+		{"Film", `{"discount":"FREE","seeders":5,"mallSingleFree":{"endDate":"2026-05-01 08:01:00"}}`, true, false, false, false},
+		{"Other", `{"discount":"FREE","seeders":5}`, false, false, true, false},
+		{"Film", `{"discount":"FREE","seeders":-1}`, false, false, true, false},
 	} {
 		r := externalindexer.Resource{Title: tc.title, PageURL: "https://kp.m-team.cc/detail/77?from=rss"}
 		tr := fakeTransport(func(req *http.Request) (*http.Response, error) {
@@ -39,6 +40,13 @@ func TestMTeamTorrentDetail(t *testing.T) {
 		}
 		if err != nil || got.Seeders == nil || *got.Seeders != 5 || got.HitAndRun != nil || got.Freeleech == nil || *got.Freeleech != tc.free || (*got.UploadFactor == 2) != tc.double || tc.free && end == nil {
 			t.Fatal(tc, got, end, err)
+		}
+		expectedDeadline := ""
+		if tc.timed {
+			expectedDeadline = time.Date(2026, 5, 1, 0, 1, 0, 0, time.UTC).Local().Format(time.DateTime)
+		}
+		if got.PromotionEnd != expectedDeadline {
+			t.Fatal(tc, got.PromotionEnd, expectedDeadline)
 		}
 	}
 }

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"math/rand/v2"
 	"net/http"
 	"os"
 	"slices"
@@ -19,9 +18,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
 	"github.com/0xforee/nas-tools/backend/internal/batchdownload"
 	"github.com/0xforee/nas-tools/backend/internal/browserruntime"
-	"github.com/0xforee/nas-tools/backend/internal/builtinindexer"
 	"github.com/0xforee/nas-tools/backend/internal/config"
-	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/regexcompat"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
@@ -310,26 +307,9 @@ type classicRSSAttributes struct {
 
 // Detail credentials stay with the site selected from the saved subscription.
 func (s *classicRSSScan) siteAttributes(ctx context.Context, site siteconfig.Site, note map[string]any, article siteFeedArticle) (*classicRSSAttributes, error) {
-	if article.Link == nil || !subscriptionSiteOriginAllowed(site, *article.Link) {
-		return nil, errFuzzyScope
-	}
-	current, err := s.reader.sites.Get(ctx, site.ID)
-	if err != nil || current != site {
-		return nil, errFuzzyScope
-	}
-	reader := s.reader
-	reader.limits = &siteBatchLimiter{}
-	lookup, cancel := context.WithTimeout(ctx, 80*time.Second)
-	defer cancel()
-	resource, err := s.catalog.read(lookup, reader, s.catalogPath, site, note, externalindexer.Resource{Title: defaultString(article.rawTitle, article.Title), PageURL: *article.Link, DownloadURL: article.Enclosure}, classicRSSDetail)
+	resource, err := s.catalog.readClassic(ctx, s.reader, s.catalogPath, site, note, article, classicRSSDetail)
 	if err != nil {
 		return nil, err
-	}
-	// Keep the original spacing between an HTML detail request and download admission.
-	if _, isMTeam := builtinindexer.MTeamFeedOrigin(defaultString(site.SignURL, site.RSSURL)); !isMTeam {
-		if err := waitSiteRequestDelay(ctx, time.Duration(10+rand.IntN(41))*100*time.Millisecond); err != nil {
-			return nil, err
-		}
 	}
 	return &classicRSSAttributes{Upload: resource.UploadFactor, Download: resource.DownloadFactor, HR: resource.HitAndRun != nil && *resource.HitAndRun}, nil
 }
