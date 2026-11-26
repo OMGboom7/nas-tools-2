@@ -1,19 +1,16 @@
+from ast import literal_eval
 import json
 import os
-import re
 import subprocess
-import sys
 import time
 from datetime import datetime, timedelta
 from threading import Lock
 
-import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import log
 from app.downloader import Downloader
-from app.filter import Filter
 from app.helper import DbHelper, RssHelper
 from app.media.meta import MetaInfo
 from app.message import Message
@@ -24,11 +21,35 @@ from app.utils.types import BrushDeleteType
 from config import BRUSH_REMOVE_TORRENTS_INTERVAL, Config, run_go_helper
 
 
+def _brush_download(operation, **values):
+    return json.loads(run_go_helper("brush-download", operation, payload=json.dumps(values).encode(), timeout=30))
+
+
+class _BrushSubmission:
+    def __init__(self, task, title, enclosure, size, deadline, partial):
+        self.request = dict(taskID=task["id"], siteID=int(task["site_id"]), downloader=str(task["downloader"]),
+                            ruleSource=task["rss_rule_source"], feedURL=task["rss_url"], title=title,
+                            enclosure=enclosure, size=size, deadline=deadline or "", partial=partial)
+        self.token = None
+
+    def reserve(self):
+        self.token = _brush_download("reserve", **self.request)
+        return bool(self.token)
+
+    def accept(self, remote_id):
+        _brush_download("accept", token=self.token, remoteID=str(remote_id))
+
+    def finish(self):
+        _brush_download("finish", token=self.token)
+
+    def selected(self, remote_id, size):
+        _brush_download("selected", token=self.token, remoteID=str(remote_id), size=size)
+
+
 @singleton
 class BrushTask(object):
     message = None
     sites = None
-    filter = None
     dbhelper = None
     rsshelper = None
     downloader = None
@@ -48,11 +69,14 @@ class BrushTask(object):
         self.rsshelper = RssHelper()
         self.message = Message()
         self.sites = Sites()
-        self.filter = Filter()
         self.downloader = Downloader()
         # 移除现有任务
         self.stop_service()
         # 读取刷流任务列表
+        try:
+            _brush_download("recover")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            log.warn("【Brush】部分已确认下载的刷流记录仍待恢复")
         self.load_brushtasks()
         # 清理缓存
         self._torrents_cache = set()
@@ -128,9 +152,10 @@ class BrushTask(object):
                 "brushtask_free_ddl_delete": True if task.BRUSHTASK_FREE_DDL_DELETE == "Y" else False,
                 "sendmessage": True if task.SENDMESSAGE == "Y" else False,
                 "free": task.FREELEECH,
-                "rss_rule": eval(task.RSS_RULE),
-                "remove_rule": eval(task.REMOVE_RULE),
-                "fraction_rule": eval(task.FRACTION_RULE) if task.FRACTION_RULE else "",
+                "rss_rule": literal_eval(task.RSS_RULE),
+                "rss_rule_source": task.RSS_RULE or "",
+                "remove_rule": literal_eval(task.REMOVE_RULE),
+                "fraction_rule": literal_eval(task.FRACTION_RULE) if task.FRACTION_RULE else "",
                 "seed_size": task.SEED_SIZE,
                 "total_size": total_size,
                 "rss_url": task.RSSURL if task.RSSURL else site_info.get("rssurl"),
@@ -161,6 +186,11 @@ class BrushTask(object):
         :param taskid: 刷流任务的ID
         """
         if not taskid:
+            return
+        try:
+            _brush_download("recover", taskID=int(taskid))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            log.warn("【Brush】部分已确认下载的刷流记录仍待恢复")
             return
         # 任务信息
         taskinfo = self.get_brushtask_info(taskid)
@@ -254,38 +284,35 @@ class BrushTask(object):
                 # 发布时间
                 pubdate = res.get('pubdate')
 
+                cache_key = (taskid, enclosure)
                 with self._cache_lock:
                     cache = self._torrents_cache
-                    if enclosure in cache:
+                    if cache_key in cache:
                         log.debug("【Brush】%s 已处理过" % torrent_name)
                         continue
-                    cache.add(enclosure)
+                    cache.add(cache_key)
 
                 # 检查种子种包含的免费限时信息
                 try:
                     catalog = os.environ.get("NASTOOL_SITE_CATALOG") or Config().get_user_sites_bin_path()
                     detail = {"taskID": int(taskid), "siteID": int(site_id), "feedURL": rss_url,
                               "title": res.get("detail_title") or torrent_name, "pageURL": page_url or "",
-                              "enclosure": enclosure}
+                              "enclosure": enclosure, "selection": {"rules": rss_rule, "title": torrent_name,
+                              "size": size, "published": pubdate.astimezone().isoformat() if pubdate else None}}
                     torrent_attr = json.loads(run_go_helper("brush-detail", catalog,
                                                             payload=json.dumps(detail).encode(), timeout=90))
                 except (OSError, ValueError, TypeError, subprocess.SubprocessError):
                     with self._cache_lock:
-                        cache.discard(enclosure)
+                        cache.discard(cache_key)
                     log.warn("【Brush】%s 暂时无法核实种子详情，下次扫描重试" % task_name)
                     continue
 
                 # 检查种子是否符合选种规则
-                matched = self.__check_rss_rule(rss_rule=rss_rule,
-                                                title=torrent_name,
-                                                torrent_attr=torrent_attr,
-                                                torrent_size=size,
-                                                pubdate=pubdate,
-                                                siteid=site_id)
-                if matched is None:
+                decision = torrent_attr["decision"]
+                if decision == "retry":
                     with self._cache_lock:
-                        cache.discard(enclosure)
-                if not matched:
+                        cache.discard(cache_key)
+                if decision != "match":
                     continue
                 # 检查能否添加当前种子，判断是否超过保种体积大小
                 if not self.__is_allow_new_torrent(taskinfo=taskinfo,
@@ -295,13 +322,6 @@ class BrushTask(object):
                                                    current_site_dlcount=current_site_dlcount,
                                                    site_info=site_info):
                     continue
-                # 检查是否已处理过
-                if self.is_torrent_handled(enclosure=enclosure):
-                    log.info("【Brush】%s 已在刷流任务中" % torrent_name)
-                    continue
-
-
-
                 # 开始下载
                 log.debug("【Brush】%s 符合条件，开始下载..." % torrent_name)
                 if self.__download_torrent(taskinfo=taskinfo,
@@ -329,6 +349,12 @@ class BrushTask(object):
                                                        current_site_dlcount=current_site_dlcount,
                                                        site_info=site_info):
                         break
+                else:
+                    with self._cache_lock:
+                        cache.discard(cache_key)
+            except (OSError, subprocess.SubprocessError):
+                log.warn("【Brush】本轮刷流暂停，下次扫描先核对已确认的下载")
+                return
             except Exception as err:
                 ExceptionUtils.exception_traceback(err)
                 continue
@@ -779,7 +805,6 @@ class BrushTask(object):
         # 站点流控
         if self.sites.check_ratelimit(site_info.get("id")):
             return False
-        taskid = taskinfo.get("id")
         taskname = taskinfo.get("name")
         transfer = taskinfo.get("transfer")
         sendmessage = taskinfo.get("sendmessage")
@@ -787,8 +812,6 @@ class BrushTask(object):
         download_limit = rss_rule.get("downspeed")
         upload_limit = rss_rule.get("upspeed")
         download_dir = taskinfo.get("savepath")
-        brushtask_free_limit_speed = taskinfo.get("brushtask_free_limit_speed")
-        brushtask_free_ddl_delete = taskinfo.get("brushtask_free_ddl_delete")
         tag = taskinfo.get("label").split(',') if taskinfo.get("label") else None
         seed_size = taskinfo.get("seed_size") or None
         total_size = self.dbhelper.get_brushtask_totalsize(taskinfo.get("id"))
@@ -810,8 +833,11 @@ class BrushTask(object):
 
         fraction_rule_exits = self.__is_fraction_rule_set(fraction_rule)
 
+        submission = _BrushSubmission(taskinfo, title, enclosure, size, torrent_attr.get("free_deadline"),
+                                      fraction_rule_exits)
         _, download_id, dir, retmsg = self.downloader.download(
             media_info=meta_info,
+            brush_submission=submission,
             tag=tag,
             is_paused=(True if fraction_rule_exits else False),
             downloader_id=downloader_id,
@@ -838,7 +864,10 @@ class BrushTask(object):
                 result, real_size, fraction_retmsg = self.downloader.fraction_download(fraction_rule, origin_limit, size, dir, downloader_id, download_id)
                 if result:
                     # 正式启动下载
-                    self.downloader.start_torrents(downloader_id, download_id)
+                    if self.downloader.start_torrents(downloader_id, download_id) is False:
+                        log.warn("【Brush】部分下载未能启动，请核对下载器中的原任务")
+                        return False
+                    submission.selected(download_id, real_size)
                 else:
                     # 部分下载出现异常：获取文件列表失败或者没有找到合适 size 的文件，删除种子以及文件
                     self.downloader.delete_torrents(downloader_id, download_id, delete_file=True)
@@ -846,6 +875,12 @@ class BrushTask(object):
                              f"错误原因：'部分下载：{fraction_retmsg}，"
                              f"种子链接：{enclosure}")
                     return False
+
+            try:
+                submission.finish()
+            except (OSError, ValueError, subprocess.SubprocessError):
+                log.warn("【Brush】下载器已接收，刷流历史和次数将在下轮扫描恢复")
+                raise
 
             if sendmessage:
                 # 下载器参数
@@ -859,24 +894,6 @@ class BrushTask(object):
                            f"添加时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))}"
                 self.message.send_brushtask_added_message(title=msg_title, text=msg_text)
 
-        # free deadline
-        free_deadline = ""
-        if brushtask_free_limit_speed or brushtask_free_ddl_delete:
-            free_deadline = torrent_attr.get("free_deadline")
-
-        # 插入种子数据
-        if self.dbhelper.insert_brushtask_torrent(brush_id=taskid,
-                                                  title=title,
-                                                  enclosure=enclosure,
-                                                  downloader=downloader_id,
-                                                  download_id=download_id,
-                                                  free_deadline=free_deadline,
-                                                  size=real_size):
-            # 更新下载次数
-            self.dbhelper.add_brushtask_download_count(brush_id=taskid)
-        else:
-            log.info("【Brush】%s 已下载过" % title)
-
         return True
 
     def __is_fraction_rule_set(self, fraction_rule):
@@ -889,148 +906,6 @@ class BrushTask(object):
                 return True
 
         return False
-
-    def __check_rss_rule(self,
-                         rss_rule,
-                         title,
-                         torrent_attr,
-                         torrent_size,
-                         pubdate,
-                         siteid):
-        """
-        检查种子是否符合刷流过滤条件
-        :param rss_rule: 过滤条件字典
-        :param title: 种子名称
-        :param torrent_size: 种子大小
-        :param pubdate: 发布时间
-        :param siteid: 站点ID
-        :return: True 匹配，False 不匹配，None 表示等待下次扫描重试
-        """
-        if not rss_rule:
-            return True
-        # 检查种子大小
-        try:
-            if rss_rule.get("size"):
-                rule_sizes = rss_rule.get("size").split("#")
-                if rule_sizes[0]:
-                    if len(rule_sizes) > 1 and rule_sizes[1]:
-                        min_max_size = rule_sizes[1].split(',')
-                        min_size = min_max_size[0]
-                        if len(min_max_size) > 1:
-                            max_size = min_max_size[1]
-                        else:
-                            max_size = 0
-                        if rule_sizes[0] == "gt" and float(torrent_size) < float(min_size) * 1024 ** 3:
-                            return False
-                        if rule_sizes[0] == "lt" and float(torrent_size) > float(min_size) * 1024 ** 3:
-                            return False
-                        if rule_sizes[0] == "bw" and not float(min_size) * 1024 ** 3 < float(torrent_size) < float(
-                                max_size) * 1024 ** 3:
-                            return False
-
-            # 检查包含规则
-            if rss_rule.get("include"):
-                if not re.search(r"%s" % rss_rule.get("include"), title):
-                    return False
-
-            # 检查排除规则
-            if rss_rule.get("exclude"):
-                if re.search(r"%s" % rss_rule.get("exclude"), title):
-                    return False
-
-            # 站点流控
-            if self.sites.check_ratelimit(siteid):
-                return None
-
-            torrent_peer_count = torrent_attr.get("peer_count")
-            log.debug("【Brush】%s 解析详情, %s" % (title, torrent_attr))
-
-            # 检查免费状态
-            if rss_rule.get("free") in ("FREE", "2XFREE") and torrent_attr.get("free") is None:
-                return None
-            if rss_rule.get("free") == "FREE":
-                if not torrent_attr.get("free"):
-                    log.debug("【Brush】不是一个FREE资源，跳过")
-                    return False
-            elif rss_rule.get("free") == "2XFREE":
-                if not torrent_attr.get("2xfree"):
-                    log.debug("【Brush】不是一个2XFREE资源，跳过")
-                    return False
-
-            # 检查HR状态
-            if rss_rule.get("hr"):
-                if torrent_attr.get("hr") is None:
-                    return None
-                if torrent_attr.get("hr"):
-                    log.debug("【Brush】这是一个H&R资源，跳过")
-                    return False
-
-            # 检查做种人数
-            if rss_rule.get("peercount"):
-                # 兼容旧版本
-                peercount_str = rss_rule.get("peercount")
-                if not peercount_str:
-                    peercount_str = "#"
-                elif "#" not in peercount_str:
-                    peercount_str = "lt#" + peercount_str
-                else:
-                    pass
-                peer_counts = peercount_str.split("#")
-                if len(peer_counts) >= 2 and peer_counts[1]:
-                    if torrent_peer_count is None:
-                        return None
-                    min_max_count = peer_counts[1].split(',')
-                    min_count = int(min_max_count[0])
-                    if len(min_max_count) > 1:
-                        max_count = int(min_max_count[1])
-                    else:
-                        max_count = sys.maxsize
-                    if peer_counts[0] == "gt" and torrent_peer_count <= min_count:
-                        log.debug("【Brush】%s `判断做种数, 判断条件: peer_count:%d %s threshold:%d" % (
-                            title, torrent_peer_count, peer_counts[0], min_count))
-                        return False
-                    if peer_counts[0] == "lt" and torrent_peer_count >= min_count:
-                        log.debug("【Brush】%s `判断做种数, 判断条件: peer_count:%d %s threshold:%d" % (
-                            title, torrent_peer_count, peer_counts[0], min_count))
-                        return False
-                    if peer_counts[0] == "bw" and not (min_count <= torrent_peer_count <= max_count):
-                        log.debug("【Brush】%s `判断做种数, 判断条件: left:%d %s peer_count:%d %s right:%d" % (
-                            title, min_count, peer_counts[0], torrent_peer_count, peer_counts[0], max_count))
-                        return False
-
-            # 检查发布时间
-            if rss_rule.get("pubdate") and pubdate:
-                rule_pubdates = rss_rule.get("pubdate").split("#")
-                if len(rule_pubdates) >= 2 and rule_pubdates[1]:
-                    min_max_pubdates = rule_pubdates[1].split(',')
-                    min_pubdate = min_max_pubdates[0]
-                    max_pubdate = min_max_pubdates[1] if len(min_max_pubdates) > 1 else None
-                    localtz = pytz.timezone(Config().get_timezone())
-                    localnowtime = datetime.now().astimezone(localtz)
-                    localpubdate = pubdate.astimezone(localtz)
-                    pudate_hour = int(localnowtime.timestamp() - localpubdate.timestamp()) / 3600
-                    log.debug('【Brush】发布时间：%s，当前时间：%s，时间间隔：%f hour' % (
-                        localpubdate.isoformat(), localnowtime.isoformat(), pudate_hour))
-                    if rule_pubdates[0] == "lt" and pudate_hour >= float(min_pubdate):
-                        log.debug("【Brush】%s `判断发布时间, 判断条件: pubdate: %s %d" % (
-                            title, rule_pubdates[0], float(min_pubdate)))
-                        return False
-                    if rule_pubdates[0] == "gt" and pudate_hour <= float(min_pubdate):
-                        log.debug("【Brush】%s `判断发布时间, 判断条件: pubdate: %s %d" % (
-                            title, rule_pubdates[0], float(min_pubdate)))
-                        return False
-                    if rule_pubdates[0] == "bw" and (
-                            not max_pubdate or not (
-                            float(min_pubdate) <= pudate_hour <= float(max_pubdate))):
-                        log.debug("【Brush】%s `判断发布时间, 判断条件: pubdate: %s %d %d" % (
-                            title, rule_pubdates[0], float(min_pubdate), float(max_pubdate or 0)))
-                        return False
-
-        except Exception as err:
-            ExceptionUtils.exception_traceback(err)
-            return False
-
-        return True
 
     @staticmethod
     def __check_remove_rule(remove_rule,
@@ -1220,9 +1095,3 @@ class BrushTask(object):
         获取刷种任务的种子列表
         """
         return self.dbhelper.get_brushtask_torrents(brush_id, active)
-
-    def is_torrent_handled(self, enclosure):
-        """
-        判断种子是否已经处理过
-        """
-        return self.dbhelper.get_brushtask_torrent_by_enclosure(enclosure)

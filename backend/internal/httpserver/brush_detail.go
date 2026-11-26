@@ -21,11 +21,13 @@ import (
 )
 
 type brushDetailRequest struct {
+	Selection                          *brushSelection
 	TaskID, SiteID                     int64
 	FeedURL, Title, PageURL, Enclosure string
 }
 
 type brushAttributes struct {
+	Decision   string `json:"decision,omitempty"`
 	Free       *bool  `json:"free"`
 	DoubleFree bool   `json:"2xfree"`
 	HitAndRun  *bool  `json:"hr"`
@@ -77,6 +79,21 @@ func BrushDetailCommand(ctx context.Context, path, catalogPath string, in io.Rea
 		return err
 	}
 	result := brushAttributes{}
+	if q.Selection != nil {
+		var hasReceipts, exists bool
+		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='GO_BRUSH_SUBMISSION'),
+			EXISTS(SELECT 1 FROM SITE_BRUSH_TORRENTS WHERE ENCLOSURE=?)`, q.Enclosure).Scan(&hasReceipts, &exists)
+		if err == nil && hasReceipts && !exists {
+			err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_BRUSH_SUBMISSION WHERE enclosure=?)`, q.Enclosure).Scan(&exists)
+		}
+		if err != nil {
+			return err
+		}
+		if exists {
+			result.Decision = "handled"
+			return json.NewEncoder(out).Encode(result)
+		}
+	}
 	if q.PageURL != "" {
 		note, _, _, err := subscriptionRSSSiteNote(site)
 		if err != nil {
@@ -92,6 +109,12 @@ func BrushDetailCommand(ctx context.Context, path, catalogPath string, in io.Rea
 		if current, err := q.site(ctx, db, sites); err != nil || current != site {
 			return errBrushDetail
 		}
+	}
+	if q.Selection != nil {
+		result.Decision = q.Selection.match(result, time.Now(), func() bool {
+			delay, err := sites.AdmitRequest(ctx, site.ID, time.Now)
+			return err == nil && delay == 0
+		})
 	}
 	return json.NewEncoder(out).Encode(result)
 }

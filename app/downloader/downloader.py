@@ -273,7 +273,8 @@ class Downloader:
                  proxy=None,
                  receipt_sender=None,
                  batch=None,
-                 rss_article=None):
+                 rss_article=None,
+                 brush_submission=None):
         """
         添加下载任务，根据当前使用的下载器分别调用不同的客户端处理
         :param media_info: 需下载的媒体信息，含URL地址
@@ -475,6 +476,8 @@ class Downloader:
                     title, download_dir, print_url))
             # 下载ID
             download_id = None
+            if brush_submission is not None and not brush_submission.reserve():
+                return downloader_id, None, None, "刷流任务已变更或资源已有下载记录"
             if batch is not None:
                 batch["pending"] = True
             if recorded:
@@ -511,12 +514,6 @@ class Downloader:
                                              cookie=site_info.get("cookie"))
                 if ret:
                     download_id = ret.hashString
-                    downloader.change_torrent(tid=download_id,
-                                              tag=tags,
-                                              upload_limit=upload_limit,
-                                              download_limit=download_limit,
-                                              ratio_limit=ratio_limit,
-                                              seeding_time_limit=seeding_time_limit)
 
             elif downloader.get_type() == DownloaderType.QB:
                 # 加标签以获取添加下载后的编号
@@ -551,6 +548,15 @@ class Downloader:
                 return downloader_id, None, None, "下载器已响应，任务编号尚未确认，请先核对原任务"
             # 添加下载成功
             if ret:
+                if brush_submission is not None:
+                    brush_submission.accept(download_id)
+                if not recorded and downloader.get_type() == DownloaderType.TR:
+                    downloader.change_torrent(tid=download_id,
+                                              tag=tags,
+                                              upload_limit=upload_limit,
+                                              download_limit=download_limit,
+                                              ratio_limit=ratio_limit,
+                                              seeding_time_limit=seeding_time_limit)
                 # 登记下载历史，记录下载目录
                 warning = ""
                 if not recorded:

@@ -60,6 +60,13 @@ func main() {
 		return
 	}
 
+	if len(os.Args) == 3 && os.Args[1] == "brush-download" {
+		if err := httpserver.BrushDownloadCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("brush download accounting unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "brush-detail" {
 		if err := httpserver.BrushDetailCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			slog.Error("brush detail unavailable")

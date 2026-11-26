@@ -1244,20 +1244,6 @@ class DbHelper:
                 }
             )
 
-    @DbPersist(_db)
-    def add_brushtask_download_count(self, brush_id):
-        """
-        增加刷流下载数
-        """
-        if not brush_id:
-            return
-        self._db.query(SITEBRUSHTASK).filter(SITEBRUSHTASK.ID == int(brush_id)).update(
-            {
-                "DOWNLOAD_COUNT": SITEBRUSHTASK.DOWNLOAD_COUNT + 1,
-                "LST_MOD_DATE": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
-            }
-        )
-
     def get_brushtask_remove_size(self, brush_id):
         """
         获取已删除种子的上传量
@@ -1293,26 +1279,6 @@ class DbHelper:
             "DOWNLOAD_SIZE": int(download_size) + delete_dlsize,
         })
 
-    @DbPersist(_db)
-    def insert_brushtask_torrent(self, brush_id, title, enclosure, downloader, download_id, free_deadline, size):
-        """
-        增加刷流下载的种子信息
-        """
-        if not brush_id:
-            return
-        if self.is_brushtask_torrent_exists(brush_id, title, enclosure):
-            return
-        self._db.insert(SITEBRUSHTORRENTS(
-            TASK_ID=brush_id,
-            TORRENT_NAME=title,
-            TORRENT_SIZE=size,
-            ENCLOSURE=enclosure,
-            DOWNLOADER=downloader,
-            DOWNLOAD_ID=download_id,
-            FREE_DEADLINE=free_deadline,
-            LST_MOD_DATE=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
-        ))
-
     def get_brushtask_torrents(self, brush_id, active=True):
         """
         查询刷流任务所有种子
@@ -1327,28 +1293,6 @@ class DbHelper:
             return self._db.query(SITEBRUSHTORRENTS).filter(
                 SITEBRUSHTORRENTS.TASK_ID == int(brush_id)
             ).order_by(SITEBRUSHTORRENTS.LST_MOD_DATE.desc()).all()
-
-    def get_brushtask_torrent_by_enclosure(self, enclosure):
-        """
-        根据URL查询刷流任务种子
-        """
-        if not enclosure:
-            return None
-        return self._db.query(SITEBRUSHTORRENTS).filter(SITEBRUSHTORRENTS.ENCLOSURE == enclosure).first()
-
-    def is_brushtask_torrent_exists(self, brush_id, title, enclosure):
-        """
-        查询刷流任务种子是否已存在
-        """
-        if not brush_id:
-            return False
-        count = self._db.query(SITEBRUSHTORRENTS).filter(SITEBRUSHTORRENTS.TASK_ID == brush_id,
-                                                         SITEBRUSHTORRENTS.TORRENT_NAME == title,
-                                                         SITEBRUSHTORRENTS.ENCLOSURE == enclosure).count()
-        if count > 0:
-            return True
-        else:
-            return False
 
     @DbPersist(_db)
     def update_brushtask_torrent_state(self, ids: list):
