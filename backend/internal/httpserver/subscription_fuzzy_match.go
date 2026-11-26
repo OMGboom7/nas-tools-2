@@ -190,14 +190,22 @@ func (m *fuzzySubscriptionMatcher) identity(ctx context.Context, item identified
 		return false, nil
 	}
 	title := item.revised + " " + item.meta.Title + " " + item.meta.Year
-	if len(title) > 64<<10 {
-		return false, errors.New("fuzzy subscription title too large")
-	}
-	matched, err := m.namePattern.MatchString(title)
+	matched, err := fuzzySubscriptionTitle(m.namePattern, m.name, title)
 	if err != nil {
 		return false, err
 	}
-	return matched || strings.Contains(title, m.name), ctx.Err()
+	return matched, ctx.Err()
+}
+
+func fuzzySubscriptionTitle(pattern *regexp2.Regexp, name, title string) (bool, error) {
+	if len(title) > 64<<10 {
+		return false, errors.New("fuzzy subscription title too large")
+	}
+	matched, err := pattern.MatchString(title)
+	if err != nil {
+		return false, err
+	}
+	return matched || strings.Contains(title, name), nil
 }
 func (m *fuzzySubscriptionMatcher) selectCandidates(ctx context.Context, resources []identifiedSubscriptionResource) ([]fuzzyCandidateRecord, error) {
 	type ranked struct {

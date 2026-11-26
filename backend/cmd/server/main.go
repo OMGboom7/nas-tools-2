@@ -44,6 +44,14 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "rss-scan" {
+		if err := httpserver.ClassicRSSScanCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("RSS scan unavailable")
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(os.Args) == 2 && os.Args[1] == "site-feed" {
 		if err := httpserver.SiteFeedCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("site RSS unavailable")

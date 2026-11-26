@@ -14,6 +14,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
+	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
@@ -96,6 +97,14 @@ func (api *subscriptionRSSAPI) execute(ctx context.Context) (subscriptionRSSResu
 	if len(jobs) == 0 {
 		return result, nil
 	}
+	unlock, err := holdRSSScan(ctx, api.runner.planner.runner.recognition.service.databasePath)
+	if err != nil {
+		if errors.Is(err, organization.ErrBusy) {
+			return fail(409, "subscription RSS scan is already running")
+		}
+		return fail(503, "subscription RSS scan lock is unavailable")
+	}
+	defer unlock()
 	sites, err := api.runner.planner.runner.download.sites.List(ctx)
 	if err != nil {
 		return fail(503, "subscription RSS sites are unavailable")
@@ -196,6 +205,10 @@ func subscriptionRSSScope(raw map[string]any) ([]string, error) {
 }
 
 func selectedSubscriptionRSSSites(sites []siteconfig.Site, scope []string) ([]siteconfig.Site, error) {
+	return resolveSubscriptionRSSSites(sites, scope, false)
+}
+
+func resolveSubscriptionRSSSites(sites []siteconfig.Site, scope []string, skipUnavailable bool) ([]siteconfig.Site, error) {
 	enabled := []siteconfig.Site{}
 	for _, site := range sites {
 		if strings.Contains(site.Include, "D") && strings.TrimSpace(site.RSSURL) != "" {
@@ -215,6 +228,9 @@ func selectedSubscriptionRSSSites(sites []siteconfig.Site, scope []string) ([]si
 			}
 		}
 		if len(matches) != 1 {
+			if skipUnavailable {
+				continue
+			}
 			return nil, errors.New("RSS site scope is unavailable or ambiguous")
 		}
 		if !seen[matches[0].ID] {
