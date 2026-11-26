@@ -68,6 +68,7 @@ func (c *Client) Selection(ctx context.Context, hash string) (torrentfiles.Snaps
 	s.Hash = strings.ToLower(hash)
 	s.State = []string{"stopped", "check-wait", "checking", "download-wait", "downloading", "seed-wait", "seeding"}[status]
 	s.Paused = status == 0
+	s.Priorities = make(map[int]int, len(files))
 	for i, f := range files {
 		var name string
 		var size int64
@@ -79,6 +80,10 @@ func (c *Client) Selection(ctx context.Context, hash string) (torrentfiles.Snaps
 		if !read(f, "name", &name) || !read(f, "length", &size) || !read(stats[i], "wanted", &wanted) {
 			return s, ErrResponse
 		}
+		var priority int
+		if read(stats[i], "priority", &priority) && priority >= -1 && priority <= 1 {
+			s.Priorities[i] = priority
+		}
 		s.Files = append(s.Files, torrentfiles.File{Index: i, Path: name, Size: size, Selected: wanted})
 	}
 	s.Files, err = torrentfiles.Normalize(s.Files)
@@ -88,6 +93,17 @@ func (c *Client) Selection(ctx context.Context, hash string) (torrentfiles.Snaps
 	return s, nil
 }
 func (c *Client) SelectFiles(ctx context.Context, hash string, wanted, unwanted []int) error {
+	return c.selectPriorities(ctx, hash, wanted, unwanted, nil)
+}
+
+// SetPriorities sets selection and priority in the same torrent-set request.
+func (c *Client) SetPriorities(ctx context.Context, hash string, wanted, unwanted []int, priorities map[int][]int) error {
+	if priorities == nil {
+		return ErrConfiguration
+	}
+	return c.selectPriorities(ctx, hash, wanted, unwanted, priorities)
+}
+func (c *Client) selectPriorities(ctx context.Context, hash string, wanted, unwanted []int, priorities map[int][]int) error {
 	if !ValidHash(hash) || len(wanted) == 0 || len(wanted)+len(unwanted) > torrentfiles.MaxFiles {
 		return ErrConfiguration
 	}
@@ -106,6 +122,29 @@ func (c *Client) SelectFiles(ctx context.Context, hash string, wanted, unwanted 
 	if len(unwanted) > 0 {
 		old["files-unwanted"] = unwanted
 		new["files_unwanted"] = unwanted
+	}
+	if priorities != nil {
+		names := map[int]string{-1: "low", 0: "normal", 1: "high"}
+		assigned := map[int]bool{}
+		for priority, ids := range priorities {
+			name, ok := names[priority]
+			if !ok {
+				return ErrConfiguration
+			}
+			for _, id := range ids {
+				if !seen[id] || assigned[id] {
+					return ErrConfiguration
+				}
+				assigned[id] = true
+			}
+			if len(ids) > 0 {
+				old["priority-"+name] = ids
+				new["priority_"+name] = ids
+			}
+		}
+		if len(assigned) != len(seen) {
+			return ErrConfiguration
+		}
 	}
 	lb, _ := json.Marshal(map[string]any{"method": "torrent-set", "arguments": old})
 	mb, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "torrent_set", "params": new, "id": 1})

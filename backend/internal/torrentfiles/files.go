@@ -30,12 +30,13 @@ type File struct {
 	Padding  bool   `json:"padding,omitempty"`
 }
 type Snapshot struct {
-	Hash      string   `json:"hash"`
-	Directory string   `json:"directory"`
-	Labels    []string `json:"labels"`
-	State     string   `json:"state"`
-	Paused    bool     `json:"paused"`
-	Files     []File   `json:"files"`
+	Priorities map[int]int `json:"-"`
+	Hash       string      `json:"hash"`
+	Directory  string      `json:"directory"`
+	Labels     []string    `json:"labels"`
+	State      string      `json:"state"`
+	Paused     bool        `json:"paused"`
+	Files      []File      `json:"files"`
 }
 
 func Relative(value string) bool {

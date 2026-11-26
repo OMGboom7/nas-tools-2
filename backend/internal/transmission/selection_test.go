@@ -48,6 +48,16 @@ func TestFileSelectionBothRPCDialectsNeverSendEmptyUnwantedArray(t *testing.T) {
 						if all && present || !all && (!present || len(unwanted.([]any)) != 1) {
 							t.Fatal("empty array widened selection", v)
 						}
+						if writes == 1 {
+							if values, ok := v[key("priority-high", "priority_high")].([]any); !ok || len(values) != 1 || values[0] != float64(2) {
+								t.Fatal(v)
+							}
+							_, low := v[key("priority-low", "priority_low")]
+							_, normal := v[key("priority-normal", "priority_normal")]
+							if low == all || normal {
+								t.Fatal("empty priority list would apply to every file", v)
+							}
+						}
 						writes++
 						if modern {
 							return reply(200, `{"jsonrpc":"2.0","result":{},"id":1}`), nil
@@ -79,6 +89,11 @@ func TestFileSelectionBothRPCDialectsNeverSendEmptyUnwantedArray(t *testing.T) {
 				if c.SelectFiles(t.Context(), hash, nil, nil) == nil || c.SelectFiles(t.Context(), hash, []int{1}, []int{1}) == nil || writes != 1 {
 					t.Fatal("unsafe request emitted", writes)
 				}
+				priorities := map[int][]int{1: {2}, -1: unwanted}
+				if err := c.SetPriorities(t.Context(), hash, []int{2}, unwanted, priorities); err != nil || writes != 2 {
+					t.Fatal(err, writes)
+				}
+
 			})
 		}
 	}

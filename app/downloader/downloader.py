@@ -393,9 +393,10 @@ class Downloader:
             return downloader_id, None, None, "自定义 RSS 下载器不可用"
         if batch and batch.get("partial") and not (recorded and downloader_conf["type"] in ("qbittorrent", "transmission")):
             return downloader_id, None, None, "当前下载器无法选择剧集文件"
-        downloader = None if recorded else self.__get_client(downloader_id)
+        partial_brush = brush_submission is not None and brush_submission.partial
+        downloader = None if recorded or partial_brush else self.__get_client(downloader_id)
 
-        if not downloader_conf or (not recorded and not downloader):
+        if not downloader_conf or (not recorded and not partial_brush and not downloader):
             __download_fail("请检查下载设置所选下载器是否有效且启用")
             return None, None, None, f"下载设置 {download_setting_name} 所选下载器失效"
         downloader_name = downloader_conf.get("name")
@@ -476,11 +477,18 @@ class Downloader:
                     title, download_dir, print_url))
             # 下载ID
             download_id = None
-            if brush_submission is not None and not brush_submission.reserve():
+            if brush_submission is not None and not partial_brush and not brush_submission.reserve():
                 return downloader_id, None, None, "刷流任务已变更或资源已有下载记录"
             if batch is not None:
                 batch["pending"] = True
-            if recorded:
+            if partial_brush:
+                download_id = brush_submission.download_partial(content, downloader_conf, download_dir, container_path,
+                                                               tags, category, upload_limit, download_limit,
+                                                               ratio_limit, seeding_time_limit)
+                if not download_id:
+                    return downloader_id, None, None, "刷流资源已预留或任务已变更"
+                ret = True
+            elif recorded:
                 try:
                     receipt = self.__submit_recorded_download(
                         media_info, content, in_from, sender, user_name, downloader_conf, download_setting_name,
@@ -548,9 +556,9 @@ class Downloader:
                 return downloader_id, None, None, "下载器已响应，任务编号尚未确认，请先核对原任务"
             # 添加下载成功
             if ret:
-                if brush_submission is not None:
+                if brush_submission is not None and not partial_brush:
                     brush_submission.accept(download_id)
-                if not recorded and downloader.get_type() == DownloaderType.TR:
+                if not partial_brush and not recorded and downloader.get_type() == DownloaderType.TR:
                     downloader.change_torrent(tid=download_id,
                                               tag=tags,
                                               upload_limit=upload_limit,
@@ -1256,139 +1264,3 @@ class Downloader:
             return
 
         _client.set_downloadspeed_limit(torrent_ids, limit)
-
-    def fraction_download(self, fraction_rule, origin_limit, size, download_dir, downloader_id, download_id):
-        """
-        做种使用文件部分下载，开启最小化文件做种模式后使用
-        fraction_rule: 部分下载规则
-        size: rss 中种子总大小，后续会给出真实使用的大小
-        :param download_dir: 下载目录
-        :param origin_limit: 还有多少保种的体积没有使用
-        return:
-        result: 当前种子是否要触发下载
-        real_size: 当前种子触发下载后，真实下载多大
-        """
-        gb2bytes = 1024*1024*1024
-        log.info(f"【Downloader】部分下载开始, 剩余保种体积:%s GB" % str(round(origin_limit / gb2bytes, 2)))
-        _client = self.__get_client(downloader_id)
-        torrent_files = self.get_files(tid=download_id, downloader_id=downloader_id)
-        downloader_conf = self.get_downloader_conf(downloader_id)
-        if not torrent_files:
-            return False, 0, "torrent content files get error"
-
-        limit_size = size
-        percent = 1
-        # 根据规则挑选合适的文件
-        try:
-            if fraction_rule:
-                before_range = fraction_rule.get("frac_before_range")
-                before_percent = fraction_rule.get("frac_before_percent")
-                after_range = fraction_rule.get("frac_after_range")
-                if before_range and before_percent:
-                    before_range_num = len(before_range.split(","))
-                    before_percent_num = len(before_percent.split(","))
-                    if before_range_num == before_percent_num:
-                        target_range_index = -2
-                        #
-                        """
-                        查找目标index，假设range为10,20,100，percent为 1, 0.5, 0.25
-                        <10，index=-1, percent 为默认1，不裁切
-                        10<size<20,index=0, percent=1
-                        20<size<100,index=1, percent=0.5
-                        100<size, index=-2, percent=0.25
-                        """
-                        before_range_array = before_range.split(",")
-                        before_percent_array = before_percent.split(",")
-                        for index in range(before_range_num):
-                            if size <= int(before_range_array[index]) * gb2bytes:
-                                target_range_index = index - 1
-                                break
-                        if target_range_index == -1:
-                            # 命中最左边无界区间
-                            percent = 1
-                        elif target_range_index == -2:
-                            # 命中最右边无界区间
-                            percent = before_percent_array[before_range_num-1]
-                        else:
-                            percent = before_percent_array[target_range_index]
-
-                        limit_size = size * float(percent)
-                    else:
-                        log.info(f"【部分下载】下载前设置区间个数不一致，range: {before_range} 个数{before_range_num} 和 percent: {before_percent} 个数{before_percent_num}，请修正！")
-
-                # 计算后的尺寸限制
-                if after_range:
-                    if len(after_range.split(",")) == 2:
-                        after_range_array = after_range.split(",")
-                        limit_size = max(limit_size, int(after_range_array[0]) * gb2bytes)
-                        limit_size = min(limit_size, int(after_range_array[1]) * gb2bytes)
-                    else:
-                        log.info(f"下载后设置格式错误，应该为 A,B 形式，请修正！")
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            log.error("【部分下载】部分下载规则参数出错：%s" % (str(e)))
-
-        # 不要超过磁盘剩余空间，如果目录没找到，默认为0
-        if not os.path.exists(download_dir):
-            return False, 0, "下载目录不存在 %s，请检查磁盘空间或者是否挂载正常" %(str(download_dir))
-
-        free_space = SystemUtils.get_free_space(download_dir)
-        if free_space == 0:
-            return False, 0, "%s 目录空间为 0，请检查磁盘空间或者是否挂载正常" % (str(download_dir))
-
-        limit_size = min(origin_limit, limit_size)
-
-        limit_size = min(limit_size, free_space * gb2bytes)
-
-        # 计算出来的限制大小为0，跳过文件优先级处理
-        if limit_size == 0:
-            return False, 0, "torrent limit file size is 0"
-
-        # for qb
-        priority_info = {
-            "high": [],
-            "mid": [],
-            "normal": [],
-            "donotdownload": []
-        }
-        # for transmission
-        transmission_priority_info = {}
-
-        cur_size = 0
-        for torrent_file in torrent_files:
-            file_id = torrent_file.get("id")
-            file_size = torrent_file.get("size")
-            cur_size += file_size
-
-            if cur_size > limit_size:
-                priority_info['donotdownload'].append(file_id)
-                transmission_priority_info[file_id] = {'priority': 'low', 'selected': False}
-                # 加了当前文件超标了，不添加了，继续往下找合适的(多加的file_size记得减回去）
-                cur_size -= file_size
-                continue
-
-            if cur_size < limit_size/3:
-                priority_info['high'].append(file_id)
-                transmission_priority_info[file_id] = {'priority': 'high', 'selected': True}
-            elif cur_size < limit_size * 2 /3:
-                priority_info['mid'].append(file_id)
-                transmission_priority_info[file_id] = {'priority': 'normal', 'selected': True}
-            elif cur_size <= limit_size:
-                priority_info['normal'].append(file_id)
-                transmission_priority_info[file_id] = {'priority': 'low', 'selected': True}
-
-        log.info(f"【Downloader】部分下载添加文件: {priority_info}, 限制大小: {round(limit_size/gb2bytes, 2)}GB, 磁盘剩余空间: {round(free_space, 2)}GB")
-
-        if downloader_conf.get("type") == "transmission":
-            _client.set_files(file_info={download_id: transmission_priority_info})
-        elif downloader_conf.get("type") == "qbittorrent":
-            _client.set_files(torrent_hash=download_id, file_ids=priority_info['donotdownload'], priority=0)
-            _client.set_files(torrent_hash=download_id, file_ids=priority_info['normal'], priority=1)
-            _client.set_files(torrent_hash=download_id, file_ids=priority_info['mid'], priority=6)
-            _client.set_files(torrent_hash=download_id, file_ids=priority_info['high'], priority=7)
-
-        # 如果没有找到合适的文件，删除这个任务
-        if cur_size == 0:
-            return False, 0, "didn't find property files in torrent matched rule"
-
-        return True, cur_size, "success"

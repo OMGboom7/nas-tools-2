@@ -62,10 +62,12 @@ func (c *Client) Selection(ctx context.Context, hash string) (torrentfiles.Snaps
 	if json.Unmarshal(raw, &files) != nil {
 		return s, ErrResponse
 	}
+	s.Priorities = make(map[int]int, len(files))
 	for _, f := range files {
 		if f.Index == nil || f.Size == nil || f.Priority == nil || *f.Priority != 0 && *f.Priority != 1 && *f.Priority != 6 && *f.Priority != 7 {
 			return s, ErrResponse
 		}
+		s.Priorities[*f.Index] = *f.Priority
 		s.Files = append(s.Files, torrentfiles.File{Index: *f.Index, Path: f.Name, Size: *f.Size, Selected: *f.Priority != 0})
 	}
 	s.Files, err = torrentfiles.Normalize(s.Files)
@@ -75,6 +77,17 @@ func (c *Client) Selection(ctx context.Context, hash string) (torrentfiles.Snaps
 	return s, nil
 }
 func (c *Client) SetFilePriority(ctx context.Context, hash string, ids []int, wanted bool) error {
+	priority := 0
+	if wanted {
+		priority = 1
+	}
+	return c.SetPriority(ctx, hash, ids, priority)
+}
+
+func (c *Client) SetPriority(ctx context.Context, hash string, ids []int, priority int) error {
+	if priority != 0 && priority != 1 && priority != 6 && priority != 7 {
+		return ErrConfiguration
+	}
 	if !ValidHash(hash) || len(ids) == 0 || len(ids) > torrentfiles.MaxFiles {
 		return ErrConfiguration
 	}
@@ -90,11 +103,7 @@ func (c *Client) SetFilePriority(ctx context.Context, hash string, ids []int, wa
 	if err := c.login(ctx); err != nil {
 		return err
 	}
-	priority := "0"
-	if wanted {
-		priority = "1"
-	}
-	raw, err := c.request(ctx, http.MethodPost, "torrents/filePrio", url.Values{"hash": {hash}, "id": {strings.Join(values, "|")}, "priority": {priority}})
+	raw, err := c.request(ctx, http.MethodPost, "torrents/filePrio", url.Values{"hash": {hash}, "id": {strings.Join(values, "|")}, "priority": {strconv.Itoa(priority)}})
 	if err == nil && strings.TrimSpace(string(raw)) != "" && strings.TrimSpace(string(raw)) != "Ok." {
 		return ErrResponse
 	}

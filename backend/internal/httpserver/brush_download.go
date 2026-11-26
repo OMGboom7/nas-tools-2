@@ -32,6 +32,7 @@ type brushDownloadRequest struct {
 	TaskID, SiteID                                                               int64
 	Token, Enclosure, Downloader, Title, Deadline, RemoteID, RuleSource, FeedURL string
 	Size                                                                         int64
+	FractionSource                                                               *string
 	Partial                                                                      bool
 }
 
@@ -62,9 +63,7 @@ func BrushDownloadCommand(ctx context.Context, path, op string, in io.Reader, ou
 			return errBrushDetail
 		}
 		if op == "accept" {
-			err = fuzzyOne(db.ExecContext(ctx, `UPDATE GO_BRUSH_SUBMISSION SET remote_id=?,ready=1-partial WHERE token=? AND remote_id IS NULL AND task_id IS NOT NULL
-				AND NOT EXISTS(SELECT 1 FROM SITE_BRUSH_TORRENTS h WHERE h.DOWNLOADER=GO_BRUSH_SUBMISSION.downloader AND h.DOWNLOAD_ID=?)
-				AND NOT EXISTS(SELECT 1 FROM GO_BRUSH_SUBMISSION other WHERE other.downloader=GO_BRUSH_SUBMISSION.downloader AND other.remote_id=?)`, q.RemoteID, q.Token, q.RemoteID, q.RemoteID))
+			err = acceptBrushDownload(ctx, db, q.Token, q.RemoteID)
 		} else {
 			err = fuzzyOne(db.ExecContext(ctx, `UPDATE GO_BRUSH_SUBMISSION SET size=?,ready=1 WHERE token=? AND partial=1 AND remote_id=? AND ready=0 AND task_id IS NOT NULL`, q.Size, q.Token, q.RemoteID))
 		}
@@ -75,7 +74,9 @@ func BrushDownloadCommand(ctx context.Context, path, op string, in io.Reader, ou
 		}
 		result, err = finishBrushDownload(ctx, db, q.Token)
 	case "recover":
-		result, err = recoverBrushDownloads(ctx, db, q.TaskID)
+		if err = recoverBrushFractions(ctx, db, (config.Application{Path: path}).UserDatabasePath(), q.TaskID); err == nil {
+			result, err = recoverBrushDownloads(ctx, db, q.TaskID)
+		}
 	default:
 		return errors.New("unknown brush download operation")
 	}
@@ -83,6 +84,12 @@ func BrushDownloadCommand(ctx context.Context, path, op string, in io.Reader, ou
 		return err
 	}
 	return json.NewEncoder(out).Encode(result)
+}
+
+func acceptBrushDownload(ctx context.Context, db *sql.DB, token, hash string) error {
+	return fuzzyOne(db.ExecContext(ctx, `UPDATE GO_BRUSH_SUBMISSION SET remote_id=?,ready=1-partial WHERE token=? AND remote_id IS NULL AND task_id IS NOT NULL
+				AND NOT EXISTS(SELECT 1 FROM SITE_BRUSH_TORRENTS h WHERE h.DOWNLOADER=GO_BRUSH_SUBMISSION.downloader AND h.DOWNLOAD_ID=?)
+				AND NOT EXISTS(SELECT 1 FROM GO_BRUSH_SUBMISSION other WHERE other.downloader=GO_BRUSH_SUBMISSION.downloader AND other.remote_id=?)`, hash, token, hash, hash))
 }
 
 func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadRequest) (string, error) {
@@ -101,9 +108,9 @@ func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadReques
 	SELECT ?,?,t.ID,t.DOWNLOADER,?,?,CASE WHEN t.BRUSHTASK_FREE_LIMIT_SPEED='Y' OR t.BRUSHTASK_FREE_DDL_DELETE='Y' THEN ? ELSE '' END,?
 	FROM SITE_BRUSH_TASK t JOIN CONFIG_SITE s ON s.ID=t.SITE
 	WHERE t.ID=? AND s.ID=? AND t.STATE='Y' AND instr(s.INCLUDE,'S')>0 AND t.DOWNLOADER=?
-	AND COALESCE(t.RSS_RULE,'')=? AND COALESCE(NULLIF(t.RSSURL,''),s.RSSURL)=?
+	AND (? IS NULL OR COALESCE(t.FRACTION_RULE,'')=?) AND COALESCE(t.RSS_RULE,'')=? AND COALESCE(NULLIF(t.RSSURL,''),s.RSSURL)=?
 	AND NOT EXISTS(SELECT 1 FROM SITE_BRUSH_TORRENTS WHERE ENCLOSURE=?)
-	ON CONFLICT(enclosure) DO NOTHING`, token, q.Enclosure, q.Title, q.Size, q.Deadline, q.Partial, q.TaskID, q.SiteID, q.Downloader, q.RuleSource, q.FeedURL, q.Enclosure)
+	ON CONFLICT(enclosure) DO NOTHING`, token, q.Enclosure, q.Title, q.Size, q.Deadline, q.Partial, q.TaskID, q.SiteID, q.Downloader, q.FractionSource, q.FractionSource, q.RuleSource, q.FeedURL, q.Enclosure)
 	if err != nil {
 		return "", err
 	}

@@ -1,4 +1,5 @@
 from ast import literal_eval
+import base64
 import json
 import os
 import subprocess
@@ -31,6 +32,11 @@ class _BrushSubmission:
                             ruleSource=task["rss_rule_source"], feedURL=task["rss_url"], title=title,
                             enclosure=enclosure, size=size, deadline=deadline or "", partial=partial)
         self.token = None
+        self.partial = partial
+        self.fraction_rule = task.get("fraction_rule")
+        self.fraction_source = task.get("fraction_rule_source")
+        self.selected_size = 0
+        self.pending = False
 
     def reserve(self):
         self.token = _brush_download("reserve", **self.request)
@@ -40,10 +46,25 @@ class _BrushSubmission:
         _brush_download("accept", token=self.token, remoteID=str(remote_id))
 
     def finish(self):
+        if self.pending:
+            raise subprocess.SubprocessError("刷流任务已启动，等待恢复记账")
         _brush_download("finish", token=self.token)
 
-    def selected(self, remote_id, size):
-        _brush_download("selected", token=self.token, remoteID=str(remote_id), size=size)
+    def download_partial(self, content, config, directory, local_dir, tags, category, upload, download, ratio, minutes):
+        request = dict(brush=self.request, rule=self.fraction_rule, ruleSource=self.fraction_source,
+                       clientType=config["type"], config=config["config"], directories=config["download_dir"],
+                       directory=directory or "", localDir=local_dir or "", category=category or "", tags=tags,
+                       uploadLimitKB=int(upload or 0), downloadLimitKB=int(download or 0),
+                       ratioLimit=round(float(ratio or 0), 2), seedingTimeLimit=int(minutes or 0))
+        if isinstance(content, str):
+            request["magnet"] = content
+        else:
+            request["torrent"] = base64.b64encode(content).decode("ascii")
+        reply = json.loads(run_go_helper("brush-fraction", payload=json.dumps(request).encode(), timeout=90))
+        self.token = reply["Token"]
+        self.selected_size = reply["Size"]
+        self.pending = reply["Pending"]
+        return reply["Task"]
 
 
 @singleton
@@ -155,6 +176,7 @@ class BrushTask(object):
                 "rss_rule": literal_eval(task.RSS_RULE),
                 "rss_rule_source": task.RSS_RULE or "",
                 "remove_rule": literal_eval(task.REMOVE_RULE),
+                "fraction_rule_source": task.FRACTION_RULE or "",
                 "fraction_rule": literal_eval(task.FRACTION_RULE) if task.FRACTION_RULE else "",
                 "seed_size": task.SEED_SIZE,
                 "total_size": total_size,
@@ -813,11 +835,6 @@ class BrushTask(object):
         upload_limit = rss_rule.get("upspeed")
         download_dir = taskinfo.get("savepath")
         tag = taskinfo.get("label").split(',') if taskinfo.get("label") else None
-        seed_size = taskinfo.get("seed_size") or None
-        total_size = self.dbhelper.get_brushtask_totalsize(taskinfo.get("id"))
-        origin_limit = size
-        if seed_size:
-            origin_limit = max(0, float(seed_size) * 1024 ** 3 - int(total_size))
         # 标签
         if not transfer:
             if tag:
@@ -857,24 +874,7 @@ class BrushTask(object):
         else:
             # 下载种子文件成功，开始部分下载功能
             log.info("【Brush】成功添加下载：id: %s, title: %s" % (download_id, title))
-            real_size = size
-
-            # 部分下载开启
-            if fraction_rule_exits:
-                result, real_size, fraction_retmsg = self.downloader.fraction_download(fraction_rule, origin_limit, size, dir, downloader_id, download_id)
-                if result:
-                    # 正式启动下载
-                    if self.downloader.start_torrents(downloader_id, download_id) is False:
-                        log.warn("【Brush】部分下载未能启动，请核对下载器中的原任务")
-                        return False
-                    submission.selected(download_id, real_size)
-                else:
-                    # 部分下载出现异常：获取文件列表失败或者没有找到合适 size 的文件，删除种子以及文件
-                    self.downloader.delete_torrents(downloader_id, download_id, delete_file=True)
-                    log.warn(f"【Brush】{taskname} 添加下载任务出错：{title}，"
-                             f"错误原因：'部分下载：{fraction_retmsg}，"
-                             f"种子链接：{enclosure}")
-                    return False
+            real_size = submission.selected_size if fraction_rule_exits else size
 
             try:
                 submission.finish()
