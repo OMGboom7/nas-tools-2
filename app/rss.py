@@ -61,7 +61,7 @@ class Rss:
                         if scan.wait() != 0:
                             raise RuntimeError("RSS 扫描退出异常")
                         finished = frame.get("finished") or {}
-                        for item, _ in accepted.values():
+                        for item in accepted.values():
                             source = getattr(item, "ordinary_source", None)
                             if source and finished.get(source["token"]) == item.enclosure:
                                 finished.pop(source["token"])
@@ -92,25 +92,29 @@ class Rss:
                             ExceptionUtils.exception_traceback(e)
                     elif op == "candidate":
                         try:
-                            gaps = self._candidate(media, frame["site"], frame["source"])
-                            if gaps is not None:
-                                accepted[index] = (media, gaps)
+                            inventory = self._candidate(media, frame["site"], frame["source"])
+                            if inventory is not None:
+                                reply["accepted"] = True
+                                if inventory:
+                                    reply["inventory"] = inventory
+                        except Exception as e:
+                            ExceptionUtils.exception_traceback(e)
+                    elif op == "ready":
+                        try:
+                            if not self.sites.check_ratelimit(frame["siteID"]):
+                                media.ordinary_scope = frame.get("scope")
+                                accepted[index] = media
                                 reply["accepted"] = True
                         except Exception as e:
                             ExceptionUtils.exception_traceback(e)
                     elif op == "submit":
-                        items, missing = [], {}
-                        for selected in frame["indices"]:
-                            item, gaps = accepted[selected]
-                            if item not in items:
-                                items.append(item)
-                            for tmdbid, seasons in gaps.items():
-                                by_season = missing.setdefault(tmdbid, {})
-                                for season in seasons:
-                                    by_season[season["season"]] = season
+                        items = [accepted[i] for i in frame["indices"]]
+                        keys = {str(item.tmdb_id): item.tmdb_id for item in items}
+                        missing = {keys[key]: rows for key, rows in frame["missing"].items()}
                         for item in items:
-                            item.ordinary_receipt = self._ordinary_receipt(item, missing.get(item.tmdb_id, {}))
-                        self.download_rss_torrent(items, {k: list(v.values()) for k, v in missing.items()})
+                            row = frame["receipts"].get(item.ordinary_source["token"])
+                            item.ordinary_receipt = self._ordinary_receipt(item, row)
+                        self.download_rss_torrent(items, missing)
                     else:
                         raise ValueError("未知 RSS 扫描指令")
                     scan.stdin.write(json.dumps(reply) + "\n")
@@ -153,7 +157,7 @@ class Rss:
         match, rank, _ = self.filter.check_torrent_filter(meta_info=media, filter_args=filters)
         if not match:
             return None
-        gaps = {}
+        inventory = {}
         media.ordinary_source = source["progress"]
         media.subscription_progress = None
         if not source["fuzzy_match"]:
@@ -167,31 +171,16 @@ class Rss:
             if source["over_edition"]:
                 if source["rank"] and int(source["rank"]) >= int(rank or 0):
                     return None
-            elif media.type == MediaType.MOVIE:
-                exists, gaps, _ = self.downloader.check_exists_medias(meta_info=media)
-                if exists is not False:
-                    return None
             else:
-                total, episodes = source["total"], source["episodes"]
-                if episodes is None:
-                    episodes = list(range(int(source["current_ep"]), int(total) + 1)) if source["current_ep"] else []
-                exists, library, _ = self.downloader.check_exists_medias(meta_info=media, total_ep={season: total})
-                if exists is not False:
-                    return None
-                wanted = {media.tmdb_id: [{"season": season, "episodes": episodes, "total_episodes": total}]}
-                gaps = Torrent.get_intersection_episodes(wanted, library, media.tmdb_id)
-                if not gaps:
-                    return None
+                inventory = self.downloader.filetransfer.library_inventory_query(media)
             media.subscription_progress = source["progress"]
             media.subscription_season = season
-        if self.sites.check_ratelimit(site["id"]):
-            return None
         media.set_torrent_info(res_order=rank, filter_rule=rule, over_edition=source["over_edition"],
                                download_volume_factor=download, upload_volume_factor=upload, rssid=source["id"])
         media.set_download_info(download_setting=source["download_setting"], save_path=source["save_path"])
-        return gaps
+        return inventory
 
-    def _ordinary_receipt(self, media, gaps):
+    def _ordinary_receipt(self, media, row):
         source = media.ordinary_source
         receipt = {**source, "mode": "record", "marker": self.subscribe.rss_download_markers([media])[0]}
         if not media.subscription_progress:
@@ -207,7 +196,6 @@ class Rss:
                 return receipt
             receipt.update(mode="edition", rank=int(media.res_order), highest=int(highest))
         elif source["kind"] == "TV":
-            row = gaps[season]
             missing = row["episodes"] or range(1, int(row["total_episodes"]) + 1)
             receipt.update(mode="episodes", missing=sorted(int(n) for n in missing),
                            covered=media.get_episode_list())
@@ -254,9 +242,12 @@ class Rss:
                         self.subscribe.record_rss_downloads(items)
                 else:
                     season = item.subscription_season
-                    gaps = (left_medias or {}).get(item.tmdb_id, [])
-                    if source["kind"] == "TV" and any(int(row["season"]) == season for row in gaps):
-                        self.subscribe.remaining_progress(source, season, gaps, markers=markers)
+                    pending = {}
+                    if source["kind"] == "TV":
+                        requested = {"season": season, "episodes": item.ordinary_receipt["missing"]}
+                        pending = Torrent.get_intersection_episodes({item.tmdb_id: [requested]}, left_medias, item.tmdb_id)
+                    if pending:
+                        self.subscribe.remaining_progress(source, season, pending[item.tmdb_id], markers=markers)
                     else:
                         self.subscribe.finish_progress(source, item, markers=markers)
             log.info("【Rss】实际下载了 %s 个资源" % len(download_items))

@@ -8,13 +8,18 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/backuprestore"
+	"github.com/0xforee/nas-tools/backend/internal/batchdownload"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/regexcompat"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
+	"github.com/0xforee/nas-tools/backend/internal/systemconfig"
 	"github.com/dlclark/regexp2"
 )
 
@@ -30,6 +35,8 @@ type classicRSSRule struct {
 	name, year, tmdb, season string
 	fuzzy                    *regexp2.Regexp
 	fields                   map[string]any
+	target                   batchdownload.Season
+	current                  int
 }
 
 func newClassicRSSRule(kind string, src classicSubscriptionSource) (*classicRSSRule, error) {
@@ -53,27 +60,46 @@ func newClassicRSSRule(kind string, src classicSubscriptionSource) (*classicRSSR
 		}
 		r.fuzzy = pattern
 	}
-	var episodes []int
-	if len(src.Episodes) > 1 {
-		return nil, errFuzzyScope
-	}
-	if len(src.Episodes) == 1 {
-		episodes = []int{}
-		for _, v := range strings.Split(text(src.Episodes[0]["EPISODES"]), ",") {
-			if v == "" {
-				continue
-			}
-			n, err := strconv.Atoi(strings.TrimSpace(v))
-			if err != nil || n < 0 {
+	if kind == "TV" && r.fuzzy == nil && !truthy(row["over_edition"]) {
+		r.target.Number = 1
+		if r.season != "" {
+			r.target.Number, err = strconv.Atoi(strings.TrimPrefix(r.season, "S"))
+			if err != nil || r.target.Number < 0 || r.target.Number > 1000 {
 				return nil, errFuzzyScope
 			}
-			episodes = append(episodes, n)
+		}
+		for key, dst := range map[string]*int{"total": &r.target.Total, "current_ep": &r.current} {
+			if value := text(row[key]); value != "" {
+				*dst, err = strconv.Atoi(value)
+				if err != nil || *dst < 0 || *dst > 10000 {
+					return nil, errFuzzyScope
+				}
+			}
+		}
+		if len(src.Episodes) > 1 {
+			return nil, errFuzzyScope
+		}
+		if len(src.Episodes) == 1 {
+			r.target.Episodes = []int{}
+			raw := text(src.Episodes[0]["EPISODES"])
+			if raw != "" {
+				for _, v := range strings.Split(raw, ",") {
+					n, err := strconv.Atoi(strings.TrimSpace(v))
+					if err != nil || n < 1 || n > 10000 {
+						return nil, errFuzzyScope
+					}
+					r.target.Episodes = append(r.target.Episodes, n)
+				}
+				slices.Sort(r.target.Episodes)
+				if len(slices.Compact(r.target.Episodes)) != len(r.target.Episodes) {
+					return nil, errFuzzyScope
+				}
+			}
 		}
 	}
-	for _, key := range []string{"id", "season", "total", "current_ep", "filter_restype", "filter_pix", "filter_team", "filter_rule", "filter_include", "filter_exclude", "save_path", "download_setting"} {
+	for _, key := range []string{"id", "season", "filter_restype", "filter_pix", "filter_team", "filter_rule", "filter_include", "filter_exclude", "save_path", "download_setting"} {
 		r.fields[key] = row[key]
 	}
-	r.fields["episodes"] = episodes
 	r.fields["progress"] = map[string]any{"kind": kind, "id": r.id, "token": r.token}
 	rank := int64(0)
 	if value := text(row["filter_order"]); value != "" {
@@ -170,24 +196,28 @@ func loadClassicRSSPlan(ctx context.Context, db *sql.DB) (classicRSSPlan, error)
 
 // Each response belongs to the exact article and phase that requested it.
 type classicRSSReply struct {
-	Op       string
-	Index    int
-	Identity *classicRSSIdentity
-	Accepted bool
+	Op        string
+	Index     int
+	Identity  *classicRSSIdentity
+	Accepted  bool
+	Inventory *inventoryQuery
 }
 type classicRSSScan struct {
-	path     string
-	app      map[string]any
-	out      *json.Encoder
-	in       *bufio.Scanner
-	index    int
-	accepted []classicRSSChoice
+	path      string
+	app       map[string]any
+	out       *json.Encoder
+	in        *bufio.Scanner
+	index     int
+	inventory subscriptionService
+	accepted  []classicRSSChoice
 }
 type classicRSSChoice struct {
 	index     int
 	site      siteconfig.Site
 	rule      *classicRSSRule
 	enclosure string
+	show      string
+	gap       *batchdownload.Season
 }
 
 func (s *classicRSSScan) exchange(event map[string]any, index int) (classicRSSReply, error) {
@@ -209,6 +239,59 @@ func (s *classicRSSScan) exchange(event map[string]any, index int) (classicRSSRe
 		return reply, errors.New("unexpected RSS scan response")
 	}
 	return reply, nil
+}
+
+// Reconcile this subscription's saved progress with the library before the site
+// spends its final download allowance. Missing inventory never authorizes a download.
+func (s *classicRSSScan) eligible(ctx context.Context, r *classicRSSRule, id classicRSSIdentity, q *inventoryQuery) (*batchdownload.Season, bool, error) {
+	if r.fuzzy != nil || r.fields["over_edition"] == true {
+		return nil, true, nil
+	}
+	if q == nil || !numericTMDBID(q.ID) || q.ID != id.TMDBID || strings.TrimSpace(q.Title) == "" ||
+		id.Title != "" && q.Title != id.Title || id.Year != "" && q.Year != id.Year ||
+		q.LocalOnly || len(q.Totals) != 0 || len(q.TVDetail) != 0 ||
+		!(r.kind == "MOV" && q.Kind == "电影" || r.kind == "TV" && (q.Kind == "电视剧" || q.Kind == "动漫")) {
+		return nil, false, errors.New("invalid RSS library selection")
+	}
+	if r.target.Total > 0 {
+		q.Totals = map[int]int{r.target.Number: r.target.Total}
+	}
+	limit, cancel := context.WithTimeout(ctx, 80*time.Second)
+	defer cancel()
+	inv, err := s.inventory.checkLibrarySelection(limit, *q)
+	if err != nil || inv.Complete {
+		return nil, false, err
+	}
+	if r.kind == "MOV" {
+		return nil, true, nil
+	}
+	for _, lib := range inv.Missing {
+		if lib.Season != r.target.Number {
+			continue
+		}
+		target := r.target
+		target.Total = lib.Total
+		if target.Total < 1 || target.Total > 10000 || target.Episodes != nil && len(target.Episodes) == 0 {
+			break
+		}
+		if len(target.Episodes) > 0 && target.Episodes[len(target.Episodes)-1] > target.Total {
+			break
+		}
+		if target.Episodes == nil && r.current > 0 {
+			if r.current > target.Total {
+				break
+			}
+			for n := r.current; n <= target.Total; n++ {
+				target.Episodes = append(target.Episodes, n)
+			}
+		}
+		result := batchdownload.IntersectSeasons([]batchdownload.Season{target}, []batchdownload.Season{{Number: lib.Season, Total: lib.Total, Episodes: lib.Episodes}})
+		if len(result) != 0 {
+			return &result[0], true, nil
+		}
+		break
+	}
+	return nil, false, nil
 }
 
 func (s *classicRSSScan) scanSite(ctx context.Context, site siteconfig.Site, rules []*classicRSSRule) error {
@@ -259,7 +342,23 @@ func (s *classicRSSScan) scanSite(ctx context.Context, site siteconfig.Site, rul
 				return err
 			}
 			if decision.Accepted {
-				s.accepted = append(s.accepted, classicRSSChoice{s.index, site, rule, article.Enclosure})
+				gap, eligible, err := s.eligible(ctx, rule, *reply.Identity, decision.Inventory)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if err != nil {
+					slog.Warn("unable to verify RSS library inventory", "kind", rule.kind, "subscription", rule.id)
+				}
+				if !eligible {
+					break
+				}
+				ready, err := s.exchange(map[string]any{"op": "ready", "siteID": site.ID, "scope": gap}, s.index)
+				if err != nil {
+					return err
+				}
+				if ready.Accepted {
+					s.accepted = append(s.accepted, classicRSSChoice{s.index, site, rule, article.Enclosure, reply.Identity.TMDBID, gap})
+				}
 			}
 			break
 		}
@@ -327,6 +426,62 @@ func (s *classicRSSScan) validSelections(ctx context.Context, db *sql.DB) ([]int
 	return indices, tx.Commit()
 }
 
+func mergeRSSGaps(previous, next batchdownload.Season) batchdownload.Season {
+	if previous.Total == 0 {
+		return next
+	}
+	if previous.Total == next.Total && slices.Equal(previous.Episodes, next.Episodes) {
+		return previous
+	}
+	total := max(previous.Total, next.Total)
+	units := make([]bool, total+1)
+	for _, g := range []batchdownload.Season{previous, next} {
+		if len(g.Episodes) == 0 {
+			for n := 1; n <= g.Total; n++ {
+				units[n] = true
+			}
+		} else {
+			for _, n := range g.Episodes {
+				units[n] = true
+			}
+		}
+	}
+	var merged []int
+	for n := 1; n <= total; n++ {
+		if units[n] {
+			merged = append(merged, n)
+		}
+	}
+	if len(merged) == total {
+		merged = nil
+	}
+	return batchdownload.Season{Number: previous.Number, Total: total, Episodes: merged}
+}
+
+// All receipts for the same subscription version share one starting point.
+// Selection still honors the observed gaps for each individual resource.
+func (s *classicRSSScan) batchMissing(indices []int) (map[string][]batchdownload.Season, map[string]batchdownload.Season) {
+	shows := map[string][]batchdownload.Season{}
+	subscriptions := map[string]batchdownload.Season{}
+	for _, c := range s.accepted {
+		if c.gap == nil {
+			continue
+		}
+		if _, ok := slices.BinarySearch(indices, c.index); !ok {
+			continue
+		}
+		subscriptions[c.rule.token] = mergeRSSGaps(subscriptions[c.rule.token], *c.gap)
+		seasons := shows[c.show]
+		i := slices.IndexFunc(seasons, func(v batchdownload.Season) bool { return v.Number == c.gap.Number })
+		if i < 0 {
+			shows[c.show] = append(seasons, *c.gap)
+		} else {
+			seasons[i] = mergeRSSGaps(seasons[i], *c.gap)
+		}
+	}
+	return shows, subscriptions
+}
+
 func holdRSSScan(ctx context.Context, path string) (func(), error) {
 	return holdVolumeReceiver(ctx, path, "subscription-rss-scan", ".nastool-subscription-rss-scan.lock")
 }
@@ -359,7 +514,13 @@ func ClassicRSSScanCommand(ctx context.Context, path string, in io.Reader, out i
 	if err != nil {
 		return err
 	}
-	s := classicRSSScan{path: path, app: objectValue(cfg["app"]), in: bufio.NewScanner(in), out: json.NewEncoder(out)}
+	system, err := systemconfig.Open(service.databasePath)
+	if err != nil {
+		return err
+	}
+	defer system.Close()
+	service.systemConfig, service.configStore, service.client = system, config.NewStore(path), http.DefaultClient
+	s := classicRSSScan{inventory: service, path: path, app: objectValue(cfg["app"]), in: bufio.NewScanner(in), out: json.NewEncoder(out)}
 	s.in.Buffer(make([]byte, 4096), 256<<10)
 	for _, site := range p.sites {
 		if rules := p.bySite[site.ID]; len(rules) > 0 {
@@ -372,7 +533,8 @@ func ClassicRSSScanCommand(ctx context.Context, path string, in io.Reader, out i
 	if err != nil {
 		return err
 	}
-	if _, err = s.exchange(map[string]any{"op": "submit", "indices": indices}, 0); err != nil {
+	missing, receipts := s.batchMissing(indices)
+	if _, err = s.exchange(map[string]any{"op": "submit", "indices": indices, "missing": missing, "receipts": receipts}, 0); err != nil {
 		return err
 	}
 	finished, err := recoverOrdinaryRSS(ctx, db, service.databasePath)

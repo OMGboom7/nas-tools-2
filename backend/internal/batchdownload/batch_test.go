@@ -121,3 +121,21 @@ func TestWholeSeasonCanKeepAccompanyingFilesOnWholeTaskClients(t *testing.T) {
 		t.Fatal("a partial request silently selected the whole payload")
 	}
 }
+
+func TestScopedBatchDoesNotSpendAnotherSubscriptionsEpisodes(t *testing.T) {
+	small := Season{Number: 0, Total: 2}
+	last := Season{Number: 0, Total: 4, Episodes: []int{4}}
+	in := Input{Candidates: []Candidate{
+		{Show: "42", Seasons: []int{0}, Episodes: []int{4}, Site: "9", Scope: &small},
+		{Show: "42", Seasons: []int{0}, Episodes: []int{4}, Site: "1", Scope: &last},
+	}, Missing: map[string][]Season{"42": {{Number: 0, Total: 4, Episodes: []int{1, 2, 4}}}}}
+	got, err := Run(in, func(a Action) (reply, error) {
+		if a.Op == "submit" && a.Index != 1 {
+			t.Fatal("crossed subscription scope", a)
+		}
+		return reply{Accepted: a.Op == "submit"}, nil
+	})
+	if err != nil || !slices.Equal(got.Accepted, []int{1}) || !slices.Equal(got.Missing["42"][0].Episodes, []int{1, 2}) {
+		t.Fatal(got, err)
+	}
+}

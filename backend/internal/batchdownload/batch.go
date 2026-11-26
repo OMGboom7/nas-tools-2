@@ -28,6 +28,7 @@ type Candidate struct {
 	Show, Title, Display, Label, Resource, Site, Seeders string
 	Movie                                                bool
 	Seasons, Episodes                                    []int
+	Scope                                                *Season
 }
 type Input struct {
 	Candidates []Candidate
@@ -158,14 +159,17 @@ func rank(in Input) []int {
 	}
 	slices.SortStableFunc(rows, func(a, b row) int { return cmp.Compare(b.key, a.key) })
 	type identity struct {
-		movie              bool
-		show, title, units string
+		movie                     bool
+		show, title, units, scope string
 	}
 	seen := map[identity]bool{}
 	indices := []int{}
 	for _, r := range rows {
 		c := in.Candidates[r.index]
-		key := identity{c.Movie, c.Show, c.Display, c.Label}
+		key := identity{movie: c.Movie, show: c.Show, title: c.Display, units: c.Label}
+		if c.Scope != nil {
+			key.scope = fmt.Sprint(*c.Scope)
+		}
 		if c.Movie {
 			key.units = ""
 		}
@@ -181,9 +185,27 @@ func targets(c Candidate, missing []Season, phase string) []Season {
 		return nil
 	}
 	result := []Season{}
+	boundFound := c.Scope == nil
 	for _, s := range missing {
 		if !slices.Contains(c.Seasons, s.Number) {
 			continue
+		}
+		if c.Scope != nil && c.Scope.Number == s.Number {
+			own := *c.Scope
+			if own.Total != s.Total {
+				if len(own.Episodes) == 0 {
+					own.Episodes = episodes(own)
+				}
+				if len(s.Episodes) == 0 {
+					s.Episodes = episodes(s)
+				}
+			}
+			restricted := IntersectSeasons([]Season{own}, []Season{s})
+			if len(restricted) == 0 {
+				return nil
+			}
+			s = restricted[0]
+			boundFound = true
 		}
 		switch phase {
 		case "whole":
@@ -201,7 +223,7 @@ func targets(c Candidate, missing []Season, phase string) []Season {
 		}
 		result = append(result, s)
 	}
-	if phase == "whole" && len(result) != len(c.Seasons) {
+	if !boundFound || phase == "whole" && len(result) != len(c.Seasons) {
 		return nil
 	}
 	return result
@@ -235,6 +257,18 @@ func Run(in Input, exchange func(Action) (reply, error)) (Result, error) {
 			sort.Ints(s.Episodes)
 			for i, n := range s.Episodes {
 				if n < 1 || n > s.Total || i > 0 && n == s.Episodes[i-1] {
+					return result, ErrBatch
+				}
+			}
+		}
+	}
+	for _, c := range in.Candidates {
+		if s := c.Scope; s != nil {
+			if c.Movie || s.Number < 0 || s.Number > 1000 || s.Total < 1 || s.Total > 10000 {
+				return result, ErrBatch
+			}
+			for i, n := range s.Episodes {
+				if n < 1 || n > s.Total || i > 0 && n <= s.Episodes[i-1] {
 					return result, ErrBatch
 				}
 			}
@@ -275,6 +309,9 @@ func Run(in Input, exchange func(Action) (reply, error)) (Result, error) {
 				proof := Proof{Hash: m.InfoHash, Targets: needs, Mixed: len(c.Seasons) > 1, Whole: phase == "whole"}
 				files, units, err := Files(r.Torrent, proof)
 				if err != nil {
+					continue
+				}
+				if c.Scope != nil && len(units[c.Scope.Number]) == 0 {
 					continue
 				}
 				if phase == "whole" && !allCovered(needs, units) {
@@ -376,9 +413,13 @@ func Intersect(in io.Reader, out io.Writer) error {
 	if json.NewDecoder(in).Decode(&q) != nil {
 		return ErrBatch
 	}
+	return json.NewEncoder(out).Encode(IntersectSeasons(q.Target, q.Library))
+}
+
+func IntersectSeasons(targets, library []Season) []Season {
 	missing := []Season{}
-	for _, target := range q.Target {
-		for _, lib := range q.Library {
+	for _, target := range targets {
+		for _, lib := range library {
 			if lib.Number != target.Number {
 				continue
 			}
@@ -396,7 +437,7 @@ func Intersect(in io.Reader, out io.Writer) error {
 				for _, n := range lib.Episodes {
 					available[n] = true
 				}
-				target.Episodes = slices.DeleteFunc(target.Episodes, func(n int) bool { return !available[n] })
+				target.Episodes = slices.DeleteFunc(slices.Clone(target.Episodes), func(n int) bool { return !available[n] })
 			}
 			if len(target.Episodes) > 0 {
 				sort.Ints(target.Episodes)
@@ -406,5 +447,5 @@ func Intersect(in io.Reader, out io.Writer) error {
 			break
 		}
 	}
-	return json.NewEncoder(out).Encode(missing)
+	return missing
 }

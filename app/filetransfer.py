@@ -1097,7 +1097,7 @@ class FileTransfer:
             else:
                 return os.path.join(dest, dir_name, season_name)
 
-    def check_library_inventory(self, media, totals=None, local_season=None, local_only=False):
+    def library_inventory_query(self, media, totals=None, local_season=None, local_only=False):
         movie = media.type == MediaType.MOVIE
         enabled = self._movie_category_flag if movie else (
             self._anime_category_flag if media.type == MediaType.ANIME else self._tv_category_flag)
@@ -1114,7 +1114,18 @@ class FileTransfer:
                               "effect": media.resource_effect, "videoCodec": media.video_encode,
                               "audioCodec": media.audio_encode, "episodes": bounds},
                  "totals": {str(k): int(v) for k, v in (totals or {}).items() if v}}
-        if not movie and not local_only:
+        directory = (self._movie_dir_rmt_format or "") if movie else (
+            (self._tv_dir_rmt_format or "") + "/" + (self._tv_season_rmt_format or ""))
+        extras = ("original_name", "rev_name", "edition", "part", "episode", "season_episode",
+                  "episode_title", "rating", "rating_short", "rating_long")
+        if any("{" + field + suffix in directory for field in extras for suffix in ("}", ":", "!")):
+            fields = self.get_format_dict(media)
+            query["naming"] = {key: str(fields[key]).strip() for key in extras}
+        return query
+
+    def check_library_inventory(self, media, totals=None, local_season=None, local_only=False):
+        query = self.library_inventory_query(media, totals, local_season, local_only)
+        if media.type != MediaType.MOVIE and not local_only:
             tv = self.media.get_tmdb_info(mtype=MediaType.TV, tmdbid=media.tmdb_id)
             if not tv or str(tv.get("id")) != query["id"]:
                 raise ValueError("剧集详情暂不可用")
@@ -1124,13 +1135,6 @@ class FileTransfer:
                                  "seasons": [{"season_number": s.get("season_number"),
                                               "episode_count": s.get("episode_count")} for s in tv.get("seasons") or []],
                                  "original_name": tv.get("original_name"), "imdb_id": external_ids.get("imdb_id")}
-        directory = (self._movie_dir_rmt_format or "") if movie else (
-            (self._tv_dir_rmt_format or "") + "/" + (self._tv_season_rmt_format or ""))
-        extras = ("original_name", "rev_name", "edition", "part", "episode", "season_episode",
-                  "episode_title", "rating", "rating_short", "rating_long")
-        if any("{" + field + suffix in directory for field in extras for suffix in ("}", ":", "!")):
-            fields = self.get_format_dict(media)
-            query["naming"] = {key: str(fields[key]).strip() for key in extras}
         data = run_go_helper("library-inventory", payload=json.dumps(query).encode(), timeout=85)
         return json.loads(data)
 

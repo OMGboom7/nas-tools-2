@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/0xforee/nas-tools/backend/internal/batchdownload"
+	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/database"
 )
 
@@ -71,7 +74,7 @@ func TestClassicRSSScanSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("app: {}\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("media:\n  movie_path: "+dir+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", filepath.Join(dir, "user.db"))
@@ -119,15 +122,16 @@ func TestClassicRSSScanSelection(t *testing.T) {
 	}}
 	var in bytes.Buffer
 	for i := 1; i <= 6; i++ {
-		fmt.Fprintf(&in, "{\"op\":\"identify\",\"index\":%d,\"identity\":{\"kind\":\"MOV\",\"tmdbid\":\"5\"}}\n", i)
-		fmt.Fprintf(&in, "{\"op\":\"candidate\",\"index\":%d,\"accepted\":true}\n", i)
+		fmt.Fprintf(&in, "{\"op\":\"identify\",\"index\":%d,\"identity\":{\"kind\":\"MOV\",\"title\":\"film\",\"tmdbid\":\"5\"}}\n", i)
+		fmt.Fprintf(&in, "{\"op\":\"candidate\",\"index\":%d,\"accepted\":true,\"inventory\":{\"kind\":\"电影\",\"title\":\"film\",\"id\":\"5\"}}\n", i)
+		fmt.Fprintf(&in, "{\"op\":\"ready\",\"index\":%d,\"accepted\":true}\n", i)
 	}
 	in.WriteString("{\"op\":\"submit\",\"index\":0}\n")
 	if err := ClassicRSSScanCommand(context.Background(), path, &in, &observer); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(observer.String()), "\n")
-	if len(lines) != 14 {
+	if len(lines) != 20 {
 		t.Fatalf("unexpected scan events: %s", observer.String())
 	}
 	for i := 0; i < 6; i++ {
@@ -135,7 +139,7 @@ func TestClassicRSSScanSelection(t *testing.T) {
 			Site   struct{ Rule int }
 			Source map[string]any
 		}
-		if err := json.Unmarshal([]byte(lines[i*2+1]), &e); err != nil {
+		if err := json.Unmarshal([]byte(lines[i*3+1]), &e); err != nil {
 			t.Fatal(err)
 		}
 		if e.Site.Rule != 20+i || e.Source["filter_rule"] != nil && text(e.Source["filter_rule"]) != "" {
@@ -146,7 +150,74 @@ func TestClassicRSSScanSelection(t *testing.T) {
 		Op      string
 		Indices []int
 	}
-	if json.Unmarshal([]byte(lines[12]), &submit) != nil || submit.Op != "submit" || !reflect.DeepEqual(submit.Indices, []int{1, 6}) {
-		t.Fatalf("unexpected submit %s", lines[12])
+	if json.Unmarshal([]byte(lines[18]), &submit) != nil || submit.Op != "submit" || !reflect.DeepEqual(submit.Indices, []int{1, 6}) {
+		t.Fatalf("unexpected submit %s", lines[18])
+	}
+}
+
+func TestClassicRSSLibraryEligibility(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfg, []byte("app: {rmt_tmdbkey: test, tmdb_domain: test.invalid}\nmedia:\n  tv_path: "+dir+"\n  movie_path: "+dir+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	season := 0
+	tmdb := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "test.invalid" || r.URL.Path != "/3/tv/42" {
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":42,"name":"Show","seasons":[{"season_number":0,"episode_count":4}]}`)), Header: http.Header{}}, nil
+	})
+	scan := classicRSSScan{inventory: subscriptionService{configStore: config.NewStore(cfg), client: &http.Client{Transport: tmdb}}}
+	id := classicRSSIdentity{Kind: "TV", TMDBID: "42", Title: "Show", Year: "2026", Season: "S00"}
+	query := inventoryQuery{Kind: "电视剧", ID: "42", Title: "Show", Year: "2026"}
+	query.Metadata.Episodes.Season = &season
+	check := func(t *testing.T, episodes []map[string]any, start int, want []int, eligible bool) {
+		t.Helper()
+		r, err := newClassicRSSRule("TV", classicSubscriptionSource{Row: map[string]any{"ID": 1, "SEASON": "S00", "CURRENT_EP": start}, Episodes: episodes})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := scan.eligible(context.Background(), r, id, &query)
+		if err != nil || ok != eligible || ok && (got.Number != 0 || got.Total != 4 || !reflect.DeepEqual(got.Episodes, want)) {
+			t.Fatal(got, ok, err)
+		}
+	}
+	check(t, nil, 3, []int{3, 4}, true)
+	check(t, nil, 5, nil, false)
+	check(t, []map[string]any{{"EPISODES": ""}}, 0, nil, false)
+	check(t, []map[string]any{{"EPISODES": "2,4"}}, 0, []int{2, 4}, true)
+	r := classicRSSRule{kind: "TV"}
+	for _, invalid := range []*inventoryQuery{nil, {ID: "43", Title: "Show", Kind: "电视剧"}, {ID: "42", Title: "Show", Kind: "电影"}, {ID: "42", Title: "Show", Kind: "电视剧", LocalOnly: true}} {
+		if _, ok, err := scan.eligible(context.Background(), &r, id, invalid); ok || err == nil {
+			t.Fatal(invalid, ok, err)
+		}
+	}
+	if err := os.WriteFile(cfg, []byte("app: {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := scan.eligible(context.Background(), &r, id, &query); ok || err == nil {
+		t.Fatal("unknown inventory", ok, err)
+	}
+}
+
+func TestClassicRSSBatchScopes(t *testing.T) {
+	a, b := &classicRSSRule{token: "a"}, &classicRSSRule{token: "b"}
+	scan := classicRSSScan{accepted: []classicRSSChoice{
+		{index: 1, rule: a, show: "42", gap: &batchdownload.Season{Number: 0, Total: 2}},
+		{index: 2, rule: b, show: "42", gap: &batchdownload.Season{Number: 0, Total: 4, Episodes: []int{4}}},
+		{index: 3, rule: a, show: "42", gap: &batchdownload.Season{Number: 0, Total: 4, Episodes: []int{3}}},
+	}}
+	shows, receipts := scan.batchMissing([]int{1, 2})
+	got := shows["42"]
+	if receipts["a"].Total != 2 || !reflect.DeepEqual(receipts["b"].Episodes, []int{4}) {
+		t.Fatal(receipts)
+	}
+	_, receipts = scan.batchMissing([]int{1, 2, 3})
+	if !reflect.DeepEqual(receipts["a"].Episodes, []int{1, 2, 3}) || !reflect.DeepEqual(receipts["b"].Episodes, []int{4}) {
+		t.Fatal(receipts)
+	}
+	if !reflect.DeepEqual(got, []batchdownload.Season{{Number: 0, Total: 4, Episodes: []int{1, 2, 4}}}) || len(scan.accepted[0].gap.Episodes) != 0 {
+		t.Fatal(got)
 	}
 }

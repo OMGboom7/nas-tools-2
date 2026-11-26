@@ -816,6 +816,7 @@ class Downloader:
                 "show": str(item.tmdb_id), "title": str(item.title), "display": item.get_title_string(),
                 "label": item.get_season_episode_string(), "movie": item.type == MediaType.MOVIE,
                 "seasons": item.get_season_list(), "episodes": item.get_episode_list(),
+                "scope": getattr(item, "ordinary_scope", None),
                 "resource": str(item.res_order), "site": str(item.site_order), "seeders": str(item.seeders),
             })
         query = {"candidates": candidates, "missing": need_tvs or {}, "order": self._download_order or ""}
