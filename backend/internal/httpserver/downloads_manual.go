@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -203,6 +204,11 @@ func (service downloadService) submitWithReceipt(ctx context.Context, actor, mag
 	if classic != nil {
 		history = &classic.history
 	}
+	if receipt.Definition.SubscriptionKey != "" {
+		if err := service.downloaders.AcknowledgeOrdinaryRSS(persist, receipt, id); err != nil {
+			return "", true, downloaderconfig.ErrManualPending
+		}
+	}
 	if receipt.Definition.RSSKey != "" {
 		if err := service.downloaders.AcknowledgeRSS(persist, receipt, id); err != nil {
 			return "", true, downloaderconfig.ErrManualPending
@@ -327,6 +333,20 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 		return
 	}
 	d := receipt.Definition
+	if d.SubscriptionKey != "" {
+		recovered, e := service.downloaders.RestoreOrdinaryRSS(ctx, receipt.ID, actor)
+		if e == nil {
+			if item, err := service.downloaders.Get(ctx, d.DownloaderID); err == nil && bus.Hash(item) == d.ConfigDigest {
+				service.removeClassicMarker(ctx, item, recovered.TaskID, receipt.ID)
+			}
+			writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": publicManual(recovered)})
+			return
+		}
+		if !errors.Is(e, sql.ErrNoRows) {
+			writeAPIError(w, 409, 409, "original subscription acknowledgement could not be committed")
+			return
+		}
+	}
 	if d.RSSKey != "" {
 		recovered, ok, err := service.restoreRSSAcknowledgement(ctx, d.RSSKey, d.RSSTask, receipt.ID, actor)
 		if err != nil {

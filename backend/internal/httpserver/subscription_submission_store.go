@@ -23,6 +23,13 @@ var errSubscriptionSubmissionConflict = errors.New("subscription submission conf
 // Older databases have no native ledger yet. A present ledger with missing
 // shared claims is an error, not proof that an uncertain submission is absent.
 func readPendingSubscriptionSubmission(ctx context.Context, db subscriptionRowReader, kind string, id int64) (bool, error) {
+	if pending, err := ordinaryRSSBusy(ctx, db, kind, id, ""); err != nil || pending {
+		return pending, err
+	}
+	return readNativePendingSubscription(ctx, db, kind, id)
+}
+
+func readNativePendingSubscription(ctx context.Context, db subscriptionRowReader, kind string, id int64) (bool, error) {
 	if pending, err := pendingSeasonCohort(ctx, db, kind, id, "", 0); err != nil || pending {
 		return pending, err
 	}
@@ -114,6 +121,9 @@ func verifySubscriptionSnapshot(ctx context.Context, tx *sql.Tx, kind string, id
 }
 
 func pendingSubscriptionSubmission(ctx context.Context, tx *sql.Tx, kind string, id int64, plan subscriptionSearchPlan) (bool, error) {
+	if busy, err := ordinaryRSSBusy(ctx, tx, kind, id, ""); err != nil || busy {
+		return busy, err
+	}
 	var pending bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_SUBSCRIPTION_DOWNLOAD_CLAIMS s JOIN GO_RSS_DOWNLOAD_CLAIMS r USING(RESOURCE_KEY) WHERE r.STATE='pending' AND s.KIND=? AND (s.SUB_ID=? OR (s.MEDIA_ID=? AND s.SEASON=?)))`, kind, id, plan.mediaID, plan.season).Scan(&pending)
 	if err != nil || pending {

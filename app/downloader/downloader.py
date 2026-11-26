@@ -385,6 +385,8 @@ class Downloader:
         if rss_article is not None:
             sender = f"userrss:{rss_article['taskId']}"
             clients += ("pan115", "pikpak")
+        elif in_from == SearchType.RSS and getattr(media_info, "ordinary_receipt", None) and isinstance(content, str) and Torrent.is_magnet(content):
+            clients += ("pan115", "pikpak")
         recorded = bool(sender and downloader_conf and downloader_conf.get("type") in clients)
         if rss_article is not None and not recorded:
             return downloader_id, None, None, "自定义 RSS 下载器不可用"
@@ -496,6 +498,8 @@ class Downloader:
                     return downloader_id, None, None, "已有下载回执待核对，未重复提交"
                 if batch is not None:
                     batch["pending"] = False
+                if receipt.get("subscriptionRecorded"):
+                    media_info.subscription_recorded = True
                 download_id = receipt["task"]
                 if receipt["reused"]:
                     return downloader_id, download_id, container_path, f"已提交过此下载，原任务编号：{download_id}"
@@ -610,6 +614,8 @@ class Downloader:
         }
         if rss_article is not None:
             request["history"]["rss"] = rss_article
+        elif in_from == SearchType.RSS and getattr(media_info, "ordinary_receipt", None):
+            request["history"]["subscription"] = media_info.ordinary_receipt
         if proof:
             request["batch"] = proof
         if downloader_conf["type"] in ("qbittorrent", "transmission"):

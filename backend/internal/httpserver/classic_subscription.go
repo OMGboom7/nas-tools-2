@@ -12,6 +12,7 @@ import (
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/config"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 )
 
 type classicSubscriptionRequest struct {
@@ -19,14 +20,12 @@ type classicSubscriptionRequest struct {
 	ID                 int64
 	Episodes           []int
 	Rank, Highest      int
-	Notice             struct{ Title, Season, Type, Vote, Image, Link string }
+	Notice             downloaderconfig.SubscriptionNotice
 	Poster, Overview   *string
 	Markers            []classicRSSMarker
 }
 
-type classicRSSMarker struct {
-	Name, Enclosure, Type, Title, Year, Season, Episode string
-}
+type classicRSSMarker = downloaderconfig.SubscriptionMarker
 
 func recordClassicRSS(ctx context.Context, tx *sql.Tx, markers []classicRSSMarker) error {
 	for _, m := range markers {
@@ -55,27 +54,33 @@ type classicSubscriptionSource struct {
 // Capture the source, including its episode ledger, before calling a site,
 // media server or downloader. A delete and reinsert can reuse every SQL value.
 func captureClassicSubscription(ctx context.Context, tx *sql.Tx, kind string, id int64) (classicSubscriptionSource, error) {
-	var s classicSubscriptionSource
-	var err error
-	s.Row, err = readFuzzySourceRow(ctx, tx, kind, id)
+	s, err := readClassicSource(ctx, tx, kind, id)
 	if err != nil || s.Row == nil {
 		return s, err
-	}
-	if kind == "TV" {
-		s.Episodes, err = editionEpisodeRows(ctx, tx, id)
-		if err != nil {
-			return s, err
-		}
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO GO_CLASSIC_SUBSCRIPTION_VERSIONS(KIND,SUB_ID,STAMP) VALUES(?,?,randomblob(16)) ON CONFLICT DO NOTHING`, kind, id); err != nil {
 		return s, err
 	}
-	var stamp string
-	if err = tx.QueryRowContext(ctx, `SELECT hex(STAMP) FROM GO_CLASSIC_SUBSCRIPTION_VERSIONS WHERE KIND=? AND SUB_ID=?`, kind, id).Scan(&stamp); err != nil {
-		return s, err
+	return s.withStoredToken(ctx, tx, kind, id)
+}
+
+func readClassicSource(ctx context.Context, r subscriptionRowReader, kind string, id int64) (classicSubscriptionSource, error) {
+	var s classicSubscriptionSource
+	var err error
+	s.Row, err = readFuzzySourceRow(ctx, r, kind, id)
+	if err == nil && s.Row != nil && kind == "TV" {
+		s.Episodes, err = editionEpisodeRows(ctx, r, id)
 	}
-	s.Token = fuzzyDigest([]any{kind, id, stamp, s.Row, s.Episodes})
-	return s, nil
+	return s, err
+}
+
+func (s classicSubscriptionSource) withStoredToken(ctx context.Context, r subscriptionRowReader, kind string, id int64) (classicSubscriptionSource, error) {
+	var stamp string
+	err := r.QueryRowContext(ctx, `SELECT hex(STAMP) FROM GO_CLASSIC_SUBSCRIPTION_VERSIONS WHERE KIND=? AND SUB_ID=?`, kind, id).Scan(&stamp)
+	if err == nil {
+		s.Token = fuzzyDigest([]any{kind, id, stamp, s.Row, s.Episodes})
+	}
+	return s, err
 }
 
 func listClassicSubscriptions(ctx context.Context, tx *sql.Tx, q classicSubscriptionRequest) ([]classicSubscriptionSource, error) {
@@ -183,7 +188,7 @@ func applyClassicSubscription(ctx context.Context, tx *sql.Tx, op string, q clas
 	if err != nil || s.Token != q.Token {
 		return stale, err
 	}
-	pending, err := readPendingSubscriptionSubmission(ctx, tx, q.Kind, q.ID)
+	pending, err := readNativePendingSubscription(ctx, tx, q.Kind, q.ID)
 	if err != nil || pending {
 		return stale, err
 	}

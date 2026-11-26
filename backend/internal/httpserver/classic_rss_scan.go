@@ -152,6 +152,13 @@ func loadClassicRSSPlan(ctx context.Context, db *sql.DB) (classicRSSPlan, error)
 				slog.Warn("invalid RSS subscription", "kind", kind, "id", src.Row["ID"])
 				continue
 			}
+			busy, err := ordinaryRSSBusy(ctx, tx, kind, rule.id, rule.token)
+			if err != nil {
+				return p, err
+			}
+			if busy {
+				continue
+			}
 			rule.scope = scope
 			for _, site := range sites {
 				p.bySite[site.ID] = append(p.bySite[site.ID], rule)
@@ -341,6 +348,9 @@ func ClassicRSSScanCommand(ctx context.Context, path string, in io.Reader, out i
 		return err
 	}
 	defer db.Close()
+	if _, err := recoverOrdinaryRSS(ctx, db, service.databasePath); err != nil {
+		return err
+	}
 	p, err := loadClassicRSSPlan(ctx, db)
 	if err != nil {
 		return err
@@ -365,5 +375,9 @@ func ClassicRSSScanCommand(ctx context.Context, path string, in io.Reader, out i
 	if _, err = s.exchange(map[string]any{"op": "submit", "indices": indices}, 0); err != nil {
 		return err
 	}
-	return s.out.Encode(map[string]string{"op": "done"})
+	finished, err := recoverOrdinaryRSS(ctx, db, service.databasePath)
+	if err != nil {
+		return err
+	}
+	return s.out.Encode(map[string]any{"op": "done", "finished": finished})
 }

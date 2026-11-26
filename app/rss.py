@@ -13,7 +13,7 @@ from app.sites import Sites, SiteConf
 from app.subscribe import Subscribe
 from app.utils import ExceptionUtils, Torrent
 from app.utils.commons import singleton
-from app.utils.types import MediaType, SearchType
+from app.utils.types import EventType, MediaType, SearchType
 from config import go_helper_path
 
 lock = Lock()
@@ -60,6 +60,13 @@ class Rss:
                     if op == "done":
                         if scan.wait() != 0:
                             raise RuntimeError("RSS 扫描退出异常")
+                        finished = frame.get("finished") or {}
+                        for item, _ in accepted.values():
+                            source = getattr(item, "ordinary_source", None)
+                            if source and finished.get(source["token"]) == item.enclosure:
+                                finished.pop(source["token"])
+                                self.subscribe.eventmanager.send_event(EventType.SubscribeFinished,
+                                                                      {"media_info": item.to_dict(), "rssid": source["id"]})
                         return
                     if op in ("expired", "failed"):
                         name = frame["site"]
@@ -101,6 +108,8 @@ class Rss:
                                 by_season = missing.setdefault(tmdbid, {})
                                 for season in seasons:
                                     by_season[season["season"]] = season
+                        for item in items:
+                            item.ordinary_receipt = self._ordinary_receipt(item, missing.get(item.tmdb_id, {}))
                         self.download_rss_torrent(items, {k: list(v.values()) for k, v in missing.items()})
                     else:
                         raise ValueError("未知 RSS 扫描指令")
@@ -145,6 +154,7 @@ class Rss:
         if not match:
             return None
         gaps = {}
+        media.ordinary_source = source["progress"]
         media.subscription_progress = None
         if not source["fuzzy_match"]:
             if not media.tmdb_info and media.tmdb_id:
@@ -179,6 +189,31 @@ class Rss:
         media.set_download_info(download_setting=source["download_setting"], save_path=source["save_path"])
         return gaps
 
+    def _ordinary_receipt(self, media, gaps):
+        source = media.ordinary_source
+        receipt = {**source, "mode": "record", "marker": self.subscribe.rss_download_markers([media])[0]}
+        if not media.subscription_progress:
+            return receipt
+        season = media.subscription_season
+        receipt["season"] = season
+        if media.over_edition:
+            if not media.filter_rule or not media.res_order or media.get_episode_list():
+                return receipt
+            highest = self.filter.get_rule_first_order(rulegroup=media.filter_rule)
+            if highest is None:
+                receipt.update(mode="state", rank=int(media.res_order))
+                return receipt
+            receipt.update(mode="edition", rank=int(media.res_order), highest=int(highest))
+        elif source["kind"] == "TV":
+            row = gaps[season]
+            missing = row["episodes"] or range(1, int(row["total_episodes"]) + 1)
+            receipt.update(mode="episodes", missing=sorted(int(n) for n in missing),
+                           covered=media.get_episode_list())
+        else:
+            receipt["mode"] = "finish"
+        receipt.update(self.subscribe.completion_fields(media, source["kind"]))
+        return receipt
+
     def download_rss_torrent(self, rss_download_torrents, rss_no_exists):
         """
         根据缺失情况以及匹配到的结果选择下载种子
@@ -199,11 +234,13 @@ class Rss:
                 source = getattr(item, "subscription_progress", None)
                 if source:
                     groups.setdefault((source["kind"], source["id"]), []).append(item)
-                else:
+                elif not getattr(item, "subscription_recorded", False):
                     unscoped.append(item)
             if unscoped:
                 self.subscribe.record_rss_downloads(unscoped)
             for items in groups.values():
+                if all(getattr(item, "subscription_recorded", False) for item in items):
+                    continue
                 item = items[0]
                 source = item.subscription_progress
                 markers = self.subscribe.rss_download_markers(items)

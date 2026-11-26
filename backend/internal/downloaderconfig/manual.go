@@ -23,6 +23,7 @@ import (
 var ErrManualPending = errors.New("manual submission is pending or conflicts with its original scope")
 
 type ManualDefinition struct {
+	SubscriptionKey                                             string       `json:"subscriptionKey,omitempty"`
 	RSSTask                                                     int64        `json:"rssTask,omitempty"`
 	RSSKey                                                      string       `json:"rssKey,omitempty"`
 	Direct                                                      *DirectMedia `json:"direct,omitempty"`
@@ -100,6 +101,9 @@ func (s *Store) ReserveDirectFiles(ctx context.Context, d ManualDefinition, sele
 	return s.reserveManual(ctx, d, &selection, nil)
 }
 func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection *FileSelectionDefinition, classic *ClassicAcknowledgement) (ManualSubmission, bool, error) {
+	if d.SubscriptionKey != "" {
+		return ManualSubmission{}, false, ErrManualPending
+	} // derived only from the original private receipt
 	if d.DownloaderID < 1 || d.Actor == "" || d.Title == "" || len(d.InfoHash) != 40 && len(d.InfoHash) != 64 || len(d.ConfigDigest) != 64 || len(d.OptionsDigest) != 64 {
 		return ManualSubmission{}, false, ErrManualPending
 	}
@@ -126,6 +130,9 @@ func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection
 			return ManualSubmission{}, false, err
 		}
 		d.RSSTask, d.RSSKey = item.TaskID, rssreceipt.Key(item.Enclosure)
+	}
+	if classic != nil && classic.Subscription != nil {
+		d.SubscriptionKey = rssreceipt.Key(classic.Subscription.Marker.Enclosure)
 	}
 	if m := d.Direct; m != nil {
 		if !m.valid() {
@@ -162,7 +169,7 @@ func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection
 		if err != nil {
 			return r, false, err
 		}
-		if d.RSSKey != "" || d.Direct != nil || r.State != "submitted" || r.Definition.Actor != d.Actor || r.Definition.ConfigDigest != d.ConfigDigest || r.Definition.OptionsDigest != d.OptionsDigest {
+		if d.SubscriptionKey != "" || d.RSSKey != "" || d.Direct != nil || r.State != "submitted" || r.Definition.Actor != d.Actor || r.Definition.ConfigDigest != d.ConfigDigest || r.Definition.OptionsDigest != d.OptionsDigest {
 			return r, false, ErrManualPending
 		}
 		return r, false, nil
@@ -193,6 +200,11 @@ func (s *Store) reserveManual(ctx context.Context, d ManualDefinition, selection
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return r, false, ErrManualPending
+	}
+	if d.SubscriptionKey != "" {
+		if err := reserveOrdinaryRSS(ctx, tx, r.ID, classic.Subscription); err != nil {
+			return r, false, err
+		}
 	}
 	if classic != nil {
 		raw, err := json.Marshal(classic)
@@ -233,6 +245,11 @@ func (s *Store) RejectManual(ctx context.Context, r ManualSubmission, attempted 
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return ErrManualPending
 	}
+	if r.Definition.SubscriptionKey != "" {
+		if err := releaseOrdinaryRSS(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	if d := r.Definition; d.RSSKey != "" {
 		res, err := tx.ExecContext(ctx, `DELETE FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND abs(TASK_ID)=? AND STATE='pending' AND NOT EXISTS(SELECT 1 FROM GO_CUSTOM_RSS_ACKS WHERE SUBMISSION_ID=?)`, d.RSSKey, d.RSSTask, r.ID)
 		if err != nil {
@@ -264,6 +281,7 @@ func (s *Store) CompleteManual(ctx context.Context, r ManualSubmission, taskID, 
 // ClassicAcknowledgement contains private history fields for the original table.
 // They never enter the public receipt or the notification data.
 type ClassicAcknowledgement struct {
+	Subscription             *OrdinaryRSS        `json:"subscription,omitempty"`
 	RSS                      *rssreceipt.Article `json:"rss,omitempty"`
 	Files                    []torrentfiles.File `json:"files,omitempty"`
 	Paused                   bool                `json:"paused,omitempty"`
@@ -320,13 +338,30 @@ func (s *Store) CompleteWithHistory(ctx context.Context, r ManualSubmission, tas
 	if err != nil {
 		return err
 	}
-	if current.State == "submitted" && r.Definition.RSSKey != "" && current.TaskID == taskID && manualDocument(current) == manualDocument(r) {
+	if current.State == "submitted" && (r.Definition.RSSKey != "" || r.Definition.SubscriptionKey != "") && current.TaskID == taskID && manualDocument(current) == manualDocument(r) {
 		return nil // A concurrent recovery committed this exact acknowledgement.
 	}
 	if current.State != "pending" || manualDocument(current) != manualDocument(r) {
 		return ErrManualPending
 	}
 	d := r.Definition
+	if d.SubscriptionKey != "" {
+		if classic == nil || classic.Subscription == nil || rssreceipt.Key(classic.Subscription.Marker.Enclosure) != d.SubscriptionKey {
+			return ErrManualPending
+		}
+		raw, err := json.Marshal(classic.Subscription)
+		if err != nil {
+			return err
+		}
+		var matches bool
+		err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_ORDINARY_RSS_RECEIPTS WHERE ID=? AND RESOURCE_KEY=? AND DOCUMENT=? AND (ACK=? OR (ACK='' AND ?='verified_present')))`, r.ID, d.SubscriptionKey, string(raw), taskID, proof).Scan(&matches)
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return ErrManualPending
+		}
+	}
 	if d.RSSKey != "" {
 		if classic == nil || classic.RSS == nil || classic.RSS.TaskID != d.RSSTask || rssreceipt.Key(classic.RSS.Enclosure) != d.RSSKey {
 			return ErrManualPending

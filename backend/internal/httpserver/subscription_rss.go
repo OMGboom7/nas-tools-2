@@ -89,14 +89,6 @@ func (api *subscriptionRSSAPI) execute(ctx context.Context) (subscriptionRSSResu
 	api.running = true
 	api.mu.Unlock()
 	defer func() { api.mu.Lock(); api.running = false; api.mu.Unlock() }()
-	jobs, err := api.runner.selectScheduledSubscriptions(ctx, []string{"R"}, true)
-	if err != nil {
-		return fail(503, "subscription RSS queue is unavailable")
-	}
-	result.Subscriptions = len(jobs)
-	if len(jobs) == 0 {
-		return result, nil
-	}
 	unlock, err := holdRSSScan(ctx, api.runner.planner.runner.recognition.service.databasePath)
 	if err != nil {
 		if errors.Is(err, organization.ErrBusy) {
@@ -105,6 +97,24 @@ func (api *subscriptionRSSAPI) execute(ctx context.Context) (subscriptionRSSResu
 		return fail(503, "subscription RSS scan lock is unavailable")
 	}
 	defer unlock()
+	service := api.runner.planner.runner.recognition.service
+	db, err := service.openNativeSubscriptionWriteDatabase()
+	if err != nil {
+		return fail(503, "subscription database is unavailable")
+	}
+	_, err = recoverOrdinaryRSS(ctx, db, service.databasePath)
+	db.Close()
+	if err != nil {
+		return fail(503, "ordinary RSS acknowledgements are unavailable")
+	}
+	jobs, err := api.runner.selectScheduledSubscriptions(ctx, []string{"R"}, true)
+	if err != nil {
+		return fail(503, "subscription RSS queue is unavailable")
+	}
+	result.Subscriptions = len(jobs)
+	if len(jobs) == 0 {
+		return result, nil
+	}
 	sites, err := api.runner.planner.runner.download.sites.List(ctx)
 	if err != nil {
 		return fail(503, "subscription RSS sites are unavailable")

@@ -194,17 +194,21 @@ class Subscribe:
                 self.message.send_rss_success_message(in_from=in_from, media_info=media_info)
         return receipt["code"], receipt["message"], media_info
 
-    def finish_progress(self, source, media, operation="finish", **fields):
+    @staticmethod
+    def completion_fields(media, kind):
         domain = Config().get_domain()
         notice = {"title": media.get_title_string(), "season": media.get_season_string(),
                   "type": media.type.value, "vote": media.get_vote_string() if media.vote_average else "",
-                  "image": media.get_message_image() if source["kind"] == "TV" else "", "link": f"{domain}?next=downloaded" if domain else ""}
-        result = _progress(operation, **source, **fields, poster=media.get_poster_image(),
-                           overview=media.overview, notice=notice)
+                  "image": media.get_message_image() if kind == "TV" else "", "link": f"{domain}?next=downloaded" if domain else ""}
+        return {"poster": media.get_poster_image(), "overview": media.overview, "notice": notice}
+
+    def finish_progress(self, source, media, operation="finish", **fields):
+        completion = self.completion_fields(media, source["kind"])
+        result = _progress(operation, **source, **fields, **completion)
         if result["Status"] != "finished":
             return False
         self.eventmanager.send_event(EventType.SubscribeFinished, {"media_info": media.to_dict(), "rssid": source["id"]})
-        log.info(f"【Subscribe】{notice['title']} {notice['season']} 订阅完成")
+        log.info(f"【Subscribe】{media.get_title_string()} {media.get_season_string()} 订阅完成")
         return True
 
     def get_subscribe_movies(self, rid=None, state=None, progress=False):

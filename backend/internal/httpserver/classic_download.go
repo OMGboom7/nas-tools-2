@@ -89,7 +89,7 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 	if q.ClientType == "" {
 		q.ClientType = "aria2"
 	}
-	cloudRSS := q.History.RSS != nil && (q.ClientType == "pan115" || q.ClientType == "pikpak")
+	cloudRSS := (q.History.RSS != nil || q.History.Subscription != nil) && (q.ClientType == "pan115" || q.ClientType == "pikpak")
 	item, err := store.Get(ctx, q.Downloader)
 	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || (item.Type != "aria2" && item.Type != "qbittorrent" && item.Type != "transmission" && !cloudRSS) {
 		return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
@@ -143,6 +143,9 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		if err != nil {
 			return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
 		}
+		if h := result.history.Subscription; h != nil && h.Mode == "episodes" {
+			h.Covered = units[h.Season]
+		}
 		label := batchdownload.EpisodeLabel(units)
 		if media := result.history.Media; media != nil {
 			media["SE"] = &label
@@ -169,7 +172,25 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 			}
 		}
 	}
-	task, handled, err := service.submitWithReceipt(ctx, actor, q.Magnet, q.Torrent, &item, options, q.Title, q.Source, nil, nil, &result)
+	var check func() error
+	if h := result.history.Subscription; h != nil {
+		if !validOrdinaryRSS(h) || h.Marker.Name != q.Title || q.Channel != "RSS" || q.Sender != "rss:"+strconv.FormatInt(h.ID, 10) || q.History.RSS != nil {
+			return errManualConfiguration
+		}
+		if media := q.History.Media; media != nil {
+			if link := media["ENCLOSURE"]; link == nil || *link != h.Marker.Enclosure {
+				return errManualConfiguration
+			}
+		}
+		subscriptions := subscriptionService{databasePath: dbPath}
+		db, err := subscriptions.openNativeSubscriptionWriteDatabase()
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		check = func() error { return checkOrdinaryRSSSource(ctx, db, h) }
+	}
+	task, handled, err := service.submitWithReceipt(ctx, actor, q.Magnet, q.Torrent, &item, options, q.Title, q.Source, nil, check, &result)
 	reply := map[string]any{}
 	switch {
 	case errors.Is(err, rssreceipt.ErrProcessed):
@@ -180,6 +201,9 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		reply["rejected"] = true
 	default:
 		reply["task"], reply["reused"] = task, result.reused
+		if q.History.Subscription != nil {
+			reply["subscriptionRecorded"] = true
+		}
 	}
 	return json.NewEncoder(out).Encode(reply)
 }
