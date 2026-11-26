@@ -28,6 +28,7 @@ type manualDownloadFixture struct {
 	adds, reads                        int
 	lost, absent, authFailure, badHash bool
 	afterAdd                           func()
+	intentQuery                        string
 }
 
 func manualHTTPFixture(t *testing.T, kind string, modern bool) *manualDownloadFixture {
@@ -104,7 +105,11 @@ func manualHTTPFixture(t *testing.T, kind string, modern bool) *manualDownloadFi
 		}
 		if added {
 			var count int
-			if err := f.db.QueryRow(`SELECT COUNT(*) FROM GO_MANUAL_DOWNLOAD_SUBMISSIONS WHERE STATE='pending' AND json_extract(DOCUMENT,'$.InfoHash')=?`, f.hash).Scan(&count); err != nil || count != 1 {
+			query := f.intentQuery
+			if query == "" {
+				query = `SELECT COUNT(*) FROM GO_MANUAL_DOWNLOAD_SUBMISSIONS WHERE STATE='pending' AND json_extract(DOCUMENT,'$.InfoHash')=?`
+			}
+			if err := f.db.QueryRow(query, f.hash).Scan(&count); err != nil || count != 1 {
 				t.Fatal("durable intent missing before add", count, err)
 			}
 			f.adds++

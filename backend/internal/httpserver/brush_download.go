@@ -26,7 +26,12 @@ CREATE TRIGGER IF NOT EXISTS go_brush_submission_task_deleted AFTER DELETE ON SI
 BEGIN UPDATE GO_BRUSH_SUBMISSION SET task_id=NULL WHERE task_id=OLD.ID; END;
 CREATE TRIGGER IF NOT EXISTS go_brush_submission_task_retargeted AFTER UPDATE OF SITE,DOWNLOADER ON SITE_BRUSH_TASK
 WHEN OLD.SITE IS NOT NEW.SITE OR OLD.DOWNLOADER IS NOT NEW.DOWNLOADER
-BEGIN UPDATE GO_BRUSH_SUBMISSION SET task_id=NULL WHERE task_id=OLD.ID; END;`
+BEGIN UPDATE GO_BRUSH_SUBMISSION SET task_id=NULL WHERE task_id=OLD.ID; END;
+CREATE TABLE IF NOT EXISTS GO_BRUSH_WHOLE(
+ token TEXT PRIMARY KEY, config_digest TEXT NOT NULL, v1 TEXT NOT NULL, v2 TEXT NOT NULL, media TEXT, save_path TEXT
+);
+CREATE TRIGGER IF NOT EXISTS go_brush_whole_finished AFTER DELETE ON GO_BRUSH_SUBMISSION
+BEGIN DELETE FROM GO_BRUSH_WHOLE WHERE token=OLD.token; END;`
 
 type brushDownloadRequest struct {
 	TaskID, SiteID                                                               int64
@@ -57,7 +62,7 @@ func BrushDownloadCommand(ctx context.Context, path, op string, in io.Reader, ou
 	var result any
 	switch op {
 	case "reserve":
-		result, err = reserveBrushDownload(ctx, db, q)
+		result, err = reserveBrushDownload(ctx, db, q, nil)
 	case "accept", "selected":
 		if q.Token == "" || strings.TrimSpace(q.RemoteID) == "" || q.RemoteID == "0" || q.Size < 0 {
 			return errBrushDetail
@@ -75,7 +80,9 @@ func BrushDownloadCommand(ctx context.Context, path, op string, in io.Reader, ou
 		result, err = finishBrushDownload(ctx, db, q.Token)
 	case "recover":
 		if err = recoverBrushFractions(ctx, db, (config.Application{Path: path}).UserDatabasePath(), q.TaskID); err == nil {
-			result, err = recoverBrushDownloads(ctx, db, q.TaskID)
+			if err = recoverBrushWhole(ctx, db, (config.Application{Path: path}).UserDatabasePath(), q.TaskID); err == nil {
+				result, err = recoverBrushDownloads(ctx, db, q.TaskID)
+			}
 		}
 	default:
 		return errors.New("unknown brush download operation")
@@ -92,7 +99,7 @@ func acceptBrushDownload(ctx context.Context, db *sql.DB, token, hash string) er
 				AND NOT EXISTS(SELECT 1 FROM GO_BRUSH_SUBMISSION other WHERE other.downloader=GO_BRUSH_SUBMISSION.downloader AND other.remote_id=?)`, hash, token, hash, hash))
 }
 
-func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadRequest) (string, error) {
+func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadRequest, whole *brushWholeReceipt) (string, error) {
 	if q.TaskID <= 0 || q.SiteID <= 0 || q.FeedURL == "" || q.Title == "" || q.Enclosure == "" || q.Downloader == "" || q.Size < 0 {
 		return "", errBrushDetail
 	}
@@ -117,6 +124,12 @@ func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadReques
 	n, err := res.RowsAffected()
 	if err != nil || n == 0 {
 		return "", err
+	}
+	if whole != nil {
+		_, err = tx.ExecContext(ctx, "INSERT INTO GO_BRUSH_WHOLE(token,config_digest,v1,v2,media,save_path) VALUES(?,?,?,?,?,?)", token, whole.digest, whole.v1, whole.v2, whole.media, whole.path)
+		if err != nil {
+			return "", err
+		}
 	}
 	return token, tx.Commit()
 }
@@ -162,6 +175,9 @@ func finishBrushDownload(ctx context.Context, db *sql.DB, token string) (bool, e
 		if existing != 1 || same != 1 {
 			return false, errors.New("conflicting brush download history")
 		}
+	}
+	if err = recordWholeBrushMedia(ctx, tx, token, q.Downloader, q.RemoteID); err != nil {
+		return false, err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM GO_BRUSH_SUBMISSION WHERE token=?`, token); err != nil {
 		return false, err

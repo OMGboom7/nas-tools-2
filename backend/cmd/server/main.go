@@ -60,9 +60,9 @@ func main() {
 		return
 	}
 
-	if len(os.Args) == 2 && os.Args[1] == "brush-fraction" {
-		if err := httpserver.BrushFractionCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
-			slog.Error("brush file selection unavailable")
+	if len(os.Args) == 2 && (os.Args[1] == "brush-fraction" || os.Args[1] == "brush-whole") {
+		if err := httpserver.BrushSubmitCommand(context.Background(), config.ApplicationPath(), os.Args[1], os.Stdin, os.Stdout); err != nil {
+			slog.Error("brush download unavailable")
 			os.Exit(1)
 		}
 		return

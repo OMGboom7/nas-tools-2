@@ -38,29 +38,25 @@ class _BrushSubmission:
         self.selected_size = 0
         self.pending = False
 
-    def reserve(self):
-        self.token = _brush_download("reserve", **self.request)
-        return bool(self.token)
-
-    def accept(self, remote_id):
-        _brush_download("accept", token=self.token, remoteID=str(remote_id))
-
     def finish(self):
         if self.pending:
             raise subprocess.SubprocessError("刷流任务已启动，等待恢复记账")
-        _brush_download("finish", token=self.token)
+        if self.partial:
+            _brush_download("finish", token=self.token)
 
-    def download_partial(self, content, config, directory, local_dir, tags, category, upload, download, ratio, minutes):
-        request = dict(brush=self.request, rule=self.fraction_rule, ruleSource=self.fraction_source,
+    def submit(self, content, config, directory, local_dir, tags, category, upload, download, ratio, minutes, media, save_path):
+        request = dict(brush=self.request, rule=self.fraction_rule or {}, ruleSource=self.fraction_source,
                        clientType=config["type"], config=config["config"], directories=config["download_dir"],
                        directory=directory or "", localDir=local_dir or "", category=category or "", tags=tags,
                        uploadLimitKB=int(upload or 0), downloadLimitKB=int(download or 0),
                        ratioLimit=round(float(ratio or 0), 2), seedingTimeLimit=int(minutes or 0))
+        if not self.partial:
+            request.update(media=media, savePath=save_path)
         if isinstance(content, str):
             request["magnet"] = content
         else:
             request["torrent"] = base64.b64encode(content).decode("ascii")
-        reply = json.loads(run_go_helper("brush-fraction", payload=json.dumps(request).encode(), timeout=90))
+        reply = json.loads(run_go_helper("brush-fraction" if self.partial else "brush-whole", payload=json.dumps(request).encode(), timeout=90))
         self.token = reply["Token"]
         self.selected_size = reply["Size"]
         self.pending = reply["Pending"]

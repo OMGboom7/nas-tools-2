@@ -89,7 +89,7 @@ func TestBrushStartReservesOutstandingBytesAndRechecksTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := brushFractionRequest{Brush: brushDownloadRequest{TaskID: 1, Size: 900000000, RuleSource: "rss"}, LocalDir: dir, RuleSource: "fraction", Rule: brushFractionRule{After: "0,1"}}
+	q := brushSubmitRequest{Brush: brushDownloadRequest{TaskID: 1, Size: 900000000, RuleSource: "rss"}, LocalDir: dir, RuleSource: "fraction", Rule: brushFractionRule{After: "0,1"}}
 	start := func(token, hash string, size int64) error {
 		return reserveBrushStart(t.Context(), db, q, token, hash, "proof", "cfg", size)
 	}

@@ -393,10 +393,10 @@ class Downloader:
             return downloader_id, None, None, "自定义 RSS 下载器不可用"
         if batch and batch.get("partial") and not (recorded and downloader_conf["type"] in ("qbittorrent", "transmission")):
             return downloader_id, None, None, "当前下载器无法选择剧集文件"
-        partial_brush = brush_submission is not None and brush_submission.partial
-        downloader = None if recorded or partial_brush else self.__get_client(downloader_id)
+        brush = brush_submission is not None
+        downloader = None if recorded or brush else self.__get_client(downloader_id)
 
-        if not downloader_conf or (not recorded and not partial_brush and not downloader):
+        if not downloader_conf or (not recorded and not brush and not downloader):
             __download_fail("请检查下载设置所选下载器是否有效且启用")
             return None, None, None, f"下载设置 {download_setting_name} 所选下载器失效"
         downloader_name = downloader_conf.get("name")
@@ -477,14 +477,13 @@ class Downloader:
                     title, download_dir, print_url))
             # 下载ID
             download_id = None
-            if brush_submission is not None and not partial_brush and not brush_submission.reserve():
-                return downloader_id, None, None, "刷流任务已变更或资源已有下载记录"
             if batch is not None:
                 batch["pending"] = True
-            if partial_brush:
-                download_id = brush_submission.download_partial(content, downloader_conf, download_dir, container_path,
-                                                               tags, category, upload_limit, download_limit,
-                                                               ratio_limit, seeding_time_limit)
+            if brush:
+                download_id = brush_submission.submit(
+                    content, downloader_conf, download_dir, container_path, tags, category, upload_limit,
+                    download_limit, ratio_limit, seeding_time_limit,
+                    None if brush_submission.partial else download_history_media(media_info), save_dir)
                 if not download_id:
                     return downloader_id, None, None, "刷流资源已预留或任务已变更"
                 ret = True
@@ -556,9 +555,7 @@ class Downloader:
                 return downloader_id, None, None, "下载器已响应，任务编号尚未确认，请先核对原任务"
             # 添加下载成功
             if ret:
-                if brush_submission is not None and not partial_brush:
-                    brush_submission.accept(download_id)
-                if not partial_brush and not recorded and downloader.get_type() == DownloaderType.TR:
+                if not brush and not recorded and downloader.get_type() == DownloaderType.TR:
                     downloader.change_torrent(tid=download_id,
                                               tag=tags,
                                               upload_limit=upload_limit,
@@ -567,7 +564,7 @@ class Downloader:
                                               seeding_time_limit=seeding_time_limit)
                 # 登记下载历史，记录下载目录
                 warning = ""
-                if not recorded:
+                if not recorded and (not brush or brush_submission.partial):
                     try:
                         self.dbhelper.insert_download_history(media_info=media_info, downloader=downloader_id,
                                                               download_id=download_id, save_dir=save_dir)

@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +20,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/diskusage"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/downloadhistory"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
 	"github.com/0xforee/nas-tools/backend/internal/torrentfiles"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
@@ -31,8 +31,10 @@ CREATE TABLE IF NOT EXISTS GO_BRUSH_FRACTION(token TEXT PRIMARY KEY, config_dige
 CREATE TRIGGER IF NOT EXISTS go_brush_fraction_finished AFTER DELETE ON GO_BRUSH_SUBMISSION BEGIN
  DELETE FROM GO_BRUSH_FRACTION WHERE token=OLD.token; END;`
 
-type brushFractionRequest struct {
+type brushSubmitRequest struct {
 	Brush                                                         brushDownloadRequest
+	Media                                                         downloadhistory.Media
+	SavePath                                                      *string
 	Rule                                                          brushFractionRule
 	RuleSource, ClientType, Directory, LocalDir, Category, Magnet string
 	Config, Directories                                           json.RawMessage
@@ -41,18 +43,18 @@ type brushFractionRequest struct {
 	UploadLimitKB, DownloadLimitKB, SeedingTimeLimit              int
 	RatioLimit                                                    float64
 }
-type brushFractionResult struct {
+type brushSubmitResult struct {
 	Pending     bool
 	Token, Task string
 	Size        int64
 }
 
-func BrushFractionCommand(ctx context.Context, path string, in io.Reader, out io.Writer) error {
+func BrushSubmitCommand(ctx context.Context, path, op string, in io.Reader, out io.Writer) error {
 	reader := &io.LimitedReader{R: in, N: 16 << 20}
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
-	var q brushFractionRequest
-	if decoder.Decode(&q) != nil || decoder.Decode(new(any)) != io.EOF || reader.N == 0 {
+	var q brushSubmitRequest
+	if decoder.Decode(&q) != nil || decoder.Decode(new(any)) != io.EOF || reader.N == 0 || op != "brush-whole" && op != "brush-fraction" || q.Brush.Partial != (op == "brush-fraction") {
 		return errBrushFraction
 	}
 	release, err := backuprestore.HoldStartup(path)
@@ -87,7 +89,20 @@ func BrushFractionCommand(ctx context.Context, path string, in io.Reader, out io
 	}
 	ctx, cancel := context.WithTimeout(ctx, 80*time.Second)
 	defer cancel()
-	result, err := s.submitBrushFraction(ctx, db, q)
+	id, err := strconv.ParseInt(q.Brush.Downloader, 10, 64)
+	if err != nil || (q.Torrent == nil) == (q.Magnet == "") {
+		return errBrushDetail
+	}
+	item, err := store.Get(ctx, id)
+	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || !sameClassicJSON(item.Config, q.Config) || !sameClassicJSON(item.DownloadDir, q.Directories) {
+		return errBrushDetail
+	}
+	var result brushSubmitResult
+	if q.Brush.Partial {
+		result, err = s.submitBrushFraction(ctx, db, item, q)
+	} else {
+		result, err = s.submitBrushWhole(ctx, db, item, q)
+	}
 	if err != nil {
 		return err
 	}
@@ -98,7 +113,7 @@ type brushBudgetReader interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-func brushFractionBudget(ctx context.Context, db brushBudgetReader, q brushFractionRequest) (int64, error) {
+func brushFractionBudget(ctx context.Context, db brushBudgetReader, q brushSubmitRequest) (int64, error) {
 	info, err := os.Stat(q.LocalDir)
 	if err != nil || !info.IsDir() {
 		return 0, errBrushFraction
@@ -129,17 +144,12 @@ func brushFractionBudget(ctx context.Context, db brushBudgetReader, q brushFract
 	return q.Rule.limit(q.Brush.Size, remaining, int64(min(space.AvailableBytes, float64(1<<62))))
 }
 
-func (s downloadService) submitBrushFraction(ctx context.Context, db *sql.DB, q brushFractionRequest) (brushFractionResult, error) {
-	var result brushFractionResult
-	id, err := strconv.ParseInt(q.Brush.Downloader, 10, 64)
-	if err != nil || !q.Brush.Partial || (q.Torrent == nil) == (q.Magnet == "") {
+func (s downloadService) submitBrushFraction(ctx context.Context, db *sql.DB, item downloaderconfig.Downloader, q brushSubmitRequest) (brushSubmitResult, error) {
+	var result brushSubmitResult
+	if item.Type != "transmission" && item.Type != "qbittorrent" {
 		return result, errBrushFraction
 	}
-	item, err := s.downloaders.Get(ctx, id)
-	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || item.Type != "transmission" && item.Type != "qbittorrent" || !sameClassicJSON(item.Config, q.Config) || !sameClassicJSON(item.DownloadDir, q.Directories) {
-		return result, errBrushFraction
-	}
-	if _, err = db.ExecContext(ctx, brushReceiptSchema+brushFractionSchema); err != nil {
+	if _, err := db.ExecContext(ctx, brushReceiptSchema+brushFractionSchema); err != nil {
 		return result, err
 	}
 	limit, err := brushFractionBudget(ctx, db, q)
@@ -147,7 +157,6 @@ func (s downloadService) submitBrushFraction(ctx context.Context, db *sql.DB, q 
 		return result, err
 	}
 	var manifest []torrentfiles.File
-	var identity torrentmeta.TransferMetadata
 	if q.Torrent != nil {
 		_, manifest, err = torrentmeta.Manifest(q.Torrent)
 		if err != nil {
@@ -156,32 +165,17 @@ func (s downloadService) submitBrushFraction(ctx context.Context, db *sql.DB, q 
 		if _, err = planBrushFiles(manifest, limit); err != nil {
 			return result, err
 		}
-		identity, err = torrentmeta.ClassicIdentity(q.Torrent)
-	} else {
-		q.Magnet = classicTorrentMagnet(q.Magnet, item.Type == "qbittorrent")
-		u, e := url.Parse(q.Magnet)
-		if q.Magnet == "" || e != nil {
-			return result, errBrushFraction
-		}
-		identity.V1Hash, identity.V2Hash, err = torrentmeta.MagnetTopics(u.Query()["xt"])
 	}
+	identity, err := q.contentIdentity(item.Type)
 	if err != nil {
 		return result, err
 	}
 	q.Brush.FractionSource = &q.RuleSource
-	token, err := reserveBrushDownload(ctx, db, q.Brush)
+	token, err := reserveBrushDownload(ctx, db, q.Brush, nil)
 	if err != nil || token == "" {
 		return result, err
 	}
-	marker := brushMarker(token)
-	opts := downloadAddOptions{SavePath: q.Directory, Category: q.Category, Tags: append(slices.Clone(q.Tags), marker), Paused: true, UploadLimitKB: q.UploadLimitKB, DownloadLimitKB: q.DownloadLimitKB, RatioLimit: q.RatioLimit, SeedingTimeLimit: q.SeedingTimeLimit, ApplyTransmissionLimits: item.Type == "transmission"}
-	if item.Type == "transmission" {
-		opts.Category = ""
-	}
-	classic := classicDownloadResult{receipt: bus.Hash(token)[:32]}
-	classic.history.V1Hash, classic.history.V2Hash = identity.V1Hash, identity.V2Hash
-	s.classic = &classic
-	hash, handled, err := s.nativeAddConfiguredDownload(ctx, item, q.Magnet, q.Torrent, opts)
+	hash, handled, err := s.addBrushDownload(ctx, item, q, token, identity)
 	if err != nil || !handled || hash == "" {
 		return result, errBrushFraction
 	}
@@ -255,7 +249,7 @@ func (s downloadService) submitBrushFraction(ctx context.Context, db *sql.DB, q 
 	// A verified remote start is still a successful download if its final
 	// local write failed. Preserve the ordinary download history as well.
 	err = markBrushFractionReady(ctx, db, token, hash, proof)
-	return brushFractionResult{Token: token, Task: hash, Size: plan.Size, Pending: err != nil}, nil
+	return brushSubmitResult{Token: token, Task: hash, Size: plan.Size, Pending: err != nil}, nil
 }
 
 func (s downloadService) applyBrushPriorities(ctx context.Context, item downloaderconfig.Downloader, hash string, plan brushFilePlan, snapshot func() (torrentfiles.Snapshot, error)) (string, error) {
@@ -315,7 +309,7 @@ func (s downloadService) applyBrushPriorities(ctx context.Context, item download
 // Reserve bytes under SQLite's write lock before starting, including on
 // platforms without filesystem job locks. A second plan must still fit next
 // to every outstanding start even when it computed its selection earlier.
-func reserveBrushStart(ctx context.Context, db *sql.DB, q brushFractionRequest, token, hash, proof, digest string, size int64) error {
+func reserveBrushStart(ctx context.Context, db *sql.DB, q brushSubmitRequest, token, hash, proof, digest string, size int64) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
