@@ -18,6 +18,7 @@ func Command(ctx context.Context, path, op string, in io.Reader, out io.Writer) 
 		ID         int64
 		Flag, Uses string
 		Articles   []Article
+		Marker     *torrentMarker
 	}
 	input := &io.LimitedReader{R: in, N: 8 << 20}
 	dec := json.NewDecoder(input)
@@ -42,6 +43,17 @@ func Command(ctx context.Context, path, op string, in io.Reader, out io.Writer) 
 	defer store.Close()
 	var result any
 	switch op {
+	case "has-marker", "insert-marker", "remove-marker":
+		if q.Marker == nil {
+			return errors.New("missing RSS marker")
+		}
+		result, err = store.applyMarker(ctx, op, *q.Marker)
+	case "clear-cache":
+		err = store.ClearSubscriptionCache(ctx)
+		result = true
+	case "clear-markers":
+		_, err = store.database.ExecContext(ctx, "DELETE FROM RSS_TORRENTS")
+		result = true
 	case "processed":
 		flags := make([]bool, len(q.Articles))
 		for i, item := range q.Articles {

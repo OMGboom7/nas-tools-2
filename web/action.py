@@ -1937,8 +1937,7 @@ class WebAction:
         """
         清空RSS历史记录
         """
-        RssHelper().truncate_rss_history()
-        Subscribe().truncate_rss_episodes()
+        RssHelper.clear_subscription_cache()
         return {"code": 0}
 
     @staticmethod

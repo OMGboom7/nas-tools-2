@@ -251,7 +251,7 @@ func requiresSubscriptionPermission(request *http.Request) bool {
 		return true
 	}
 	if request.Method == "POST" {
-		for _, action := range []string{"add", "delete", "redo", "history/delete", "search"} {
+		for _, action := range []string{"add", "delete", "redo", "history/delete", "cache/delete", "search"} {
 			if path == "/api/v1/subscribe/"+action {
 				return true
 			}
@@ -287,7 +287,7 @@ func isMigratedProtectedPath(path string) bool {
 			return true
 		}
 	}
-	if path == "/api/v1/subscribe/add" || path == "/api/v1/subscribe/delete" || path == "/api/v1/subscribe/redo" || path == "/api/v1/subscribe/history/delete" {
+	if path == "/api/v1/subscribe/add" || path == "/api/v1/subscribe/delete" || path == "/api/v1/subscribe/redo" || path == "/api/v1/subscribe/history/delete" || path == "/api/v1/subscribe/cache/delete" {
 		return true
 	}
 	for _, prefix := range []string{

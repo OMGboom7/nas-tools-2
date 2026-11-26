@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -281,8 +282,14 @@ func (batch *subscriptionRSSBatch) feed(ctx context.Context, site siteconfig.Sit
 			entry.err = err
 			return
 		}
+		if siteFeedExpired(body) {
+			entry.err = errExpiredSiteFeed
+			return
+		}
 		entry.resources, entry.err = parseSubscriptionRSS(body)
+		feedURL, _ := url.Parse(site.RSSURL)
 		for i := range entry.resources {
+			entry.resources[i].Title = siteFeedTitle(feedURL.Hostname(), entry.resources[i].Title)
 			entry.resources[i].Indexer = site.Name
 			entry.resources[i].IndexerID = strconv.FormatInt(site.ID, 10)
 		}

@@ -450,13 +450,6 @@ class DbHelper:
         self._db.query(TRANSFERBLACKLIST).delete()
         self._db.query(SYNCHISTORY).delete()
 
-    @DbPersist(_db)
-    def truncate_rss_episodes(self):
-        """
-        清空RSS历史记录
-        """
-        self._db.query(RSSTVEPISODES).delete()
-
     def get_config_site(self):
         """
         查询所有站点信息

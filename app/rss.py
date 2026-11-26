@@ -131,14 +131,13 @@ class Rss:
                     site_order = 100 - int(site_info.get("pri"))
                 else:
                     site_order = 0
-                rss_acticles = self.rsshelper.parse_rssxml(url=rss_url)
+                rss_acticles = self.rsshelper.parse_rssxml(url=rss_url, proxy=site_proxy, exclude_recorded=True)
                 if rss_acticles is None:
                     # RSS链接过期
                     log.error(f"【Rss】站点 {site_name} RSS链接已过期，请重新获取！")
                     # 发送消息
                     self.message.send_site_message(title="【RSS链接过期提醒】",
-                                                   text=f"站点：{site_name}\n"
-                                                        f"链接：{rss_url}")
+                                                   text=f"站点：{site_name}，请在站点设置中更新 RSS 链接。")
                     continue
                 if not rss_acticles:
                     log.warn(f"【Rss】{site_name} 未下载到数据")
@@ -159,10 +158,6 @@ class Rss:
                         size = article.get('size')
                         # 开始处理
                         log.info(f"【Rss】开始处理：{title}")
-                        # 检查这个种子是不是下过了
-                        if self.rsshelper.is_rssd_by_enclosure(enclosure):
-                            log.info(f"【Rss】{title} 已成功订阅过")
-                            continue
                         # 识别种子名称，开始搜索TMDB
                         media_info = MetaInfo(title=title)
                         cache_info = self.media.get_cache_info(media_info)

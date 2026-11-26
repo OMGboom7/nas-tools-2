@@ -15,6 +15,7 @@ import (
 
 type subscriptionRSSItem struct {
 	Title       string `xml:"title"`
+	PubDate     string `xml:"pubDate"`
 	Description string `xml:"description"`
 	Link        string `xml:"link"`
 	Enclosure   struct {
@@ -27,7 +28,9 @@ type subscriptionRSSItem struct {
 	} `xml:"attr"`
 }
 
-func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
+// Both readers validate the complete document before accepting its items. The
+// original site reader also accepts RSS 1.0 and feeds with wrapper elements.
+func readSiteFeedItems(body []byte, strictChannel bool) ([]subscriptionRSSItem, error) {
 	if len(body) > 4<<20 {
 		return nil, errors.New("RSS feed exceeded size limit")
 	}
@@ -62,7 +65,7 @@ func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(body))
 	decoder.CharsetReader = charset.NewReaderLabel
-	resources := []externalindexer.Resource{}
+	var rawItems []subscriptionRSSItem
 	depth, channels, items := 0, 0, 0
 	rootSeen := false
 	inChannel := false
@@ -80,7 +83,7 @@ func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
 		case xml.StartElement:
 			depth++
 			if depth == 1 {
-				if rootSeen || node.Name.Local != "rss" {
+				if rootSeen || strictChannel && node.Name.Local != "rss" {
 					return nil, errors.New("unsupported RSS document")
 				}
 				rootSeen = true
@@ -89,13 +92,13 @@ func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
 				channels++
 				inChannel = true
 			}
-			if depth == 2 && !inChannel {
+			if strictChannel && depth == 2 && !inChannel {
 				return nil, errors.New("invalid RSS channel structure")
 			}
 			if depth > 64 {
 				return nil, errors.New("RSS nesting exceeded limit")
 			}
-			if depth == 3 && node.Name.Local == "item" && inChannel {
+			if node.Name.Local == "item" && (!strictChannel || depth == 3 && inChannel) {
 				items++
 				if items > 1000 {
 					return nil, errors.New("RSS item limit exceeded")
@@ -105,67 +108,7 @@ func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
 					return nil, err
 				}
 				depth--
-				title := strings.TrimSpace(item.Title)
-				if title == "" {
-					continue
-				}
-				if len(title) > 4096 || len(item.Description) > 64<<10 {
-					return nil, errors.New("RSS item exceeded size limit")
-				}
-				enclosure, page := strings.TrimSpace(item.Enclosure.URL), strings.TrimSpace(item.Link)
-				if enclosure == "" {
-					enclosure, page = page, ""
-				}
-				if enclosure == "" {
-					continue
-				}
-				if len(enclosure) > 4096 || !rssDownloadURLAllowed(enclosure) || len(page) > 4096 || page != "" && (!rssDownloadURLAllowed(page) || validMagnet(page)) {
-					return nil, errors.New("invalid RSS resource locator")
-				}
-				resource := externalindexer.Resource{Title: title, Description: item.Description, DownloadURL: enclosure, PageURL: page}
-				if item.Enclosure.Length != "" {
-					n, err := strconv.ParseInt(strings.TrimSpace(item.Enclosure.Length), 10, 64)
-					if err != nil || n < 0 {
-						return nil, errors.New("invalid RSS resource size")
-					}
-					resource.Size = n
-				}
-				seen := map[string]bool{}
-				for _, attr := range item.Attributes {
-					name := strings.ToLower(attr.Name)
-					if name != "seeders" && name != "downloadvolumefactor" && name != "uploadvolumefactor" && name != "minimumseedtime" && name != "minimumratio" {
-						continue
-					}
-					if seen[name] {
-						return nil, errors.New("duplicate RSS attribute")
-					}
-					seen[name] = true
-					if name == "seeders" || name == "minimumseedtime" {
-						n, err := strconv.ParseInt(attr.Value, 10, 64)
-						if err != nil || n < 0 {
-							return nil, errors.New("invalid RSS integer attribute")
-						}
-						if name == "seeders" {
-							resource.Seeders = &n
-						} else {
-							resource.MinimumSeedTime = &n
-						}
-					} else {
-						n, err := strconv.ParseFloat(attr.Value, 64)
-						if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
-							return nil, errors.New("invalid RSS numeric attribute")
-						}
-						switch name {
-						case "minimumratio":
-							resource.MinimumRatio = &n
-						case "uploadvolumefactor":
-							resource.UploadFactor = &n
-						case "downloadvolumefactor":
-							resource.DownloadFactor = &n
-						}
-					}
-				}
-				resources = append(resources, resource)
+				rawItems = append(rawItems, item)
 			}
 		case xml.EndElement:
 			if depth == 2 {
@@ -178,8 +121,80 @@ func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
 			}
 		}
 	}
-	if !rootSeen || channels != 1 || depth != 0 {
+	if !rootSeen || strictChannel && channels != 1 || depth != 0 {
 		return nil, errors.New("invalid RSS document structure")
+	}
+	return rawItems, nil
+}
+
+func parseSubscriptionRSS(body []byte) ([]externalindexer.Resource, error) {
+	items, err := readSiteFeedItems(body, true)
+	if err != nil {
+		return nil, err
+	}
+	resources := make([]externalindexer.Resource, 0, len(items))
+	for _, item := range items {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			continue
+		}
+		if len(title) > 4096 || len(item.Description) > 64<<10 {
+			return nil, errors.New("RSS item exceeded size limit")
+		}
+		enclosure, page := strings.TrimSpace(item.Enclosure.URL), strings.TrimSpace(item.Link)
+		if enclosure == "" {
+			enclosure, page = page, ""
+		}
+		if enclosure == "" {
+			continue
+		}
+		if len(enclosure) > 4096 || !rssDownloadURLAllowed(enclosure) || len(page) > 4096 || page != "" && (!rssDownloadURLAllowed(page) || validMagnet(page)) {
+			return nil, errors.New("invalid RSS resource locator")
+		}
+		resource := externalindexer.Resource{Title: title, Description: item.Description, DownloadURL: enclosure, PageURL: page}
+		if item.Enclosure.Length != "" {
+			n, err := strconv.ParseInt(strings.TrimSpace(item.Enclosure.Length), 10, 64)
+			if err != nil || n < 0 {
+				return nil, errors.New("invalid RSS resource size")
+			}
+			resource.Size = n
+		}
+		seen := map[string]bool{}
+		for _, attr := range item.Attributes {
+			name := strings.ToLower(attr.Name)
+			if name != "seeders" && name != "downloadvolumefactor" && name != "uploadvolumefactor" && name != "minimumseedtime" && name != "minimumratio" {
+				continue
+			}
+			if seen[name] {
+				return nil, errors.New("duplicate RSS attribute")
+			}
+			seen[name] = true
+			if name == "seeders" || name == "minimumseedtime" {
+				n, err := strconv.ParseInt(attr.Value, 10, 64)
+				if err != nil || n < 0 {
+					return nil, errors.New("invalid RSS integer attribute")
+				}
+				if name == "seeders" {
+					resource.Seeders = &n
+				} else {
+					resource.MinimumSeedTime = &n
+				}
+			} else {
+				n, err := strconv.ParseFloat(attr.Value, 64)
+				if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 {
+					return nil, errors.New("invalid RSS numeric attribute")
+				}
+				switch name {
+				case "minimumratio":
+					resource.MinimumRatio = &n
+				case "uploadvolumefactor":
+					resource.UploadFactor = &n
+				case "downloadvolumefactor":
+					resource.DownloadFactor = &n
+				}
+			}
+		}
+		resources = append(resources, resource)
 	}
 	return resources, nil
 }

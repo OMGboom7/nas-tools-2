@@ -613,6 +613,17 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 	mux.HandleFunc("POST /api/v1/subscribe/redo", subscriptions.withNativeStorage(subscriptions.serveCompatSubscriptionHistoryRedo))
 	mux.HandleFunc("POST /api/v1/subscribe/add", subscriptions.withNativeStorage(subscriptions.serveCompatSubscriptionUpsert))
 	mux.HandleFunc("POST /api/v1/subscribe/delete", subscriptions.withNativeStorage(subscriptions.serveCompatSubscriptionRemove))
+	mux.HandleFunc("POST /api/v1/subscribe/cache/delete", func(w http.ResponseWriter, r *http.Request) {
+		if nativeAuth == nil || nativeRSSTasks == nil {
+			writeAPIError(w, 503, 503, "subscription cache unavailable")
+			return
+		}
+		if err := nativeRSSTasks.ClearSubscriptionCache(r.Context()); err != nil {
+			writeAPIError(w, 502, 502, "subscription cache reset failed")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"code": 0})
+	})
 	mux.HandleFunc("POST /api/v1/subscribe/history/delete", subscriptions.withNativeStorage(subscriptions.serveCompatHistoryRemove))
 	mux.HandleFunc("POST /api/v1/subscribe/search", subscriptionRunner.serveCompatSearch)
 	mux.HandleFunc("POST /api/v1/subscriptions", subscriptions.upsert)
