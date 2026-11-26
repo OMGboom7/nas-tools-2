@@ -106,7 +106,7 @@ var errDownloadOptionsUnsupported = errors.New("downloader does not support thes
 // Only validation/authentication failures known to precede acceptance may be
 // retried. Connection errors and malformed replies remain ambiguous.
 func downloadDefinitelyNotSubmitted(handled bool, err error) bool {
-	return !handled || errors.Is(err, errPTAdmissionBlocked) || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, transmission.ErrAuthentication) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration) || errors.Is(err, pikpak.ErrConfiguration) || errors.Is(err, pikpak.ErrNotSubmitted)
+	return !handled || errors.Is(err, errPTAdmissionBlocked) || errors.Is(err, errDownloadOptionsUnsupported) || errors.Is(err, qbittorrent.ErrConfiguration) || errors.Is(err, qbittorrent.ErrAuthentication) || errors.Is(err, transmission.ErrConfiguration) || errors.Is(err, transmission.ErrAuthentication) || errors.Is(err, aria2.ErrConfiguration) || errors.Is(err, pan115.ErrConfiguration) || errors.Is(err, pikpak.ErrConfiguration) || errors.Is(err, pikpak.ErrNotSubmitted) || errors.Is(err, pan115.ErrNotSubmitted)
 }
 
 type downloadAddOptions struct {
@@ -207,6 +207,8 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		id, err := client.AddMagnet(ctx, magnet, options.SavePath)
 		return id, true, err
 	case "pan115":
+		path := options.SavePath
+		options.SavePath = ""
 		if !options.empty() {
 			return "", true, errDownloadOptionsUnsupported
 		}
@@ -214,7 +216,7 @@ func (service downloadService) nativeAddConfiguredDownload(ctx context.Context, 
 		if err != nil {
 			return "", true, err
 		}
-		id, err := client.AddMagnet(ctx, magnet)
+		id, err := client.AddMagnetTo(ctx, magnet, path)
 		return id, true, err
 	case "qbittorrent":
 		if options.Seeding != nil {

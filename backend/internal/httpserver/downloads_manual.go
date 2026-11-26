@@ -203,6 +203,11 @@ func (service downloadService) submitWithReceipt(ctx context.Context, actor, mag
 	if classic != nil {
 		history = &classic.history
 	}
+	if receipt.Definition.RSSKey != "" {
+		if err := service.downloaders.AcknowledgeRSS(persist, receipt, id); err != nil {
+			return "", true, downloaderconfig.ErrManualPending
+		}
+	}
 	if err := service.downloaders.CompleteWithHistory(persist, receipt, id, "acknowledged", actor, history); err != nil {
 		return "", true, downloaderconfig.ErrManualPending
 	}
@@ -322,6 +327,17 @@ func (service downloadService) serveManualReconcile(w http.ResponseWriter, r *ht
 		return
 	}
 	d := receipt.Definition
+	if d.RSSKey != "" {
+		recovered, ok, err := service.restoreRSSAcknowledgement(ctx, d.RSSKey, d.RSSTask, receipt.ID, actor)
+		if err != nil {
+			writeAPIError(w, 409, 409, "original RSS acknowledgement could not be committed")
+			return
+		}
+		if ok {
+			writeJSON(w, 200, map[string]any{"code": 0, "success": true, "data": publicManual(recovered)})
+			return
+		}
+	}
 	var classic *downloaderconfig.ClassicAcknowledgement
 	if strings.HasPrefix(d.Actor, "classic:") {
 		history, e := service.downloaders.ClassicPendingHistory(ctx, receipt.ID)

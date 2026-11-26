@@ -107,20 +107,15 @@ func (api rssItemDownloadAPI) serveHTTP(response http.ResponseWriter, request *h
 		return
 	}
 	for _, article := range articles {
-		processed, err := api.tasks.IsProcessed(ctx, "D", article.Title, article.Year, article.Enclosure)
-		if err != nil {
-			writeAPIError(response, 503, 503, "RSS download history is unavailable")
-			return
-		}
-		if processed {
-			continue
-		}
-		pending, err := api.tasks.HasPendingDownload(ctx, article.Enclosure)
+		state, err := api.service.rssArticleState(ctx, api.tasks, taskID, rsstaskconfig.Article{Title: article.Title, Year: article.Year, Enclosure: article.Enclosure})
 		if err != nil {
 			writeAPIError(response, 503, 503, "RSS submission state is unavailable")
 			return
 		}
-		if pending {
+		if state == "processed" {
+			continue
+		}
+		if state == "pending" {
 			writeAPIError(response, 409, 409, "RSS submission requires downloader verification before retrying")
 			return
 		}
@@ -197,6 +192,7 @@ func rssOptionsSupported(kind string, options downloadAddOptions) bool {
 	case "aria2":
 		return options.Category == "" && len(options.Tags) == 0 && options.RatioLimit == 0 && options.SeedingTimeLimit == 0
 	case "pan115":
+		options.SavePath = "" // The client resolves the configured 115 directory before adding the magnet.
 		return options.empty()
 	case "pikpak":
 		return pikpakDownloadOptionsSupported(options)

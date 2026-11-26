@@ -2,37 +2,25 @@ package rsstaskconfig
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/rssreceipt"
 )
 
-type TVIdentity struct {
-	ID, Name string
-	Season   int
-}
-
-func claimKey(enclosure string) string {
-	key := sha256.Sum256([]byte(enclosure))
-	return hex.EncodeToString(key[:])
-}
+type TVIdentity = rssreceipt.TVIdentity
 
 func (store *Store) HasPendingDownload(ctx context.Context, enclosure string) (bool, error) {
 	var exists bool
-	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND STATE='pending')`, claimKey(enclosure)).Scan(&exists)
+	err := store.database.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND STATE='pending')`, rssreceipt.Key(enclosure)).Scan(&exists)
 	return exists, err
 }
 
 // Call only when the client proves no submission was accepted, never on a
 // timeout, malformed acknowledgement, or database failure after submission.
 func (store *Store) ReleaseUnsubmittedDownload(ctx context.Context, taskID int64, enclosure string) error {
-	_, err := store.database.ExecContext(ctx, `DELETE FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND TASK_ID=? AND STATE='pending'`, claimKey(enclosure), taskID)
+	_, err := store.database.ExecContext(ctx, `DELETE FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND abs(TASK_ID)=? AND STATE='pending'`, rssreceipt.Key(enclosure), taskID)
 	return err
 }
 
@@ -47,31 +35,14 @@ func (store *Store) ReserveDownload(ctx context.Context, taskID int64, enclosure
 		return false, err
 	}
 	defer tx.Rollback()
-	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM CONFIG_USER_RSS WHERE ID=?)`, taskID).Scan(&exists); err != nil {
-		return false, err
-	}
-	if !exists {
-		return false, ErrNotFound
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM RSS_TORRENTS WHERE ENCLOSURE=?)`, enclosure).Scan(&exists); err != nil {
-		return false, err
-	}
-	if exists {
-		return false, nil
-	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO GO_RSS_DOWNLOAD_CLAIMS (RESOURCE_KEY,TASK_ID,STATE,UPDATED_AT) VALUES (?,?,'pending',?) ON CONFLICT(RESOURCE_KEY) DO NOTHING`, claimKey(enclosure), taskID, time.Now().Format(time.RFC3339))
-	if err != nil {
-		return false, err
-	}
-	count, err := result.RowsAffected()
+	reserved, err := rssreceipt.Reserve(ctx, tx, taskID, enclosure)
 	if err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
-	return count == 1, nil
+	return reserved, nil
 }
 
 // Complete all local effects atomically only after a confirmed submission.
@@ -102,7 +73,7 @@ func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, 
 		}
 	}
 	var exists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND TASK_ID=? AND STATE='pending')`, claimKey(enclosure), taskID).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND TASK_ID=? AND STATE='pending')`, rssreceipt.Key(enclosure), taskID).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
@@ -111,39 +82,7 @@ func (store *Store) completeReservedDownload(ctx context.Context, taskID int64, 
 	if err := recordDownloadTx(ctx, tx, taskID, title, year, enclosure, downloader); err != nil {
 		return err
 	}
-	if tv != nil {
-		if _, err := strconv.ParseUint(tv.ID, 10, 64); err != nil || tv.ID == "0" || tv.Season < 0 || tv.Season > 1000 || tv.Name == "" || len(tv.Name) > 4096 {
-			return errors.New("invalid RSS TV identity")
-		}
-		var raw string
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MEDIAINFOS,'') FROM CONFIG_USER_RSS WHERE ID=?`, taskID).Scan(&raw); err != nil {
-			return err
-		}
-		items := []map[string]any{}
-		if len(raw) > 1<<20 || (raw != "" && (json.Unmarshal([]byte(raw), &items) != nil || items == nil)) {
-			return errors.New("invalid RSS media identities")
-		}
-		found := false
-		for _, item := range items {
-			found = found || item["id"] == tv.ID && item["season"] == float64(tv.Season)
-		}
-		if !found {
-			items = append(items, map[string]any{"id": tv.ID, "rssid": "", "season": tv.Season, "name": tv.Name})
-		}
-		encoded, err := json.Marshal(items)
-		if err != nil || len(encoded) > 1<<20 {
-			return errors.New("RSS media identities exceeded limit")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE CONFIG_USER_RSS SET MEDIAINFOS=? WHERE ID=?`, string(encoded), taskID); err != nil {
-			return err
-		}
-	}
-	if updateCounter {
-		if _, err := tx.ExecContext(ctx, `UPDATE CONFIG_USER_RSS SET PROCESS_COUNT=MAX(CAST(COALESCE(PROCESS_COUNT,'0') AS INTEGER),0)+1, UPDATE_TIME=? WHERE ID=?`, time.Now().Format("2006-01-02 15:04:05"), taskID); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE GO_RSS_DOWNLOAD_CLAIMS SET STATE='submitted', UPDATED_AT=? WHERE RESOURCE_KEY=? AND TASK_ID=? AND STATE='pending'`, time.Now().Format(time.RFC3339), claimKey(enclosure), taskID); err != nil {
+	if err := rssreceipt.Advance(ctx, tx, taskID, enclosure, tv, updateCounter); err != nil {
 		return err
 	}
 	for _, fp := range profiles {

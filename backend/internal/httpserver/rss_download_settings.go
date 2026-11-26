@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -13,6 +14,13 @@ import (
 
 func rssDownloadSettings(ctx context.Context, task rsstaskconfig.Task, downloaders *downloaderconfig.Store, system *systemconfig.Store) (string, downloadAddOptions, error) {
 	options := downloadAddOptions{SavePath: strings.TrimSpace(task.SavePath)}
+	if options.SavePath == "" && task.Note != "" {
+		var note map[string]any
+		if err := json.Unmarshal([]byte(task.Note), &note); err != nil {
+			return "", options, errors.New("invalid RSS task settings")
+		}
+		options.SavePath = strings.TrimSpace(text(note["save_path"]))
+	}
 	if downloaders == nil || system == nil {
 		return "", options, errors.New("native download configuration is unavailable")
 	}

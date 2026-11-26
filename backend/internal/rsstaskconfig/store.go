@@ -8,14 +8,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/rssreceipt"
 
 	_ "modernc.org/sqlite"
 )
 
-var ErrNotFound = errors.New("rss task not found")
+var ErrNotFound = rssreceipt.ErrTaskMissing
 
 type Task struct {
 	ID, OverEdition, DownloadSetting                                int64
@@ -47,7 +48,7 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("ensure rss task table: %w", err)
 	}
 	for _, statement := range []string{
-		`CREATE TABLE IF NOT EXISTS GO_RSS_DOWNLOAD_CLAIMS (RESOURCE_KEY TEXT PRIMARY KEY, TASK_ID INTEGER NOT NULL, STATE TEXT NOT NULL, UPDATED_AT TEXT NOT NULL)`,
+		rssreceipt.Schema, rssreceipt.DetachDeletedTask,
 		`CREATE TABLE IF NOT EXISTS USERRSS_TASK_HISTORY (ID INTEGER PRIMARY KEY, TASK_ID TEXT, TITLE TEXT, DOWNLOADER TEXT, DATE TEXT)`,
 		`CREATE TABLE IF NOT EXISTS RSS_TORRENTS (ID INTEGER PRIMARY KEY, TORRENT_NAME TEXT, ENCLOSURE TEXT, TYPE TEXT, TITLE TEXT, YEAR TEXT, SEASON TEXT, EPISODE TEXT)`,
 	} {
@@ -210,28 +211,8 @@ func (store *Store) RecordDownload(ctx context.Context, taskID int64, title, yea
 }
 
 func recordDownloadTx(ctx context.Context, transaction *sql.Tx, taskID int64, title, year, enclosure, downloaderName string) error {
-	var exists int
-	var err error
-	if err := transaction.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM CONFIG_USER_RSS WHERE ID=?)`, taskID).Scan(&exists); err != nil {
-		return err
-	}
-	if exists == 0 {
-		return ErrNotFound
-	}
-	if enclosure != "" {
-		err = transaction.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM RSS_TORRENTS WHERE ENCLOSURE=?)`, enclosure).Scan(&exists)
-	} else {
-		err = transaction.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM RSS_TORRENTS WHERE TORRENT_NAME=?)`, title).Scan(&exists)
-	}
-	if err != nil {
-		return err
-	}
-	if exists == 0 {
-		if _, err := transaction.ExecContext(ctx, `INSERT INTO RSS_TORRENTS (TORRENT_NAME,ENCLOSURE,TITLE,YEAR) VALUES (?,?,?,?)`, title, enclosure, title, year); err != nil {
-			return err
-		}
-	}
-	if _, err := transaction.ExecContext(ctx, `INSERT INTO USERRSS_TASK_HISTORY (TASK_ID,TITLE,DOWNLOADER,DATE) VALUES (?,?,?,?)`, strconv.FormatInt(taskID, 10), title, downloaderName, time.Now().Format("2006-01-02 15:04:05")); err != nil {
+	item := rssreceipt.Article{TaskID: taskID, Torrent: title, Enclosure: enclosure, Title: &title, Year: &year}
+	if err := item.Record(ctx, transaction, downloaderName); err != nil {
 		return err
 	}
 	return bus.EmitData(ctx, transaction, "download_start", bus.Hash([]any{taskID, enclosure, title}), "rss:"+strconv.FormatInt(taskID, 10), title+" 开始下载", "来自：自定义 RSS；下载器："+downloaderName+"；年份："+year, map[string]any{
@@ -246,29 +227,42 @@ type Article struct {
 }
 
 func (store *Store) SetArticles(ctx context.Context, taskID int64, flag string, articles []Article) error {
-	task, err := store.Get(ctx, taskID)
-	if err != nil {
-		return err
-	}
 	if flag != "set_finished" && flag != "set_unfinish" {
 		return errors.New("invalid article action")
-	}
-	if task.Uses != "D" && task.Uses != "R" && task.Uses != "S" {
-		return errors.New("unsupported rss task type")
 	}
 	transaction, err := store.database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer transaction.Rollback()
+	var uses string
+	err = transaction.QueryRowContext(ctx, "SELECT COALESCE(USES,'') FROM CONFIG_USER_RSS WHERE ID=?", taskID).Scan(&uses)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if uses != "D" && uses != "R" && uses != "S" {
+		return errors.New("unsupported rss task type")
+	}
 	for _, article := range articles {
 		name := article.Title
 		if article.Year != "" {
 			name += " " + article.Year
 		}
 		enclosure := article.Enclosure
-		if task.Uses != "D" {
+		if uses != "D" {
 			enclosure = name
+		}
+		if flag == "set_finished" && uses == "D" && enclosure != "" {
+			var pending bool
+			if err := transaction.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND STATE='pending')`, rssreceipt.Key(enclosure)).Scan(&pending); err != nil {
+				return err
+			}
+			if pending {
+				return rssreceipt.ErrClaim
+			}
 		}
 		if flag == "set_finished" {
 			var exists int
@@ -288,14 +282,17 @@ func (store *Store) SetArticles(ctx context.Context, taskID int64, flag string, 
 			}
 			continue
 		}
-		if task.Uses == "D" && strings.TrimSpace(enclosure) == "" {
+		if uses == "D" && strings.TrimSpace(enclosure) == "" {
 			_, err = transaction.ExecContext(ctx, `DELETE FROM RSS_TORRENTS WHERE TORRENT_NAME=?`, name)
-		} else if task.Uses == "D" {
+		} else if uses == "D" {
 			// Download history uses the enclosure as its global identity, even
 			// when the feed's display title/year has changed since submission.
 			_, err = transaction.ExecContext(ctx, `DELETE FROM RSS_TORRENTS WHERE ENCLOSURE=?`, enclosure)
 			if err == nil {
-				_, err = transaction.ExecContext(ctx, `DELETE FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND STATE='submitted'`, claimKey(enclosure))
+				err = downloaderconfig.ResetCompletedRSSScope(ctx, transaction, rssreceipt.Key(enclosure))
+			}
+			if err == nil {
+				_, err = transaction.ExecContext(ctx, `DELETE FROM GO_RSS_DOWNLOAD_CLAIMS WHERE RESOURCE_KEY=? AND STATE='submitted'`, rssreceipt.Key(enclosure))
 			}
 		} else {
 			_, err = transaction.ExecContext(ctx, `DELETE FROM RSS_TORRENTS WHERE TORRENT_NAME=? AND ENCLOSURE=?`, name, enclosure)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
 	"github.com/0xforee/nas-tools/backend/internal/downloadhistory"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/rssreceipt"
 	"github.com/0xforee/nas-tools/backend/internal/torrentmeta"
 )
 
@@ -49,6 +51,9 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 	if info, err := os.Stat(dbPath); err != nil || !info.Mode().IsRegular() {
 		return errManualConfiguration
 	}
+	if op == "rss-status" {
+		return classicRSSStatus(ctx, dbPath, in, out)
+	}
 	if op == "notices" {
 		return deliverClassicNotices(ctx, path, dbPath)
 	}
@@ -64,6 +69,11 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		q.History.Media != nil && !q.History.Media.Valid() || (q.Magnet != "") == (q.Torrent != nil) {
 		return errManualConfiguration
 	}
+	if article := q.History.RSS; article != nil {
+		if article.TaskID <= 0 || article.Enclosure == "" || article.Torrent != q.Title || q.Channel != "USERRSS" || q.Sender != "userrss:"+strconv.FormatInt(article.TaskID, 10) || q.Batch != nil {
+			return errManualConfiguration
+		}
+	}
 	if q.Torrent != nil {
 		if _, _, err := torrentmeta.DownloadLayout(q.Torrent); err != nil {
 			return err
@@ -74,17 +84,19 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 		return err
 	}
 	defer store.Close()
+	actor := "classic:" + bus.Hash([]string{q.Channel, q.Sender})
 	// Before other classic clients were supported the bridge omitted the type.
 	if q.ClientType == "" {
 		q.ClientType = "aria2"
 	}
+	cloudRSS := q.History.RSS != nil && (q.ClientType == "pan115" || q.ClientType == "pikpak")
 	item, err := store.Get(ctx, q.Downloader)
-	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || (item.Type != "aria2" && item.Type != "qbittorrent" && item.Type != "transmission") {
+	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || (item.Type != "aria2" && item.Type != "qbittorrent" && item.Type != "transmission" && !cloudRSS) {
 		return json.NewEncoder(out).Encode(map[string]bool{"rejected": true})
 	}
 	if q.Torrent == nil {
 		switch item.Type {
-		case "aria2":
+		case "aria2", "pan115", "pikpak":
 			q.Magnet = classicAria2Magnet(q.Magnet)
 		default:
 			q.Magnet = classicTorrentMagnet(q.Magnet, item.Type == "qbittorrent")
@@ -157,11 +169,12 @@ func ClassicDownloadCommand(ctx context.Context, path, op string, in io.Reader, 
 			}
 		}
 	}
-	actor := "classic:" + bus.Hash([]string{q.Channel, q.Sender})
 	task, handled, err := service.submitWithReceipt(ctx, actor, q.Magnet, q.Torrent, &item, options, q.Title, q.Source, nil, nil, &result)
 	reply := map[string]any{}
 	switch {
-	case errors.Is(err, downloaderconfig.ErrManualPending):
+	case errors.Is(err, rssreceipt.ErrProcessed):
+		reply["processed"] = true
+	case errors.Is(err, downloaderconfig.ErrManualPending), errors.Is(err, rssreceipt.ErrClaim):
 		reply["pending"] = true
 	case err != nil || !handled:
 		reply["rejected"] = true

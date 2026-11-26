@@ -160,9 +160,6 @@ func (api *rssRunAPI) run(ctx context.Context, id int64) (rssRunResult, *recogni
 	if mode != "Y" && mode != "N" {
 		return fail(422, "invalid RSS recognition mode")
 	}
-	if task.SavePath == "" {
-		task.SavePath = text(note["save_path"])
-	}
 	if mode == "Y" && task.MediaInfos != "" {
 		var infos []map[string]any
 		if len(task.MediaInfos) > 1<<20 || json.Unmarshal([]byte(task.MediaInfos), &infos) != nil || infos == nil {
@@ -231,19 +228,15 @@ func (api *rssRunAPI) run(ctx context.Context, id int64) (rssRunResult, *recogni
 		if len(article.Title) > 512 || len(article.Enclosure) > 4096 || len(article.Link) > 4096 || !rssDownloadURLAllowed(article.Enclosure) || (article.Type != "" && article.Type != "movie" && article.Type != "tv") {
 			return fail(422, "invalid RSS resource")
 		}
-		processed, err := api.preview.tasks.IsProcessed(ctx, "D", article.Title, article.Year, article.Enclosure)
-		if err != nil {
-			return fail(503, "RSS history is unavailable")
-		}
-		if processed {
-			result.Skipped++
-			continue
-		}
-		pending, err := api.preview.tasks.HasPendingDownload(ctx, article.Enclosure)
+		state, err := api.download.service.rssArticleState(ctx, api.preview.tasks, id, rsstaskconfig.Article{Title: article.Title, Year: article.Year, Enclosure: article.Enclosure})
 		if err != nil {
 			return fail(503, "RSS submission state is unavailable")
 		}
-		if pending {
+		if state == "processed" {
+			result.Skipped++
+			continue
+		}
+		if state == "pending" {
 			result.Uncertain++
 			continue
 		}

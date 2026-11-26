@@ -307,3 +307,29 @@ func TestCheckRejectsFailureAndRedirectWithoutLeakingCookie(t *testing.T) {
 		}
 	}
 }
+
+func TestAddMagnetToUsesExactCloudDirectory(t *testing.T) {
+	const dir = "/家庭/第 1 季 & extras"
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	calls := 0
+	client, err := New("UID=fixture", roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			if r.URL.Host != "webapi.115.com" || r.URL.Query().Get("path") != dir || len(r.URL.Query()) != 1 {
+				t.Fatal(r.URL)
+			}
+			return response(200, `{"state":true,"id":"708"}`), nil
+		}
+		if calls != 2 || r.ParseForm() != nil || r.PostForm.Get("wp_path_id") != "708" {
+			t.Fatal(calls, r.PostForm)
+		}
+		return response(200, `{"state":true,"result":[{"info_hash":"`+hash+`"}]}`), nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := client.AddMagnetTo(t.Context(), "magnet:?xt=urn:btih:"+hash, dir)
+	if err != nil || id != hash || calls != 2 {
+		t.Fatal(id, err, calls)
+	}
+}

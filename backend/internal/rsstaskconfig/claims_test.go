@@ -100,3 +100,42 @@ func TestReservationsSurviveRestartAndCompleteAtomically(t *testing.T) {
 		t.Fatal("rejected submission could not be retried", reserved, err)
 	}
 }
+
+func TestDeletedTaskCannotCreditReplacementWithReusedID(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := t.Context()
+	original, err := store.Upsert(ctx, Task{Uses: "D", Name: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const url = "https://fixture.invalid/task"
+	if ok, err := store.ReserveDownload(ctx, original, url); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if err := store.Delete(ctx, original); err != nil {
+		t.Fatal(err)
+	}
+	next, err := store.Upsert(ctx, Task{Uses: "D", Name: "replacement"})
+	if err != nil || original != next {
+		t.Fatal(next, err)
+	}
+	if err := store.CompleteReservedDownload(ctx, original, "movie", "", url, "client", nil); err == nil {
+		t.Fatal("replacement credited")
+	}
+	if hist, err := store.History(ctx, next); err != nil || len(hist) != 0 {
+		t.Fatal(hist, err)
+	}
+	if ok, err := store.ReserveDownload(ctx, next, url); err != nil || ok {
+		t.Fatal(ok, err)
+	}
+	if err := store.ReleaseUnsubmittedDownload(ctx, original, url); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := store.ReserveDownload(ctx, next, url); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+}

@@ -7,11 +7,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/0xforee/nas-tools/backend/internal/bus"
 	"github.com/0xforee/nas-tools/backend/internal/config"
 	"github.com/0xforee/nas-tools/backend/internal/downloaderconfig"
+	"github.com/0xforee/nas-tools/backend/internal/rssreceipt"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
@@ -162,5 +165,94 @@ func TestRSSItemDownloadUnsupportedSettingsRejectBeforeSubmit(t *testing.T) {
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM USERRSS_TASK_HISTORY`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("history=%d err=%v", count, err)
+	}
+}
+
+func TestGoOnlyRSSDownloadRestoresClassicAcknowledgement(t *testing.T) {
+	ctx := t.Context()
+	client := downloaderconfig.Downloader{Name: "fixture", Type: "aria2", Enabled: 1, Config: `{"host":"fixture.invalid","port":6800}`}
+	_, _, path := nativeServicesFixture(t, "", &client, nil)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO CONFIG_USER_RSS(ID,USES,PROCESS_COUNT) VALUES(7,'D','2')"); err != nil {
+		t.Fatal(err)
+	}
+	store, err := downloaderconfig.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	item, err := store.Get(ctx, client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := downloaderconfig.ManualDefinition{Actor: "classic:fixture", DownloaderID: item.ID, DownloaderName: item.Name, DownloaderType: item.Type, InfoHash: strings.Repeat("a", 40), ConfigDigest: bus.Hash(item), OptionsDigest: bus.Hash("settings"), Title: "Original"}
+	const enclosure = "https://fixture.invalid/original.torrent"
+	h := downloaderconfig.ClassicAcknowledgement{Title: "Original", RSS: &rssreceipt.Article{TaskID: 7, Torrent: "Original", Enclosure: enclosure, Scheduled: true}}
+	r, created, err := store.ReserveClassic(ctx, d, h)
+	if err != nil || !created {
+		t.Fatal(created, err)
+	}
+	if err := store.AcknowledgeRSS(ctx, r, "0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	tr := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("recovery contacted a remote service")
+		return nil, nil
+	})
+	handler, err := newHandler(config.Config{ApplicationConfigPath: filepath.Join(filepath.Dir(path), "config.yaml"), DisableLegacy: true}, tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := loginForTest(t, handler, "admin", "password")
+	for i := 0; i < 2; i++ {
+		got := performFormRequest(handler, "/api/v1/rss/item/download", token, url.Values{"taskid": {"7"}, "articles": {`[{"title":"Changed","enclosure":"https://fixture.invalid/original.torrent"}]`}})
+		if got.Code != 200 || !strings.Contains(got.Body.String(), `"code":0`) {
+			t.Fatal(got.Code, got.Body.String())
+		}
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM USERRSS_TASK_HISTORY WHERE TITLE='Original' AND EXISTS(SELECT 1 FROM CONFIG_USER_RSS WHERE ID=7 AND PROCESS_COUNT='3')`).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+}
+
+func TestRSSDownloadUsesSaved115Directory(t *testing.T) {
+	calls := 0
+	const folder = "/剧集/第一季 & Specials"
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		switch calls {
+		case 1:
+			if r.URL.Host != "webapi.115.com" || r.URL.Query().Get("path") != folder {
+				t.Fatal(r.URL)
+			}
+			return jsonResponse(r, `{"state":true,"id":"73"}`), nil
+		case 2:
+			if r.URL.Host != "115.com" || r.ParseForm() != nil || r.PostForm.Get("wp_path_id") != "73" {
+				t.Fatal(r.URL, r.PostForm)
+			}
+			return jsonResponse(r, `{"state":true,"result":[{"info_hash":"0123456789abcdef0123456789abcdef01234567"}]}`), nil
+		default:
+			t.Fatal("unexpected request", r.URL)
+			return nil, nil
+		}
+	})
+	c := downloaderconfig.Downloader{Type: "pan115", Name: "115", Enabled: 1, Config: `{"cookie":"UID=fixture"}`}
+	handler, token, path := nativeServicesFixture(t, "", &c, transport)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO CONFIG_USER_RSS(ID,USES,NOTE) VALUES(7,'D',?)`, `{"save_path":"/剧集/第一季 & Specials"}`); err != nil {
+		t.Fatal(err)
+	}
+	got := performFormRequest(handler, "/api/v1/rss/item/download", token, url.Values{"taskid": {"7"}, "articles": {`[{"title":"Movie","enclosure":"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}]`}})
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"code":0`) || calls != 2 {
+		t.Fatal(got.Code, got.Body.String(), calls)
 	}
 }

@@ -1603,30 +1603,6 @@ class DbHelper:
                 }
             )
 
-    @DbPersist(_db)
-    def insert_userrss_mediainfos(self, tid=None, mediainfo=None):
-        if not tid or not mediainfo:
-            return
-        taskinfo = self._db.query(CONFIGUSERRSS).filter(CONFIGUSERRSS.ID == int(tid)).all()
-        if not taskinfo:
-            return
-        mediainfos = json.loads(taskinfo[0].MEDIAINFOS) if taskinfo[0].MEDIAINFOS else []
-        tmdbid = str(mediainfo.tmdb_id)
-        season = int(mediainfo.get_season_seq())
-        for media in mediainfos:
-            if media.get("id") == tmdbid and media.get("season") == season:
-                return
-        mediainfos.append({
-            "id": tmdbid,
-            "rssid": "",
-            "season": season,
-            "name": mediainfo.title
-        })
-        self._db.query(CONFIGUSERRSS).filter(CONFIGUSERRSS.ID == int(tid)).update(
-            {
-                "MEDIAINFOS": json.dumps(mediainfos)
-            })
-
     def get_userrss_parser(self, pid=None):
         if pid:
             return self._db.query(CONFIGRSSPARSER).filter(CONFIGRSSPARSER.ID == int(pid)).first()
@@ -1668,26 +1644,12 @@ class DbHelper:
     def drop_table(self, table_name):
         return self._db.excute(f"""DROP TABLE IF EXISTS {table_name}""")
 
-    @DbPersist(_db)
-    def insert_userrss_task_history(self, task_id, title, downloader):
-        """
-        增加自定义RSS订阅任务的下载记录
-        """
-        self._db.insert(USERRSSTASKHISTORY(
-            TASK_ID=task_id,
-            TITLE=title,
-            DOWNLOADER=downloader,
-            DATE=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
-        ))
-
     def get_userrss_task_history(self, task_id):
-        """
-        查询自定义RSS订阅任务的下载记录
-        """
         if not task_id:
             return []
-        return self._db.query(USERRSSTASKHISTORY).filter(USERRSSTASKHISTORY.TASK_ID == task_id) \
-            .order_by(USERRSSTASKHISTORY.DATE.desc()).all()
+        rows = json.loads(run_go_helper("rss-history", "history", payload=json.dumps({"id": int(task_id)}).encode()))
+        return [USERRSSTASKHISTORY(TASK_ID=task_id, TITLE=row["title"], DOWNLOADER=row["downloader"], DATE=row["date"])
+                for row in rows]
 
     def get_rss_history(self, rtype=None, rid=None):
         """

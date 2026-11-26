@@ -272,7 +272,8 @@ class Downloader:
                  skip_size_check=False,
                  proxy=None,
                  receipt_sender=None,
-                 batch=None):
+                 batch=None,
+                 rss_article=None):
         """
         添加下载任务，根据当前使用的下载器分别调用不同的客户端处理
         :param media_info: 需下载的媒体信息，含URL地址
@@ -380,7 +381,13 @@ class Downloader:
             downloader_id = download_attr.get("downloader")
         downloader_conf = self.get_downloader_conf(downloader_id)
         sender = receipt_sender or (user_name if in_from == SearchType.WEB else None)
-        recorded = bool(sender and downloader_conf and downloader_conf.get("type") in ("aria2", "qbittorrent", "transmission"))
+        clients = ("aria2", "qbittorrent", "transmission")
+        if rss_article is not None:
+            sender = f"userrss:{rss_article['taskId']}"
+            clients += ("pan115", "pikpak")
+        recorded = bool(sender and downloader_conf and downloader_conf.get("type") in clients)
+        if rss_article is not None and not recorded:
+            return downloader_id, None, None, "自定义 RSS 下载器不可用"
         if batch and batch.get("partial") and not (recorded and downloader_conf["type"] in ("qbittorrent", "transmission")):
             return downloader_id, None, None, "当前下载器无法选择剧集文件"
         downloader = None if recorded else self.__get_client(downloader_id)
@@ -473,9 +480,12 @@ class Downloader:
                     receipt = self.__submit_recorded_download(
                         media_info, content, in_from, sender, user_name, downloader_conf, download_setting_name,
                         download_dir, save_dir, is_paused, upload_limit, download_limit,
-                        tags, category, ratio_limit, seeding_time_limit, batch.get("proof") if batch else None)
+                        tags, category, ratio_limit, seeding_time_limit, batch.get("proof") if batch else None, rss_article)
                 except (OSError, subprocess.SubprocessError, ValueError):
                     return downloader_id, None, None, "无法确认下载提交结果，请检查下载回执"
+                if rss_article is not None and receipt.get("processed"):
+                    rss_article["processed"] = True
+                    return downloader_id, None, None, "资源已处理"
                 if receipt.get("rejected"):
                     if batch is not None:
                         batch["pending"] = False
@@ -586,7 +596,7 @@ class Downloader:
 
     def __submit_recorded_download(self, media_info, content, in_from, sender, user_name, downloader_conf,
                                    download_setting_name, download_dir, save_dir, is_paused, upload_limit, download_limit,
-                                   tags, category, ratio_limit, seeding_time_limit, proof=None):
+                                   tags, category, ratio_limit, seeding_time_limit, proof=None, rss_article=None):
         media_info.user_name = user_name
         notice = self.message.download_notice_fields(in_from, media_info, download_setting_name, downloader_conf["name"])
         domain = Config().get_domain()
@@ -598,6 +608,8 @@ class Downloader:
             "history": {"media": download_history_media(media_info), "path": save_dir,
                         "image": media_info.get_message_image() or "", "link": domain + "?next=downloading" if domain else ""},
         }
+        if rss_article is not None:
+            request["history"]["rss"] = rss_article
         if proof:
             request["batch"] = proof
         if downloader_conf["type"] in ("qbittorrent", "transmission"):

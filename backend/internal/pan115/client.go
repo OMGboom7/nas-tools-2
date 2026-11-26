@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	ErrNotSubmitted   = errors.New("115 directory lookup failed before submission")
 	ErrConfiguration  = errors.New("invalid 115 configuration")
 	ErrConnection     = errors.New("115 connection failed")
 	ErrAuthentication = errors.New("115 authentication failed")
@@ -212,10 +213,20 @@ func (client *Client) Delete(ctx context.Context, hash string) error {
 // AddMagnet submits a magnet to the root directory, matching the legacy
 // client's behavior when no download directory is selected.
 func (client *Client) AddMagnet(ctx context.Context, magnet string) (string, error) {
+	return client.AddMagnetTo(ctx, magnet, "/")
+}
+
+func (client *Client) AddMagnetTo(ctx context.Context, magnet, path string) (string, error) {
+	if path == "" {
+		path = "/"
+	}
+	if len(path) > 4096 || strings.ContainsAny(path, "\r\n\x00") {
+		return "", ErrConfiguration
+	}
 	if len(magnet) < 20 || len(magnet) > 4096 || !strings.HasPrefix(magnet, "magnet:?") || strings.ContainsAny(magnet, "\r\n") {
 		return "", ErrConfiguration
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://webapi.115.com/files/getid?path=%2F", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://webapi.115.com/files/getid?path="+url.QueryEscape(path), nil)
 	if err != nil {
 		return "", ErrConfiguration
 	}
@@ -226,18 +237,18 @@ func (client *Client) AddMagnet(ctx context.Context, magnet string) (string, err
 		ID    json.RawMessage `json:"id"`
 	}
 	if err := client.readJSON(request, &directory); err != nil {
-		return "", err
+		return "", errors.Join(ErrNotSubmitted, err)
 	}
 	if !successfulState(directory.State) {
-		return "", ErrResponse
+		return "", errors.Join(ErrNotSubmitted, ErrResponse)
 	}
 	id := strings.Trim(string(directory.ID), `"`)
 	if id == "" || len(id) > 20 {
-		return "", ErrResponse
+		return "", errors.Join(ErrNotSubmitted, ErrResponse)
 	}
 	for _, digit := range id {
 		if digit < '0' || digit > '9' {
-			return "", ErrResponse
+			return "", errors.Join(ErrNotSubmitted, ErrResponse)
 		}
 	}
 	form := url.Values{"url[0]": {magnet}, "savepath": {""}, "wp_path_id": {id}}

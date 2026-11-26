@@ -1,12 +1,14 @@
 package downloaderconfig
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/0xforee/nas-tools/backend/internal/bus"
+	"github.com/0xforee/nas-tools/backend/internal/rssreceipt"
 )
 
 func manualFixture(t *testing.T) (*Store, Downloader, ManualDefinition) {
@@ -152,5 +154,88 @@ func TestManualSubmissionTransactionChecksConfigAfterHistoryAndRollsBack(t *test
 	events, err := bus.New(s.database).List(t.Context())
 	if err != nil || len(events) != 0 {
 		t.Fatal(events, err)
+	}
+}
+
+func TestCustomRSSReceiptSurvivesFailureAndFinishesOnce(t *testing.T) {
+	s, _, d := manualFixture(t)
+	ctx := t.Context()
+	d.Actor = "classic:fixture"
+	_, err := s.database.Exec(`CREATE TABLE CONFIG_USER_RSS(ID INTEGER PRIMARY KEY, USES TEXT, PROCESS_COUNT TEXT, UPDATE_TIME TEXT, MEDIAINFOS TEXT);
+ CREATE TABLE RSS_TORRENTS(ID INTEGER PRIMARY KEY,TORRENT_NAME TEXT,ENCLOSURE TEXT,TITLE TEXT,YEAR TEXT,TYPE TEXT,SEASON TEXT,EPISODE TEXT);
+ CREATE TABLE USERRSS_TASK_HISTORY(ID INTEGER PRIMARY KEY,TASK_ID TEXT,TITLE TEXT,DOWNLOADER TEXT,DATE TEXT);
+ INSERT INTO CONFIG_USER_RSS VALUES(7,'D','3','yesterday',NULL),(8,'R','0',NULL,NULL);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Fixture"
+	item := rssreceipt.Article{TaskID: 7, Torrent: "Fixture.S00E02", Title: &title, Enclosure: "https://fixture.invalid/download/1", Scheduled: true, TV: &rssreceipt.TVIdentity{ID: "55", Name: title, Season: 0}}
+	h := ClassicAcknowledgement{RSS: &item, Title: title}
+	r, created, err := s.ReserveClassic(ctx, d, h)
+	if err != nil || !created {
+		t.Fatal(created, err)
+	}
+	if err := s.RejectManual(ctx, r, false); err != nil {
+		t.Fatal(err)
+	}
+	r, created, err = s.ReserveClassic(ctx, d, h)
+	if err != nil || !created {
+		t.Fatal(created, err)
+	}
+	if _, ok, err := s.RestoreAcknowledgedRSS(ctx, r.Definition.RSSKey, item.TaskID, r.ID, d.Actor); err != nil || ok {
+		t.Fatal("unconfirmed receipt restored", ok, err)
+	}
+	if err := s.AcknowledgeRSS(ctx, r, d.InfoHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RejectManual(ctx, r, true); err == nil {
+		t.Fatal("released a confirmed task")
+	}
+	second := d
+	second.InfoHash = strings.Repeat("b", 40)
+	if _, _, err := s.ReserveClassic(ctx, second, h); !errors.Is(err, rssreceipt.ErrClaim) {
+		t.Fatal("same URL under a different hash", err)
+	}
+	if _, err := s.database.Exec(`CREATE TRIGGER block_credit BEFORE UPDATE OF PROCESS_COUNT ON CONFIG_USER_RSS BEGIN SELECT RAISE(IGNORE); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CompleteWithHistory(ctx, r, d.InfoHash, "acknowledged", d.Actor, &h); err == nil {
+		t.Fatal("accepted partial credit")
+	}
+	var count int
+	if err := s.database.QueryRow(`SELECT (SELECT COUNT(*) FROM RSS_TORRENTS)+(SELECT COUNT(*) FROM USERRSS_TASK_HISTORY)+(SELECT COUNT(*) FROM GO_RSS_DOWNLOAD_CLAIMS WHERE STATE='submitted')`).Scan(&count); err != nil || count != 0 {
+		t.Fatal(count, err)
+	}
+	if _, err := s.database.Exec("DROP TRIGGER block_credit"); err != nil {
+		t.Fatal(err)
+	}
+	restored, ok, err := s.RestoreAcknowledgedRSS(ctx, r.Definition.RSSKey, item.TaskID, r.ID, "admin")
+	if err != nil || !ok || restored.TaskID != d.InfoHash || restored.State != "submitted" {
+		t.Fatal(restored, ok, err)
+	}
+	if _, _, err := s.ReserveClassic(ctx, second, h); !errors.Is(err, rssreceipt.ErrProcessed) {
+		t.Fatal("completed resource not recognized", err)
+	}
+	if err := s.database.QueryRow(`SELECT COUNT(*) FROM CONFIG_USER_RSS WHERE ID=7 AND PROCESS_COUNT='4' AND json_extract(MEDIAINFOS,'$[0].season')=0`).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+	if err := s.database.QueryRow(`SELECT count(*) FROM USERRSS_TASK_HISTORY WHERE TITLE='Fixture.S00E02' AND DOWNLOADER='Client'`).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+	item.TaskID = 8
+	item.Enclosure += "2"
+	if _, _, err := s.ReserveClassic(ctx, second, h); !errors.Is(err, rssreceipt.ErrTaskMissing) {
+		t.Fatal("task type changed", err)
+	}
+	item.Scheduled, item.TV = false, nil
+	r, created, err = s.ReserveClassic(ctx, second, h)
+	if err != nil || !created {
+		t.Fatal(created, err)
+	}
+	if err := s.CompleteWithHistory(ctx, r, second.InfoHash, "acknowledged", second.Actor, &h); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.database.QueryRow(`SELECT COUNT(*) FROM CONFIG_USER_RSS WHERE ID=8 AND PROCESS_COUNT='0' AND UPDATE_TIME IS NULL AND MEDIAINFOS IS NULL`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("manual count changed", count, err)
 	}
 }

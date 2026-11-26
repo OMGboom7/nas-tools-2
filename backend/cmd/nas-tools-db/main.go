@@ -18,6 +18,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/httpserver"
 	"github.com/0xforee/nas-tools/backend/internal/notificationtemplate"
 	"github.com/0xforee/nas-tools/backend/internal/pluginpage"
+	"github.com/0xforee/nas-tools/backend/internal/rsstaskconfig"
 	"github.com/0xforee/nas-tools/backend/internal/searchresults"
 	"github.com/0xforee/nas-tools/backend/internal/sitestats"
 	"github.com/0xforee/nas-tools/backend/internal/torrenttransfer"
@@ -34,6 +35,13 @@ func main() {
 	if len(os.Args) == 2 && os.Args[1] == "batch-download" {
 		if batchdownload.Command(os.Stdin, os.Stdout) != nil {
 			slog.Error("invalid batch download")
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "rss-history" {
+		if err := rsstaskconfig.Command(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("RSS history unavailable")
 			os.Exit(1)
 		}
 		return
