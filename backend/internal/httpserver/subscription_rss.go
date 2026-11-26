@@ -15,6 +15,7 @@ import (
 	"github.com/0xforee/nas-tools/backend/internal/externalindexer"
 	"github.com/0xforee/nas-tools/backend/internal/indexercatalog"
 	"github.com/0xforee/nas-tools/backend/internal/organization"
+	"github.com/0xforee/nas-tools/backend/internal/recognitioncache"
 	"github.com/0xforee/nas-tools/backend/internal/siteconfig"
 )
 
@@ -449,6 +450,11 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 			if failure != nil {
 				return nil, failure
 			}
+			if result != nil && result.detail.ID > 0 && result.cacheKey != "" {
+				if err := result.rememberRSSIdentity(ctx, service.databasePath); err != nil {
+					return fail(err)
+				}
+			}
 			if result == nil || !fuzzy && strconv.FormatInt(result.detail.ID, 10) != mediaID {
 				continue
 			}
@@ -478,6 +484,19 @@ func (batch *subscriptionRSSBatch) resources(ctx context.Context, raw map[string
 	}
 	return identified, nil
 }
+
+// Save verified feed identities for manual corrections and renew active entries.
+// A manual selector in an organization preview never registers a feed identity.
+func (result *nativeRecognition) rememberRSSIdentity(ctx context.Context, path string) error {
+	if result.cacheHit {
+		_, err := recognitioncache.Run(ctx, path, "get", recognitioncache.Request{Key: result.cacheKey}, result.expireCache)
+		return err
+	}
+	entry := recognitioncache.Entry{"id": result.detail.ID, "title": result.data["title"], "type": result.data["type"], "year": result.data["year"], "poster_path": result.detail.Attributes["poster_path"], "backdrop_path": result.detail.Attributes["backdrop_path"]}
+	_, err := recognitioncache.Run(ctx, path, "put", recognitioncache.Request{Entries: map[string]recognitioncache.Entry{result.cacheKey: entry}}, result.expireCache)
+	return err
+}
+
 func subscriptionRSSProcessed(ctx context.Context, r subscriptionRowReader, url string) (bool, error) {
 	for _, entry := range []struct{ table, column, value string }{
 		{"RSS_TORRENTS", "ENCLOSURE", url}, {"GO_RSS_DOWNLOAD_CLAIMS", "RESOURCE_KEY", subscriptionResourceKey(url)},

@@ -1760,8 +1760,7 @@ class WebAction:
         """
         删除tmdb缓存
         """
-        if MetaHelper().delete_meta_data(data.get("cache_key")):
-            MetaHelper().save_meta_data()
+        MetaHelper().delete_meta_data(data.get("cache_key"))
         return {"code": 0}
 
     @staticmethod
@@ -1920,8 +1919,8 @@ class WebAction:
         """
         修改TMDB缓存的标题
         """
-        if MetaHelper().modify_meta_data(data.get("key"), data.get("title")):
-            MetaHelper().save_meta_data(force=True)
+        if not MetaHelper().modify_meta_data(data.get("key"), data.get("title")):
+            return {"code": 1, "msg": "缓存条目已不存在"}
         return {"code": 0}
 
     @staticmethod
@@ -2533,10 +2532,9 @@ class WebAction:
         """
         try:
             MetaHelper().clear_meta_data()
-            os.remove(MetaHelper().get_meta_data_path())
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
-            return {"code": 0, "msg": str(e)}
+            return {"code": 1, "msg": str(e)}
         return {"code": 0}
 
     @staticmethod

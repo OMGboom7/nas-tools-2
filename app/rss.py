@@ -130,7 +130,7 @@ class Rss:
             media.title = cached.get("title")
             media.year = cached.get("year")
         else:
-            media = self.media.get_media_info(title=article["title"])
+            media = self.media.get_media_info(title=article["title"], parsed=media, cache_info=cached)
         if media:
             media.set_torrent_info(size=article["size"], page_url=article.get("link"),
                                    site=frame["site"], site_order=frame["order"], enclosure=article["enclosure"])

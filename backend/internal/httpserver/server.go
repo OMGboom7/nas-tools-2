@@ -326,6 +326,9 @@ func buildHandler(cfg config.Config, transport http.RoundTripper, runnerOut **rs
 		mux.HandleFunc("POST /api/v1/user/manage", authentication.manageUser)
 		mux.HandleFunc("POST /api/v1/user/auth", authentication.authorizeUser)
 		mux.HandleFunc("POST /api/v1/system/logout", authentication.logout)
+		for _, op := range []string{"list", "rename", "delete", "clear"} {
+			mux.HandleFunc("POST /api/v1/recognition-cache/"+op, configuration.recognitionCache)
+		}
 		mux.HandleFunc("POST /api/v1/config/info", configuration.info)
 		mux.HandleFunc("POST /api/v1/config/update", configuration.update)
 		mux.HandleFunc("POST /api/v1/config/directory", configuration.updateDirectory)

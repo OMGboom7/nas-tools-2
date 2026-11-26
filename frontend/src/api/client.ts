@@ -1841,3 +1841,31 @@ export const matchIyuuTorrents = (token: string, fingerprint: string) =>
 export const getIyuuSeeds = (token: string) => iyuuRequest<IyuuSeed[]>(token, "seeds");
 export const addIyuuSeed = (token: string, fingerprint: string, candidate: IyuuCandidate) =>
   iyuuRequest<IyuuSeed>(token, "seeds", { fingerprint, candidate });
+
+export type RecognitionCacheRow = {
+  key: string;
+  entry: { id: number | string; title?: string | null; type?: string; year?: string | number | null };
+};
+export type RecognitionCachePage = { total: number; items: RecognitionCacheRow[] };
+
+export async function listRecognitionCache(token: string, search: string, page: number) {
+  const result = await recognitionCacheRequest<RecognitionCachePage>(token, "list", { search, page });
+  if (!result || !Number.isInteger(result.total) || !Array.isArray(result.items)) throw new ApiError("识别缓存列表无效");
+  return result;
+}
+
+export function changeRecognitionCache(token: string, op: "rename" | "delete", row: RecognitionCacheRow, title?: string) {
+  return recognitionCacheRequest(token, op, { key: row.key, expected: { id: String(row.entry.id), title: row.entry.title ?? "" }, title });
+}
+
+export function clearRecognitionCache(token: string) {
+  return recognitionCacheRequest(token, "clear", { confirm: true });
+}
+
+async function recognitionCacheRequest<T>(token: string, op: string, input: object): Promise<T> {
+  const result = await readResponse<T>(await fetch(`/api/v1/recognition-cache/${op}`, {
+    method: "POST", headers: { Authorization: token, "Content-Type": "application/json" }, body: JSON.stringify(input),
+  }));
+  if (!result.success || result.code !== 0) throw new ApiError(result.message || "识别缓存请求失败", result.code);
+  return result.data as T;
+}

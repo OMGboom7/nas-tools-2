@@ -341,6 +341,15 @@ class Media:
             return {}
         return self.meta.get_meta_data_by_key(self.__make_cache_key(meta_info))
 
+    @staticmethod
+    def _apply_cached_details(media, details, entry, language):
+        media.set_tmdb_info(details)
+        if details and entry and not language and str(details.get("id")) == str(entry.get("id")):
+            if entry.get("title"):
+                media.title = entry["title"]
+            if entry.get("year"):
+                media.year = entry["year"]
+
     def get_media_info(self, title,
                        subtitle=None,
                        mtype=None,
@@ -348,7 +357,7 @@ class Media:
                        cache=True,
                        language=None,
                        chinese=True,
-                       append_to_response=None):
+                       append_to_response=None, *, parsed=None, cache_info=None):
         """
         只有名称信息，判别是电影还是电视剧并搜刮TMDB信息，用于种子名称识别
         :param title: 种子名称
@@ -369,14 +378,16 @@ class Media:
         # 设置语言
         self.__set_language(language)
         # 识别
-        meta_info = MetaInfo(title, subtitle=subtitle)
+        meta_info = parsed if parsed is not None else MetaInfo(title, subtitle=subtitle)
         if not meta_info.get_name() or not meta_info.type:
             log.warn("【Rmt】%s 未识别出有效信息！" % meta_info.org_string)
             return None
         if mtype:
             meta_info.type = mtype
         media_key = self.__make_cache_key(meta_info)
-        if not cache or not self.meta.get_meta_data_by_key(media_key):
+        if cache and cache_info is None:
+            cache_info = self.meta.get_meta_data_by_key(media_key)
+        if not cache or not cache_info:
             # 缓存没有或者强制不使用缓存
             file_media_info = self.__recognize_title(meta_info, "title", strict=strict)
             if not file_media_info and self._search_tmdbweb:
@@ -418,7 +429,6 @@ class Media:
                                           file_media_info=file_media_info)
         else:
             # 使用缓存信息
-            cache_info = self.meta.get_meta_data_by_key(media_key)
             if cache_info.get("id"):
                 file_media_info = self.get_tmdb_info(mtype=cache_info.get("type"),
                                                      tmdbid=cache_info.get("id"),
@@ -427,7 +437,7 @@ class Media:
             else:
                 file_media_info = None
         # 赋值TMDB信息并返回
-        meta_info.set_tmdb_info(file_media_info)
+        self._apply_cached_details(meta_info, file_media_info, cache_info if cache else None, language)
         return meta_info
 
     def __insert_media_cache(self, media_key, file_media_info):
@@ -536,7 +546,8 @@ class Media:
                         continue
                     # 区配缓存及TMDB
                     media_key = self.__make_cache_key(meta_info)
-                    if not self.meta.get_meta_data_by_key(media_key):
+                    cache_info = self.meta.get_meta_data_by_key(media_key)
+                    if not cache_info:
                         # 没有缓存数据
                         file_media_info = self.__recognize_title(meta_info, "file")
                         if not file_media_info and self._chatgpt_enable:
@@ -574,7 +585,6 @@ class Media:
                                                       file_media_info=file_media_info)
                     else:
                         # 使用缓存信息
-                        cache_info = self.meta.get_meta_data_by_key(media_key)
                         if cache_info.get("id"):
                             file_media_info = self.get_tmdb_info(mtype=cache_info.get("type"),
                                                                  tmdbid=cache_info.get("id"),
@@ -584,7 +594,7 @@ class Media:
                             # 缓存为未识别
                             file_media_info = None
                     # 赋值TMDB信息
-                    meta_info.set_tmdb_info(file_media_info)
+                    self._apply_cached_details(meta_info, file_media_info, cache_info, language)
                 # 自带TMDB信息
                 else:
                     meta_info = MetaInfo(title=file_name, mtype=media_type, filePath=file_path)

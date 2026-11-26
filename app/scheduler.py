@@ -4,7 +4,6 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import log
-from app.helper import MetaHelper
 from app.mediaserver import MediaServer
 from app.rss import Rss
 from app.sites.site_userinfo import StatisticsScheduler
@@ -12,9 +11,8 @@ from app.subscribe import Subscribe
 from app.sync import Sync
 from app.utils import ExceptionUtils
 from app.utils.commons import singleton
-from config import METAINFO_SAVE_INTERVAL, \
-    SYNC_TRANSFER_INTERVAL, RSS_CHECK_INTERVAL, \
-    RSS_REFRESH_TMDB_INTERVAL, META_DELETE_UNKNOWN_INTERVAL, REFRESH_WALLPAPER_INTERVAL, Config, run_go_helper
+from config import SYNC_TRANSFER_INTERVAL, RSS_CHECK_INTERVAL, \
+    RSS_REFRESH_TMDB_INTERVAL, REFRESH_WALLPAPER_INTERVAL, Config, run_go_helper
 from web.backend.wallpaper import get_login_wallpaper
 
 
@@ -101,12 +99,6 @@ class Scheduler:
                 else:
                     log.error("【SCHEDULE】sync_mediaserver 任务调度器未成功初始化或已关闭，无法添加新任务")
 
-        # 元数据定时保存
-        if self._is_scheduler_valid():
-            self.SCHEDULER.add_job(MetaHelper().save_meta_data, 'interval', seconds=METAINFO_SAVE_INTERVAL)
-        else:
-            log.error("【SCHEDULE】save_meta_data 任务调度器未成功初始化或已关闭，无法添加新任务")
-
         # 定时把队列中的监控文件转移走
         if self._is_scheduler_valid():
             self.SCHEDULER.add_job(Sync().transfer_mon_files, 'interval', seconds=SYNC_TRANSFER_INTERVAL)
@@ -122,12 +114,6 @@ class Scheduler:
         # 豆瓣RSS转TMDB，定时更新TMDB数据
         if self._is_scheduler_valid():
             self.SCHEDULER.add_job(Subscribe().refresh_rss_metainfo, 'interval', hours=RSS_REFRESH_TMDB_INTERVAL)
-        else:
-            log.error("【SCHEDULE】refresh_rss_metainfo 任务调度器未成功初始化或已关闭，无法添加新任务")
-
-        # 定时清除未识别的缓存
-        if self._is_scheduler_valid():
-            self.SCHEDULER.add_job(MetaHelper().delete_unknown_meta, 'interval', hours=META_DELETE_UNKNOWN_INTERVAL)
         else:
             log.error("【SCHEDULE】refresh_rss_metainfo 任务调度器未成功初始化或已关闭，无法添加新任务")
 

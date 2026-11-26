@@ -3,6 +3,7 @@ import { ApiError, deleteDownloaderConfig, getServices, setDefaultDownloader, te
 import { ServiceEditor } from "../components/ServiceEditor";
 import { WorkspaceLayout } from "../components/WorkspaceLayout";
 import { BackupRestorePanel } from "../components/BackupRestorePanel";
+import { RecognitionCachePanel } from "../components/RecognitionCachePanel";
 import { BackupExport } from "../components/AutoBackupManager";
 import { MediaRefreshManager } from "../components/MediaRefreshManager";
 
@@ -148,6 +149,8 @@ export function ServicesPage({ session, currentPath, onNavigate, onLogout, onSes
           <select aria-label="按服务状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">全部状态</option><option value="enabled">当前启用</option><option value="configured">已配置</option><option value="attention">需要处理</option></select><span>显示 {filtered.length} / {services.length}</span></div>
         {filtered.length === 0 ? <div className="inline-empty">没有符合当前筛选条件的服务。</div> : <section className="service-grid" aria-label="服务列表">{filtered.map((service) => <ServiceCard key={testKey(service)} service={service} test={tests[testKey(service)]} batchTesting={batchTesting} onTest={() => void runTest(service)} onEdit={service.kind === "indexer" ? undefined : () => editService(service)} onDelete={service.kind === "downloader" ? () => { setDeleteText(""); setDeleting(service); } : undefined} onDefault={service.kind === "downloader" && !service.default ? () => void makeDefault(service) : undefined} />)}</section>}
       </>}
+      {state.kind === "ready" && String(session.user.userid) === "0" &&
+        <RecognitionCachePanel key={session.token} token={session.token} onSessionExpired={onSessionExpired} />}
       {state.kind==="ready"&&<BackupExport token={session.token} onSessionExpired={onSessionExpired} />}
       {state.kind==="ready"&&<BackupRestorePanel token={session.token} onSessionExpired={onSessionExpired} />}
       {state.kind==="ready"&&<MediaRefreshManager token={session.token} onSessionExpired={onSessionExpired}/>}

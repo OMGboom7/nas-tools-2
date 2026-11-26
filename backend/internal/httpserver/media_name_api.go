@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/0xforee/nas-tools/backend/internal/mediameta"
+	"github.com/0xforee/nas-tools/backend/internal/recognitioncache"
 	"github.com/0xforee/nas-tools/backend/internal/wordconfig"
 )
 
@@ -86,12 +87,14 @@ func (api mediaNameAPI) serveHTTP(response http.ResponseWriter, request *http.Re
 }
 
 type nativeRecognition struct {
-	libraryCategory string
-	data            map[string]any
-	meta            mediameta.Metadata
-	detail          tmdbMediaDetails
-	kind            string
-	subtitle        string
+	cacheKey              string
+	cacheHit, expireCache bool
+	libraryCategory       string
+	data                  map[string]any
+	meta                  mediameta.Metadata
+	detail                tmdbMediaDetails
+	kind                  string
+	subtitle              string
 }
 
 type recognitionFailure struct {
@@ -107,7 +110,26 @@ func (api mediaNameAPI) recognizeKind(ctx context.Context, title, subtitle, forc
 	return api.recognizeSelected(ctx, title, subtitle, forcedKind, "", nil, nil)
 }
 
+func recognitionKey(meta mediameta.Metadata, kind string) string {
+	label := "电影"
+	switch kind {
+	case "tv":
+		label = "电视剧"
+	case "anime":
+		label = "动漫"
+	}
+	year, season := meta.Year, "None"
+	if year == "" {
+		year = "None"
+	}
+	if meta.Episodes.Season != nil {
+		season = strconv.Itoa(*meta.Episodes.Season)
+	}
+	return fmt.Sprintf("[%s]%s-%s-%s", label, meta.Title, year, season)
+}
+
 func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, forcedKind, selectedID string, selectedEpisodes *mediameta.EpisodeInfo, selectedPart *string) (*nativeRecognition, *recognitionFailure) {
+	cacheKind := forcedKind
 	if forcedKind == "anime" {
 		forcedKind = "tv"
 	} // Old ANIME selects TV lookup; TMDB genres decide classification.
@@ -144,12 +166,49 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 	if forcedKind == "tv" || forcedKind == "" && meta.Episodes.TV {
 		kind, mediaType = "tv", "TV"
 	}
+	if cacheKind == "" {
+		cacheKind = kind
+	}
+	key := recognitionKey(meta, cacheKind)
+	expireCache := false
+	var cached recognitioncache.Entry
+	if selectedID == "" && api.service.databasePath != "" {
+		snapshot, err := api.service.configStore.Snapshot()
+		if err != nil {
+			return nil, &recognitionFailure{500, "media configuration is unavailable"}
+		}
+		expireCache = recognitioncache.ExpireEnabled(snapshot)
+		cached, err = recognitioncache.Lookup(ctx, api.service.databasePath, key, expireCache)
+		if err != nil {
+			return nil, &recognitionFailure{500, "recognition cache is unavailable"}
+		}
+		if cached.ID() == "0" {
+			return nil, nil
+		}
+		if cached != nil {
+			cachedKind := ""
+			switch cached.Field("type") {
+			case "电影":
+				cachedKind = "movie"
+			case "动漫", "电视剧":
+				cachedKind = "tv"
+			}
+			if !numericTMDBID(cached.ID()) || cachedKind == "" || forcedKind != "" && cachedKind != forcedKind {
+				cached = nil
+			} else {
+				kind = cachedKind
+			}
+		}
+	}
 	meta.Episodes.TV = kind == "tv"
 	if selectedEpisodes != nil {
 		meta.Episodes = *selectedEpisodes
 	}
 	input := subscriptionUpsertRequest{Name: meta.Title, Year: meta.Year, Type: mediaType}
 	id := selectedID
+	if cached != nil {
+		id = cached.ID()
+	}
 	if id == "" {
 		id, err = api.service.resolveNativeMediaID(ctx, input, true)
 	}
@@ -197,6 +256,16 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 			year = date[:4]
 		}
 	}
+	if cached != nil {
+		if title := cached.Field("title"); title != "" {
+			verifiedTitle = title
+			meta.Title = title
+		}
+		if recorded := cached.Field("year"); recorded != "" {
+			year = recorded
+			meta.Year = recorded
+		}
+	}
 	link := "https://www.themoviedb.org/" + kind + "/" + id
 	seasonEpisode, episodeLink := "", ""
 	if meta.Episodes.Season != nil {
@@ -215,7 +284,7 @@ func (api mediaNameAPI) recognizeSelected(ctx context.Context, title, subtitle, 
 			episodeLink += "/episode/" + strconv.Itoa(*meta.Episodes.Episode)
 		}
 	}
-	return &nativeRecognition{libraryCategory: libraryCategory, meta: meta, detail: detail, kind: kind, subtitle: processedSubtitle.Title, data: map[string]any{
+	return &nativeRecognition{cacheKey: key, cacheHit: cached != nil, expireCache: expireCache, libraryCategory: libraryCategory, meta: meta, detail: detail, kind: kind, subtitle: processedSubtitle.Title, data: map[string]any{
 		"type": typeName, "name": meta.Title, "title": verifiedTitle, "year": year,
 		"season_episode": seasonEpisode, "part": meta.Part, "tmdbid": detail.ID, "tmdblink": link, "tmdb_S_E_link": episodeLink,
 		"category": category, "restype": meta.Source, "effect": meta.Effect, "pix": meta.Resolution,

@@ -106,11 +106,12 @@
                         </a>
                         <div class="dropdown-menu dropdown-menu-end">
                           <a class="dropdown-item"
-                             href='javascript:show_modify("{{ TmdbCache[2] }}", "{{ TmdbCache[1].title }}")'>
+                             href="#" data-key="{{ TmdbCache[0] }}" data-title="{{ TmdbCache[1].title or '' }}"
+                             onclick="show_modify(this.dataset.key, this.dataset.title); return false">
                             修改
                           </a>
                           <a class="dropdown-item text-danger"
-                             href='javascript:manual_delete("{{ TmdbCache[0] }}")'>
+                             href="#" data-key="{{ TmdbCache[0] }}" onclick="manual_delete(this.dataset.key); return false">
                             删除
                           </a>
                         </div>
@@ -229,7 +230,8 @@
       $("#tmdbcache_title").removeClass("is-invalid");
     }
     $("#modal-tmdbcache-modify").modal('hide');
-    ajax_post("modify_tmdb_cache", {"key": key, "title": title}, function () {
+    ajax_post("modify_tmdb_cache", {"key": key, "title": title}, function (ret) {
+      if (ret.code) { show_fail_modal(ret.msg); return; }
       window_history_refresh();
     });
   }
@@ -239,6 +241,7 @@
     show_confirm_modal("清空TMDB缓存后，将会增加TMDB API的请求次数，增加搜索响应时间，但是可以一次性解决TMDB改名后本地缓存未更新的问题，是否确认？", function () {
       hide_confirm_modal();
       ajax_post("clear_tmdb_cache", {}, function (ret) {
+        if (ret.code) { show_fail_modal(ret.msg); return; }
         show_success_modal("TMDB缓存清理完成！");
         window_history_refresh();
       });
