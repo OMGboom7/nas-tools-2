@@ -1295,30 +1295,31 @@ class DbHelper:
             ).order_by(SITEBRUSHTORRENTS.LST_MOD_DATE.desc()).all()
 
     @DbPersist(_db)
-    def update_brushtask_torrent_state(self, ids: list):
+    def update_brushtask_torrent_state(self, ids: list, downloader=None):
         """
         更新刷流种子的状态
         """
         if not ids:
             return
         for _id in ids:
-            self._db.query(SITEBRUSHTORRENTS).filter(SITEBRUSHTORRENTS.TASK_ID == _id[1],
-                                                     SITEBRUSHTORRENTS.DOWNLOAD_ID == _id[2]).update(
-                {
-                    "TORRENT_SIZE": _id[0],
-                    "DOWNLOAD_ID": '0'
-                }
-            )
+            query = self._db.query(SITEBRUSHTORRENTS).filter(SITEBRUSHTORRENTS.TASK_ID == _id[1],
+                                                             SITEBRUSHTORRENTS.DOWNLOAD_ID == _id[2])
+            if downloader is not None:
+                query = query.filter(SITEBRUSHTORRENTS.DOWNLOADER == str(downloader))
+            query.update({"TORRENT_SIZE": _id[0], "DOWNLOAD_ID": '0'})
 
     @DbPersist(_db)
-    def delete_brushtask_torrent(self, brush_id, download_id):
+    def delete_brushtask_torrent(self, brush_id, download_id, downloader=None):
         """
         删除刷流种子记录
         """
         if not download_id or not brush_id:
             return
-        self._db.query(SITEBRUSHTORRENTS).filter(SITEBRUSHTORRENTS.TASK_ID == brush_id,
-                                                 SITEBRUSHTORRENTS.DOWNLOAD_ID == download_id).delete()
+        query = self._db.query(SITEBRUSHTORRENTS).filter(SITEBRUSHTORRENTS.TASK_ID == brush_id,
+                                                        SITEBRUSHTORRENTS.DOWNLOAD_ID == download_id)
+        if downloader is not None:
+            query = query.filter(SITEBRUSHTORRENTS.DOWNLOADER == str(downloader))
+        query.delete()
 
     @DbPersist(_db)
     def add_filter_group(self, name, default='N'):

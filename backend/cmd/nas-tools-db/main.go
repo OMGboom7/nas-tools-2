@@ -55,6 +55,13 @@ func main() {
 		return
 	}
 
+	if len(os.Args) == 2 && os.Args[1] == "brush-maintenance" {
+		if err := httpserver.BrushMaintenanceCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
+			slog.Error("brush maintenance plan unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && (os.Args[1] == "brush-fraction" || os.Args[1] == "brush-whole" || os.Args[1] == "brush-admission") {
 		if err := httpserver.BrushSubmitCommand(context.Background(), config.ApplicationPath(), os.Args[1], os.Stdin, os.Stdout); err != nil {
 			slog.Error("brush download unavailable")
