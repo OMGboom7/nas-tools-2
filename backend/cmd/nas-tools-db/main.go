@@ -55,6 +55,13 @@ func main() {
 		return
 	}
 
+	if len(os.Args) == 3 && os.Args[1] == "brush-account" {
+		if err := httpserver.BrushAccountCommand(context.Background(), config.ApplicationPath(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			slog.Error("brush maintenance accounting unavailable")
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "brush-maintenance" {
 		if err := httpserver.BrushMaintenanceCommand(context.Background(), config.ApplicationPath(), os.Stdin, os.Stdout); err != nil {
 			slog.Error("brush maintenance plan unavailable")

@@ -14,10 +14,10 @@ import (
 )
 
 type brushObservation struct {
-	ID                                                                      string
-	Completed                                                               bool
-	SeedSeconds, AgeSeconds, InactiveSeconds, AverageUpload, Uploaded, Size int64
-	Ratio                                                                   float64 // The legacy display-rounded ratio for a completed task.
+	ID                                                                                  string
+	Completed                                                                           bool
+	SeedSeconds, AgeSeconds, InactiveSeconds, AverageUpload, Uploaded, Downloaded, Size int64
+	Ratio                                                                               float64 // The legacy display-rounded ratio for a completed task.
 }
 type brushMaintenanceRequest struct {
 	TaskID     int64
@@ -146,8 +146,12 @@ func planBrushMaintenance(ctx context.Context, db *sql.DB, q brushMaintenanceReq
 		return nil, err
 	}
 	defer tx.Rollback()
+	return planBrushMaintenanceTx(ctx, tx, q, now)
+}
+
+func planBrushMaintenanceTx(ctx context.Context, tx *sql.Tx, q brushMaintenanceRequest, now time.Time) (map[string]brushDecision, error) {
 	var rules, del, throttle string
-	err = tx.QueryRowContext(ctx, `SELECT COALESCE(REMOVE_RULE,''),COALESCE(BRUSHTASK_FREE_DDL_DELETE,''),COALESCE(BRUSHTASK_FREE_LIMIT_SPEED,'') FROM SITE_BRUSH_TASK WHERE ID=? AND DOWNLOADER=? AND STATE IN ('Y','S')`, q.TaskID, q.Downloader).Scan(&rules, &del, &throttle)
+	err := tx.QueryRowContext(ctx, `SELECT COALESCE(REMOVE_RULE,''),COALESCE(BRUSHTASK_FREE_DDL_DELETE,''),COALESCE(BRUSHTASK_FREE_LIMIT_SPEED,'') FROM SITE_BRUSH_TASK WHERE ID=? AND DOWNLOADER=? AND STATE IN ('Y','S')`, q.TaskID, q.Downloader).Scan(&rules, &del, &throttle)
 	if err != nil {
 		return nil, err
 	}

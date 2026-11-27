@@ -367,25 +367,15 @@ class BrushTask(object):
             if taskinfo.get("state") == 'N':
                 continue
             try:
-                # 总上传量
-                total_uploaded = 0
-                # 总下载量
-                total_downloaded = 0
-                # 可以删种的种子
-                delete_ids = []
-                # 需要更新状态的种子
-                update_torrents = []
-                # 任务信息
-                task_name = taskinfo.get("name")
                 downloader_id = taskinfo.get("downloader")
+                task_name = taskinfo.get("name")
                 sendmessage = taskinfo.get("sendmessage")
+                request = dict(taskID=int(taskid), downloader=str(downloader_id))
 
-                # 当前任务种子详情
-                task_torrents = self.get_brushtask_torrents(taskid)
-                torrent_ids = [item.DOWNLOAD_ID for item in task_torrents if item.DOWNLOAD_ID and str(item.DOWNLOADER) == str(downloader_id)]
-                # 避免种子被全删，没有种子ID的不处理
-                if not torrent_ids:
-                    continue
+                def account(operation, **values):
+                    payload = json.dumps({**request, **values}).encode()
+                    return json.loads(run_go_helper("brush-account", operation, payload=payload, timeout=30))
+
                 # 下载器参数
                 downloader_cfg = self.downloader.get_downloader_conf(downloader_id)
                 if not downloader_cfg:
@@ -395,6 +385,12 @@ class BrushTask(object):
                 downloader_type = downloader_cfg.get("type")
                 if downloader_type not in ("qbittorrent", "transmission"):
                     continue
+                scan = account("begin")
+                torrent_ids = scan["IDs"]
+                if not torrent_ids:
+                    continue
+                request["token"] = scan["Token"]
+                delete_ids = []
                 completed = self.downloader.get_completed_torrents(downloader_id=downloader_id, ids=torrent_ids)
                 downloading = self.downloader.get_downloading_torrents(downloader_id=downloader_id, ids=torrent_ids)
                 if completed is None or downloading is None:
@@ -411,22 +407,19 @@ class BrushTask(object):
                         observations.append(dict(id=tid, completed=complete, seedSeconds=info["seeding_time"],
                                                  ageSeconds=info["dltime"], inactiveSeconds=info["iatime"],
                                                  averageUpload=info["avg_upspeed"], uploaded=info["uploaded"],
-                                                 size=info["total_size"], ratio=round(info["ratio"], 2)))
-                request = dict(taskID=int(taskid), downloader=str(downloader_id), items=observations)
-                decisions = json.loads(run_go_helper("brush-maintenance", payload=json.dumps(request).encode(),
-                                                     timeout=30))
+                                                 downloaded=info["downloaded"], size=info["total_size"], ratio=round(info["ratio"], 2)))
+                decisions = account("plan", items=observations)
                 for tid, (name, info) in by_id.items():
                     decision = decisions[tid]
                     uploaded, downloaded = info["uploaded"], info["downloaded"]
-                    total_uploaded += uploaded
-                    total_downloaded += downloaded
                     if decision["Action"] == "remove":
                         delete_ids.append(tid)
-                        update_torrents.append((f"{uploaded},{downloaded}", taskid, tid))
                         if sendmessage:
                             __send_message(task_name, decision["Reason"], name, downloader_cfg.get("name"),
                                            StringUtils.str_filesize(info["total_size"]), StringUtils.str_filesize(downloaded),
                                            StringUtils.str_filesize(uploaded), round(info["ratio"], 2), info["add_time"])
+                    elif decision["Action"] == "pending":
+                        log.warn(f"【Brush】{name} 已登记删除请求，仍在下载器中，等待核对")
                     elif decision["Action"] == "throttle":
                         key = (downloader_id, taskid, tid, decision["Deadline"])
                         if key not in self._torrents_free_limit_cache:
@@ -444,45 +437,26 @@ class BrushTask(object):
                     if remaining is None:
                         remove_torrent_ids.clear()
                     else:
-                        remove_torrent_ids.difference_update(t.get("hash") if downloader_type == "qbittorrent"
-                                                             else t.hashString for t in remaining)
-                    for tid in remove_torrent_ids:
-                        self.dbhelper.delete_brushtask_torrent(taskid, tid, downloader_id)
+                        present = {t.get("hash") if downloader_type == "qbittorrent" else t.hashString
+                                   for t in remaining}
+                        if not present.issubset(remove_torrent_ids):
+                            raise ValueError("下载器返回了范围外的任务，刷流记录待核对")
+                        remove_torrent_ids.difference_update(present)
 
-                # 删除下载器种子
                 if delete_ids:
-                    self.downloader.delete_torrents(downloader_id=downloader_id,
-                                                    ids=delete_ids,
-                                                    delete_file=True)
-                    # 检验下载器中种子是否已经删除
+                    delete_ids = account("issue")
+                    if not delete_ids:
+                        raise ValueError("刷流任务删除计划已变更")
+                    self.downloader.delete_torrents(downloader_id=downloader_id, ids=delete_ids, delete_file=True)
                     time.sleep(5)
-                    torrents = self.downloader.get_torrents(downloader_id=downloader_id, ids=delete_ids)
-                    if torrents is None:
-                        log.debug("【Brush】任务 %s 从下载器获取种子为 None" % task_name)
-                        delete_ids = []
-                        update_torrents = []
-                    else:
-                        for torrent in torrents:
-                            torrent_info = self.__get_torrent_dict(downloader_type=downloader_type,
-                                                                   torrent=torrent)
-                            # ID
-                            torrent_id = torrent_info.get("id")
-                            # 依然存在下载器的种子移出删除列表
-                            if torrent_id in delete_ids:
-                                delete_ids.remove(torrent_id)
-                    if delete_ids:
-                        # 更新种子状态为已删除
-                        update_torrents = [update_torrent for update_torrent in update_torrents
-                                           if update_torrent[2] in delete_ids]
-                        self.dbhelper.update_brushtask_torrent_state(update_torrents, downloader_id)
-                        log.info("【Brush】任务 %s 共删除 %s 个刷流下载任务" % (task_name, len(delete_ids)))
-                    else:
-                        log.info("【Brush】任务 %s 本次检查未删除下载任务" % task_name)
-                # 更新上传下载量和删除种子数
-                self.dbhelper.add_brushtask_upload_count(brush_id=taskid,
-                                                         upload_size=total_uploaded,
-                                                         download_size=total_downloaded,
-                                                         remove_count=len(delete_ids) + len(remove_torrent_ids))
+                    remaining = self.downloader.get_torrents(downloader_id=downloader_id, ids=delete_ids)
+                    if remaining is not None:
+                        present = {t.get("hash") if downloader_type == "qbittorrent" else t.hashString
+                                   for t in remaining}
+                        if not present.issubset(delete_ids):
+                            raise ValueError("下载器返回了范围外的任务，刷流记录待核对")
+                        remove_torrent_ids.update(set(delete_ids) - present)
+                account("finish", absent=sorted(remove_torrent_ids))
             except Exception as e:
                 ExceptionUtils.exception_traceback(e)
 
