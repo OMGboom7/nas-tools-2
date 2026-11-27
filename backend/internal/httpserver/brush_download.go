@@ -34,6 +34,8 @@ CREATE TRIGGER IF NOT EXISTS go_brush_whole_finished AFTER DELETE ON GO_BRUSH_SU
 BEGIN DELETE FROM GO_BRUSH_WHOLE WHERE token=OLD.token; END;`
 
 type brushDownloadRequest struct {
+	tags                                                                         []string
+	limits                                                                       *brushLimits
 	TaskID, SiteID                                                               int64
 	Token, Enclosure, Downloader, Title, Deadline, RemoteID, RuleSource, FeedURL string
 	Size                                                                         int64
@@ -108,6 +110,15 @@ func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadReques
 		return "", err
 	}
 	defer tx.Rollback()
+	if q.limits != nil {
+		current, e := readBrushLimits(ctx, tx, q.TaskID)
+		if e != nil {
+			return "", e
+		}
+		if current != *q.limits {
+			return "", nil
+		}
+	}
 	token := rand.Text()
 	// Recheck the executing task and its feed inside the transaction that wins
 	// the enclosure. Old history, including removed torrents, stays authoritative.
@@ -124,6 +135,15 @@ func reserveBrushDownload(ctx context.Context, db *sql.DB, q brushDownloadReques
 	n, err := res.RowsAffected()
 	if err != nil || n == 0 {
 		return "", err
+	}
+	if q.limits != nil {
+		raw, e := json.Marshal(q.tags)
+		if e != nil {
+			return "", e
+		}
+		if _, e = tx.ExecContext(ctx, "INSERT INTO GO_BRUSH_PENDING_TAGS VALUES(?,?)", token, string(raw)); e != nil {
+			return "", e
+		}
 	}
 	if whole != nil {
 		_, err = tx.ExecContext(ctx, "INSERT INTO GO_BRUSH_WHOLE(token,config_digest,v1,v2,media,save_path) VALUES(?,?,?,?,?,?)", token, whole.digest, whole.v1, whole.v2, whole.media, whole.path)

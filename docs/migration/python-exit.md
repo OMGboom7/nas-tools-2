@@ -35,6 +35,10 @@ make python-exit-status
 
 ## 当前基线
 
+2026-11-27 刷流新增任务的数量、速度和容量限制已迁入 Go。扫描开始时按原配置计算可新增数量，每次提交整种或部分下载前再检查一次。qBittorrent 和 Transmission 支持按完整标签组合核对站点任务，实时上传或下载达到配置上限会暂缓新增。整种沿用设置页标明的 5 GiB 冗余，部分下载仍按可用保种容量选文件。两个刷流任务争用同一个下载器时，先前读到的空位在另一个任务预留后失效。下载器暂时不可用时，下轮扫描会重试。
+
+Aria2 从下载器读取活动和等待总数及实时速度，115 与 PikPak 支持核对下载任务数。云下载器缺少可验证的实时速度，Aria2 与云下载器缺少站点标签；配置依赖这些数据的限制时，扫描会暂缓新增。隔离 qBittorrent 和 Transmission 均验证了从一个可用名额变为零，以及重启补记后再次扫描的结果。Aria2 模拟服务覆盖了 149 个等待任务、速度等于上限以及应答缺少速度字段。刷流定时调度、运行中限速与删种仍待迁移。[新增限制](../../backend/internal/httpserver/brush_admission.go) · [边界与竞争回归](../../backend/internal/httpserver/brush_admission_test.go)
+
 2026-11-26 刷流的整种下载已接入 Go。原刷流入口继续选择资源和目标目录，Go 复核任务、RSS 与部分下载规则、下载器配置并预留资源，然后直接向下载器提交。qBittorrent 和 Transmission 沿用目录、标签与限速，Aria2 沿用目录，115 与 PikPak 使用磁力链接。拿到任务编号后，Go 在同一事务保存刷流历史、下载次数及已识别媒体的下载历史。qBittorrent 或 Transmission 未及时记下任务编号时，可以用原配置、种子身份和任务标记核对。Aria2 与云下载器丢失编号时保留预留，供后续核对。[整种提交与恢复](../../backend/internal/httpserver/brush_whole.go)
 
 真实 qBittorrent 5.2.3 和 Transmission 4.1.4 的隔离验收从原刷流入口启动，五个文件全部选中，下载器保留站点标签、目标目录及上传 17、下载 31 的限速设置。中断本地写入后，切换发行程序补记了两种历史及一次下载。移除 qBittorrent 的提交标记或改动 Transmission 限速会阻止回执恢复，还原后补记一次。原部分下载流程另行通过两种客户端回归。Aria2、115 与 PikPak 的整种提交、应答丢失和重复扫描使用模拟协议验证。刷流任务调度、运行期间的限速与自动删种仍由 Python 执行。真实 NAS 配置卷及生产镜像待验收。[记账回归测试](../../backend/internal/httpserver/brush_whole_test.go)

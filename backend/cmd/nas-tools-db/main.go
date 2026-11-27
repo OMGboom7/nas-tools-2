@@ -55,7 +55,7 @@ func main() {
 		return
 	}
 
-	if len(os.Args) == 2 && (os.Args[1] == "brush-fraction" || os.Args[1] == "brush-whole") {
+	if len(os.Args) == 2 && (os.Args[1] == "brush-fraction" || os.Args[1] == "brush-whole" || os.Args[1] == "brush-admission") {
 		if err := httpserver.BrushSubmitCommand(context.Background(), config.ApplicationPath(), os.Args[1], os.Stdin, os.Stdout); err != nil {
 			slog.Error("brush download unavailable")
 			os.Exit(1)

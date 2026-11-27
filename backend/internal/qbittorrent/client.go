@@ -132,21 +132,26 @@ func (client *Client) login(ctx context.Context) error {
 // Check only authenticates and reads transfer status; it never changes client
 // preferences, categories, or torrents as the legacy constructor did.
 func (client *Client) Check(ctx context.Context) error {
+	_, _, err := client.TransferRates(ctx)
+	return err
+}
+
+func (client *Client) TransferRates(ctx context.Context) (int64, int64, error) {
 	if err := client.login(ctx); err != nil {
-		return err
+		return 0, 0, err
 	}
 	contents, err := client.request(ctx, http.MethodGet, "transfer/info", nil)
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	var info struct {
 		Download *int64 `json:"dl_info_speed"`
 		Upload   *int64 `json:"up_info_speed"`
 	}
 	if json.Unmarshal(contents, &info) != nil || info.Download == nil || info.Upload == nil || *info.Download < 0 || *info.Upload < 0 {
-		return ErrResponse
+		return 0, 0, ErrResponse
 	}
-	return nil
+	return *info.Upload, *info.Download, nil
 }
 
 type Task struct {

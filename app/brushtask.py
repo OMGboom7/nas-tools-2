@@ -222,7 +222,6 @@ class BrushTask(object):
         fraction_rule = taskinfo.get("fraction_rule")
         cookie = taskinfo.get("cookie")
         rss_free = taskinfo.get("free")
-        downloader_id = taskinfo.get("downloader")
         state = taskinfo.get("state")
         if state != 'Y':
             log.info("【Brush】刷流任务 %s 已停止下载新种！" % task_name)
@@ -246,23 +245,18 @@ class BrushTask(object):
         if rss_free and not cookie:
             log.warn("【Brush】站点 %s 未配置Cookie，无法开启促销刷流" % site_name)
             return
-        # 下载器参数
-        downloader_cfg = self.downloader.get_downloader_conf(downloader_id)
-        if not downloader_cfg:
-            log.error("【Brush】任务 %s 下载器不存在，无法刷流！" % task_name)
-            return
-
         log.info("【Brush】开始站点 %s 的刷流任务：%s..." % (site_name, task_name))
-        # 检查是否达到保种体积
-        if not self.__is_torrent_size_match(taskinfo):
-            return
 
-        # 检查其他设置
-        if not self.__is_allow_new_torrent(taskinfo=taskinfo,
-                                           dlcount=rss_rule.get("dlcount"),
-                                           current_site_count=rss_rule.get("current_site_count"),
-                                           current_site_dlcount=rss_rule.get("current_site_dlcount"),
-                                           site_info=site_info):
+        def available_slots():
+            payload = {"brush": {"taskID": int(taskid)}}
+            try:
+                return json.loads(run_go_helper("brush-admission", payload=json.dumps(payload).encode(), timeout=90))
+            except (OSError, ValueError, subprocess.SubprocessError):
+                log.warn(f"【Brush】{task_name} 无法核对新增任务限制，下轮重试")
+                return False
+
+        scan_limit = available_slots()
+        if not scan_limit:
             return
 
         rss_result = self.rsshelper.parse_rssxml(url=rss_url, proxy=site_proxy)
@@ -276,19 +270,7 @@ class BrushTask(object):
         else:
             log.info("【Brush】%s RSS获取数据：%s" % (site_name, len(rss_result)))
 
-        # 同时下载数
-        max_dlcount = rss_rule.get("dlcount")
         success_count = 0
-        new_torrent_count = 0
-        if max_dlcount:
-            downloading_count = self.__get_downloading_count(downloader_id) or 0
-            new_torrent_count = int(max_dlcount) - int(downloading_count)
-
-        # 当前站点任务总数
-        current_site_count = rss_rule.get("current_site_count")
-        # 当前站点下载任务数
-        current_site_dlcount = rss_rule.get("current_site_dlcount")
-
         for res in rss_result:
             try:
                 # 种子名
@@ -332,14 +314,6 @@ class BrushTask(object):
                         cache.discard(cache_key)
                 if decision != "match":
                     continue
-                # 检查能否添加当前种子，判断是否超过保种体积大小
-                if not self.__is_allow_new_torrent(taskinfo=taskinfo,
-                                                   dlcount=max_dlcount,
-                                                   torrent_size=size,
-                                                   current_site_count=current_site_count,
-                                                   current_site_dlcount=current_site_dlcount,
-                                                   site_info=site_info):
-                    continue
                 # 开始下载
                 log.debug("【Brush】%s 符合条件，开始下载..." % torrent_name)
                 if self.__download_torrent(taskinfo=taskinfo,
@@ -353,19 +327,7 @@ class BrushTask(object):
                                            ):
                     # 计数
                     success_count += 1
-                    # 添加种子后不能超过最大下载数量
-                    if max_dlcount and success_count >= new_torrent_count:
-                        break
-
-                    # 再判断一次
-                    if not self.__is_torrent_size_match(taskinfo):
-                        break
-
-                    if not self.__is_allow_new_torrent(taskinfo=taskinfo,
-                                                       dlcount=max_dlcount,
-                                                       current_site_count=current_site_count,
-                                                       current_site_dlcount=current_site_dlcount,
-                                                       site_info=site_info):
+                    if (scan_limit > 0 and success_count >= scan_limit) or not available_slots():
                         break
                 else:
                     with self._cache_lock:
@@ -688,114 +650,6 @@ class BrushTask(object):
                                                          remove_count=len(delete_ids) + len(remove_torrent_ids))
             except Exception as e:
                 ExceptionUtils.exception_traceback(e)
-
-    def __is_torrent_size_match(self, taskinfo, torrent_size=None):
-        """
-        判断当前空间是否超过保种大小
-        """
-        # 判断大小
-        seed_size = taskinfo.get("seed_size") or None
-        task_name = taskinfo.get("name")
-
-        total_size = self.dbhelper.get_brushtask_totalsize(taskinfo.get("id"))
-        log.debug("【Brush】刷流任务 %s 当前保种体积 %sGB" % (task_name, round(int(total_size) / (1024 ** 3), 1)))
-        if torrent_size and seed_size:
-            if float(torrent_size) + int(total_size) >= (float(seed_size) + 5) * 1024 ** 3:
-                log.warn("【Brush】刷流任务 %s 当前保种体积 %sGB，种子大小 %sGB，不添加刷流任务"
-                         % (task_name, round(int(total_size) / (1024 ** 3), 1),
-                            round(int(torrent_size) / (1024 ** 3), 1)))
-                return False
-        if seed_size:
-            if float(seed_size) * 1024 ** 3 <= int(total_size):
-                log.warn("【Brush】刷流任务 %s 当前保种体积 %sGB，不再新增下载"
-                         % (task_name, round(int(total_size) / 1024 / 1024 / 1024, 1)))
-                return False
-        else:
-            log.warn("seed_size not configuration")
-
-        return True
-
-    def __is_allow_new_torrent(self, taskinfo, dlcount, current_site_dlcount, current_site_count, site_info, torrent_size=None):
-        """
-        检查是否还能添加新的下载
-        """
-        if not taskinfo:
-            return False
-        up_limit_speed = taskinfo.get("up_limit") or None
-        dl_limit_speed = taskinfo.get("dl_limit") or None
-        downloader_id = taskinfo.get("downloader")
-        downloader_name = taskinfo.get("downloader_name")
-        task_name = taskinfo.get("name")
-
-        # 检查下载速度上限、上传速度上限
-        if (up_limit_speed and str(up_limit_speed).isdigit()) or (dl_limit_speed and str(dl_limit_speed).isdigit()):
-            downloader = self.downloader.get_downloader(downloader_id=downloader_id)
-            client_speed = downloader.get_client_speed()
-            if client_speed and up_limit_speed and str(up_limit_speed).isdigit():
-                if float(client_speed.get('up_speed')) / 1024 >= float(up_limit_speed):
-                    log.warn("【Brush】刷流任务 %s 所选下载器 %s 目前上传速度 %s Kb/s，不再新增下载"
-                             % (task_name, downloader_name, round(float(client_speed.get('up_speed')) / 1024, 4)))
-            if client_speed and dl_limit_speed and str(dl_limit_speed).isdigit():
-                if float(client_speed.get('dl_speed')) / 1024 >= float(dl_limit_speed):
-                    log.warn("【Brush】刷流任务 %s 所选下载器 %s 目前下载速度 %s Kb/s，不再新增下载"
-                             % (task_name, downloader_name, round(float(client_speed.get('dl_speed')) / 1024, 4)))
-
-        # 检查正在下载的任务数
-        if dlcount:
-            downloading_total_count = self.__get_downloading_count(downloader_id)
-            if downloading_total_count is None:
-                log.error("【Brush】任务 %s 下载器 %s 无法连接" % (task_name, downloader_name))
-                return False
-            if int(downloading_total_count) >= int(dlcount):
-                log.warn("【Brush】下载器 %s 正在下载任务数：%s，超过设定上限，暂不添加下载" % (
-                    downloader_name, downloading_total_count))
-                return False
-
-        # 检查是否添加标签
-        label = list(set((taskinfo.get("label").split(',') if taskinfo.get("label") else []) +
-                 (site_info.get("tags").split(',') if site_info.get("tags") else [])))
-        if label is None or len(label) <= 0:
-            return True
-
-        site_name = site_info.get("name")
-
-        # 检查当前站点正在下载的任务数量
-        if current_site_dlcount:
-            current_site_count_downloading = self.__get_downloading_count(downloader_id, tag=label)
-            if current_site_count_downloading is None:
-                log.error("【Brush】任务 %s 下载器 %s 无法连接" % (task_name, downloader_name))
-                return False
-            if int(current_site_count_downloading) >= int(current_site_dlcount):
-                log.warn("【Brush】站点 %s 正在下载任务数：%s，超过设定上限，暂不添加下载" % (
-                    site_name, current_site_count_downloading))
-                return False
-
-        # 检查当前站点任务数量
-        if current_site_count:
-            current_site_count_total = self.__get_task_count(downloader_id, tag=label)
-            if current_site_count_total is None:
-                log.error("【Brush】任务 %s 下载器 %s 无法连接" % (task_name, downloader_name))
-                return False
-            if int(current_site_count_total) >= int(current_site_count):
-                log.warn("【Brush】站点 %s 任务总数：%s，超过设定上限，暂不添加下载" % (
-                    site_name, current_site_count_total))
-                return False
-
-        return True
-
-    def __get_downloading_count(self, downloader_id, tag=None):
-        """
-        查询当前正在下载的任务数，支持限定 tag
-        """
-        torrents = self.downloader.get_downloading_torrents(downloader_id=downloader_id, tag=tag) or []
-        return len(torrents)
-
-    def __get_task_count(self, downloader_id, tag):
-        """
-        查询当前任务总数，限定 tag
-        """
-        torrents = self.downloader.get_torrents(downloader_id=downloader_id, tag=tag) or []
-        return len(torrents)
 
     def __download_torrent(self,
                            taskinfo,

@@ -54,7 +54,7 @@ func BrushSubmitCommand(ctx context.Context, path, op string, in io.Reader, out 
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	var q brushSubmitRequest
-	if decoder.Decode(&q) != nil || decoder.Decode(new(any)) != io.EOF || reader.N == 0 || op != "brush-whole" && op != "brush-fraction" || q.Brush.Partial != (op == "brush-fraction") {
+	if decoder.Decode(&q) != nil || decoder.Decode(new(any)) != io.EOF || reader.N == 0 || op != "brush-admission" && op != "brush-whole" && op != "brush-fraction" || q.Brush.Partial != (op == "brush-fraction") {
 		return errBrushFraction
 	}
 	release, err := backuprestore.HoldStartup(path)
@@ -89,13 +89,34 @@ func BrushSubmitCommand(ctx context.Context, path, op string, in io.Reader, out 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 80*time.Second)
 	defer cancel()
+	if op == "brush-admission" {
+		if err = db.QueryRowContext(ctx, "SELECT DOWNLOADER FROM SITE_BRUSH_TASK WHERE ID=?", q.Brush.TaskID).Scan(&q.Brush.Downloader); err != nil {
+			return err
+		}
+	}
 	id, err := strconv.ParseInt(q.Brush.Downloader, 10, 64)
-	if err != nil || (q.Torrent == nil) == (q.Magnet == "") {
+	if err != nil || op != "brush-admission" && (q.Torrent == nil) == (q.Magnet == "") {
 		return errBrushDetail
 	}
 	item, err := store.Get(ctx, id)
-	if err != nil || item.Enabled == 0 || item.Type != q.ClientType || !sameClassicJSON(item.Config, q.Config) || !sameClassicJSON(item.DownloadDir, q.Directories) {
+	if err != nil || item.Enabled == 0 || op != "brush-admission" && (item.Type != q.ClientType || !sameClassicJSON(item.Config, q.Config) || !sameClassicJSON(item.DownloadDir, q.Directories)) {
 		return errBrushDetail
+	}
+	if _, err = db.ExecContext(ctx, brushReceiptSchema+brushFractionSchema+brushRevisionSchema); err != nil {
+		return err
+	}
+	var slots int64
+	q.Tags = brushLabels(strings.Join(q.Tags, ","))
+	q.Brush.tags = q.Tags
+	q.Brush.limits, err = s.brushAdmission(ctx, db, q.Brush.TaskID, q.Brush.Size, q.Brush.Partial, item, &slots)
+	if err != nil {
+		return err
+	}
+	if op == "brush-admission" {
+		return json.NewEncoder(out).Encode(slots)
+	}
+	if q.Brush.limits == nil {
+		return json.NewEncoder(out).Encode(brushSubmitResult{})
 	}
 	var result brushSubmitResult
 	if q.Brush.Partial {
@@ -127,7 +148,7 @@ func brushFractionBudget(ctx context.Context, db brushBudgetReader, q brushSubmi
 	err = db.QueryRowContext(ctx, `SELECT COALESCE(SEED_SIZE,''),
 	(SELECT COALESCE(SUM(CAST(TORRENT_SIZE AS INTEGER)),0) FROM SITE_BRUSH_TORRENTS WHERE TASK_ID=t.ID AND DOWNLOAD_ID!='0'),
 	(SELECT COALESCE(SUM(COALESCE(f.size,s.size)),0) FROM GO_BRUSH_SUBMISSION s LEFT JOIN GO_BRUSH_FRACTION f ON f.token=s.token
-	WHERE s.task_id=t.ID AND (s.ready=1 OR f.token IS NOT NULL))
+	WHERE s.task_id=t.ID AND (s.partial=0 OR s.ready=1 OR f.token IS NOT NULL))
 	FROM SITE_BRUSH_TASK t WHERE t.ID=? AND STATE='Y' AND COALESCE(FRACTION_RULE,'')=?`, q.Brush.TaskID, q.RuleSource).Scan(&seed, &active, &pending)
 	if err != nil {
 		return 0, err
